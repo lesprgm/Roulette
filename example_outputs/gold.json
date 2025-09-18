@@ -1,0 +1,65 @@
+{
+  "version": "v1.0.0",
+  "meta": {
+    "title": "Non-Deterministic Web",
+    "description": "An example landing page generated from structured JSON.",
+    "language": "en-US",
+    "tags": ["example", "landing", "json"],
+    "author": {"name": "Example", "url": "https://example.com"}
+  },
+  "layout": {
+    "theme": "light",
+    "containerWidth": "lg",
+    "navigation": {
+      "items": [
+        {"label": "Home", "href": "/"},
+        {"label": "Features", "href": "#features"},
+        {"label": "GitHub", "href": "https://github.com/", "external": true}
+      ]
+    },
+    "footer": {
+      "text": "© 2025 Non-Deterministic",
+      "links": [
+        {"label": "Privacy", "href": "/privacy"},
+        {"label": "Terms", "href": "/terms"}
+      ]
+    }
+  },
+  "sections": [
+    {
+      "id": "hero",
+      "type": "hero",
+      "background": "default",
+      "headline": "Ship ideas faster",
+      "subheadline": "Structure content once, render anywhere.",
+      "primaryAction": {"label": "Get Started", "href": "/start", "style": "primary"},
+      "secondaryAction": {"label": "Docs", "href": "/docs", "style": "secondary"},
+      "image": {"src": "/img/hero.png", "alt": "Abstract shapes", "width": 1200, "height": 800}
+    },
+    {
+      "id": "features",
+      "type": "feature-grid",
+      "title": "Why this format",
+      "columns": 3,
+      "items": [
+        {"icon": "⚡", "title": "Fast", "text": "Generate and validate quickly."},
+        {"icon": "🧩", "title": "Composable", "text": "Mix and match sections."},
+        {"icon": "✅", "title": "Reliable", "text": "Strict schema validation."}
+      ]
+    },
+    {
+      "id": "content-about",
+      "type": "content",
+      "title": "About",
+      "body": "This page is described entirely in JSON and can be rendered into HTML using templates.",
+      "align": "left"
+    },
+    {
+      "id": "cta-join",
+      "type": "cta",
+      "title": "Ready to try it?",
+      "text": "Spin up a page in minutes.",
+      "action": {"label": "Create page", "href": "/create", "style": "primary"}
+    }
+  ]
+}
