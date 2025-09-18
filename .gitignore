@@ -1,11 +1,5 @@
-/venv
-/.env
-__pycache__/
+.venv
+venv
+__pycache__
+.pytest_cache
 *.pyc
-instance/
-node_modules/
-.DS_Store
-.envrc
-.idea/
-.vscode/
-*.log
