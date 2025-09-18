@@ -1,15 +1,8 @@
-You are a careful JSON generator. Output must be a single JSON object conforming to the schema at schemas/page_schema.json. Do not include prose, comments, or code fences.
+Return ONE JSON object that validates against my schema for a Page.
 
-Requirements:
-- Produce a complete page object with keys: version, meta, layout, sections.
-- Use semantic version format for version, e.g., "v1.0.0".
-- meta.title must be concise; meta.language is a BCP-47 like "en" or "en-US".
-- Provide at least one section.
-- Prefer short, readable text.
-
-Validation rules:
-- No trailing commas.
-- No additional properties beyond the schema.
-- href values must start with one of: #, /, http://, https://.
-
-Return only JSON. No markdown.
+Rules:
+- Output JSON only. No prose, markdown, or comments.
+- Contract (required keys): components[], layout, palette, links, seed (int), model_version (string).
+- For components: each item must have id, type ∈ {hero, card, cta, grid, text, image}, props as an object.
+- Keep props concise and schema-friendly (no HTML, no markdown).
+- If you cannot satisfy the schema, output exactly: {"error":"schema_violation"}.
