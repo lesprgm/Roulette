@@ -1,5 +1,14 @@
 {
+  "name": "non-deterministic-website",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:css": "./tailwindcss -i ./src/styles/input.css -o ./static/tailwind.css --minify",
+    "watch:css": "./tailwindcss -i ./src/styles/input.css -o ./static/tailwind.css --watch"
+  },
   "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
     "tailwindcss": "^4.1.13"
   }
 }
