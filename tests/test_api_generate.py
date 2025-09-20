@@ -47,5 +47,28 @@ def test_stream_returns_ndjson():
     lines = [json.loads(line) for line in r.text.strip().splitlines()]
     assert all("component" in line for line in lines)
     assert lines[0]["component"]["type"] == "hero"
+    
+def test_cache_roundtrip():
+    payload = {"brief": "Cache me", "seed": 1}
+    r1 = client.post("/generate", json=payload)
+    assert r1.status_code == 200
+    r2 = client.post("/generate", json=payload)
+    assert r2.status_code == 200
+    assert r1.json() == r2.json()  # should be identical due to cache hit
+
+def test_rate_limit(monkeypatch):
+    # temporarily tighten limits for the test:
+    import api.ratelimit as rl
+    old_max = rl.MAX_REQUESTS
+    rl.MAX_REQUESTS = 2
+    try:
+        payload = {"brief": "Hot path", "seed": 1}
+        assert client.post("/generate", json=payload).status_code == 200
+        assert client.post("/generate", json=payload).status_code == 200
+        resp = client.post("/generate", json=payload)
+        assert resp.status_code == 429
+    finally:
+        rl.MAX_REQUESTS = old_max
+
 
 
