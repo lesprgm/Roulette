@@ -12,11 +12,15 @@ load_dotenv()
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Start with a small, widely available model; try a 4B as a fallback.
 CANDIDATE_MODELS = [
+    # Fast, free default → works immediately on Hugging Face
+    "mistralai/Mistral-7B-Instruct-v0.2",
+
+    # Preferred Google Gemma models (require access approval)
     "google/gemma-3-1b-it",
     "google/gemma-3-4b-it",
 ]
+
 
 SYSTEM_PROMPT = """You are a planner. Output ONE JSON object that VALIDATES against my schema.
 Rules:
@@ -128,4 +132,33 @@ def llm_status() -> dict:
         "candidate_models": CANDIDATE_MODELS,
         "default_model": os.getenv("MODEL_NAME", CANDIDATE_MODELS[0]),
     }
+    
+def llm_probe() -> dict:
+    """
+    Actually ping the first available model with a tiny prompt.
+    Returns status info about success/failure.
+    """
+    prompt = "Return: {\"probe\": true}"
+    for model in CANDIDATE_MODELS:
+        try:
+            text = _query_hf(model, prompt)
+            data = json.loads(text)
+            return {
+                "model": model,
+                "ok": True,
+                "response": data,
+            }
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            return {
+                "model": model,
+                "ok": False,
+                "error": str(e),
+            }
+    return {
+        "ok": False,
+        "error": "No models responded",
+    }
+
 

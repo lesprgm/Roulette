@@ -31,3 +31,6 @@ build/
 # Tailwind generated CSS
 static/tailwind.css
 tailwindcss
+
+#Cache files
+cache/
