@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from api.main import app
+import json
 
 client = TestClient(app)
 
@@ -38,4 +39,13 @@ def test_validate_failure_on_missing_component_id():
     messages = [e["message"] for e in detail["errors"]]
     # More flexible check
     assert any("id" in m and "required" in m for m in messages)
+    
+def test_stream_returns_ndjson():
+    payload = {"brief": "Landing page", "seed": 123}
+    r = client.post("/generate/stream", json=payload)
+    assert r.status_code == 200
+    lines = [json.loads(line) for line in r.text.strip().splitlines()]
+    assert all("component" in line for line in lines)
+    assert lines[0]["component"]["type"] == "hero"
+
 
