@@ -29,6 +29,9 @@ Rules:
 - For components: each item must have id, type ∈ {hero, card, cta, grid, text, image}, props as an object.
 - Keep props concise and schema-friendly (no HTML, no markdown).
 - If you cannot satisfy the schema, output exactly: {"error":"schema_violation"}.
+- For each component type, follow these props strictly.
+- Do NOT include HTML or markdown in props; plain strings only.
+- IDs must be unique and URL-safe.
 """
 
 def _query_hf(model: str, prompt: str) -> str:
@@ -89,7 +92,7 @@ def generate_page(brief: str, seed: Optional[int] = None, model_version: Optiona
     1) Builds a strict prompt.
     2) Tries the provided model_version (if any), else tries candidates in order.
     3) Parses JSON, validates against your schema, returns the page.
-    4) If everything fails, returns the deterministic stub (so your UI doesn’t break).
+    4) If everything fails, returns the deterministic stub (so your UI doesn't break).
     """
     prompt = f"{SYSTEM_PROMPT}\nBrief: {brief}\nSeed: {seed or 42}"
     last_err: Exception | None = None
