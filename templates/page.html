@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="flex flex-col gap-10">
+    {% for html in rendered_components %}
+      {{ html | safe }}
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -1,21 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tailwind Test</title>
-    
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <title>{{ page.components[0].props.title if page.components and page.components[0].props and page.components[0].props.title else "Generator" }}</title>
     <link rel="stylesheet" href="/static/tailwind.css" />
+    <style>
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
+      .container { max-width: 80rem; margin-inline: auto; padding-inline: 1rem; }
+    </style>
   </head>
-  <body class="min-h-screen flex items-center justify-center bg-slate-100">
-    <div class="p-8 bg-white rounded-2xl shadow-lg max-w-md text-center">
-      <h1 class="text-3xl font-bold text-indigo-600">Tailwind is working 🎉</h1>
-      <p class="mt-2 text-slate-600">
-        If this looks styled with colors, spacing, and a shadow, your setup is good.
-      </p>
-      <button class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-        Test Button
-      </button>
-    </div>
+  <body class="bg-white text-slate-900">
+    <header class="border-b border-slate-200">
+      <div class="container flex items-center justify-between py-4">
+        <a href="/" class="text-xl font-bold">Generator</a>
+        {% if links %}
+        <nav class="flex gap-4 text-sm">
+          {% for href in links %}
+          <a class="text-slate-600 hover:text-slate-900" href="{{ href }}">{{ href }}</a>
+          {% endfor %}
+        </nav>
+        {% endif %}
+      </div>
+    </header>
+
+    <main class="container py-10">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-slate-200">
+      <div class="container py-6 text-xs text-slate-500">
+        Seed: {{ page.seed }} • Model: {{ page.model_version }}
+      </div>
+    </footer>
   </body>
 </html>

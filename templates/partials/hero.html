@@ -1,0 +1,13 @@
+<section class="text-center py-16 rounded-2xl shadow-sm border border-slate-200">
+  <h1 class="text-4xl font-extrabold mb-3">{{ props.title }}</h1>
+  {% if props.subtitle %}
+    <p class="text-slate-600 max-w-2xl mx-auto">{{ props.subtitle }}</p>
+  {% endif %}
+  {% if props.cta_text and props.cta_href %}
+    <div class="mt-6">
+      <a href="{{ props.cta_href }}" class="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 inline-block">
+        {{ props.cta_text }}
+      </a>
+    </div>
+  {% endif %}
+</section>
