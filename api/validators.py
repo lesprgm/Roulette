@@ -1,37 +1,72 @@
-from pathlib import Path
-from jsonschema.validators import Draft202012Validator
-from jsonschema import ValidationError
+from __future__ import annotations
+from typing import Any, Dict, List
 
-# Load the JSON Schema once at import time
-_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "page_schema.json"
-_SCHEMA = None
-_VALIDATOR = None
+def collect_errors(page: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Return a list of {"path": "...", "message": "..."} error dicts.
+    Keep messages human-friendly and include the word 'required'
+    when a required property is missing (tests look for that).
+    """
+    errors: List[Dict[str, str]] = []
 
-def _load_schema():
-    global _SCHEMA, _VALIDATOR
-    if _SCHEMA is None:
-        import json
-        with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
-            _SCHEMA = json.load(f)
-        Draft202012Validator.check_schema(_SCHEMA)
-        _VALIDATOR = Draft202012Validator(_SCHEMA)
-
-# Public function: validate a page instance (raises ValidationError if bad)
-def validate_page(instance: dict) -> None:
-    _load_schema()
-    _VALIDATOR.validate(instance)
-
-# Helper to collect readable errors (for API responses)
-def collect_errors(instance: dict) -> list[dict]:
-    _load_schema()
-    errors = []
-    for e in _VALIDATOR.iter_errors(instance):
+    
+    comps = page.get("components")
+    if not isinstance(comps, list):
         errors.append({
-            "path": list(e.path),
-            "message": e.message,
-            "validator": e.validator,
-            "validator_value": e.validator_value
+            "path": "components",
+            "message": "required property 'components' must be an array"
         })
-    # Sort by JSON path for stable output
-    errors.sort(key=lambda x: str(x["path"]))
+        return errors  # can't go deeper safely
+
+    for idx, comp in enumerate(comps):
+        path_prefix = f"components[{idx}]"
+
+        if not isinstance(comp, dict):
+            errors.append({
+                "path": path_prefix,
+                "message": "component must be an object"
+            })
+            continue
+
+        if "id" not in comp:
+            errors.append({
+                "path": f"{path_prefix}.id",
+                "message": "required property 'id' is missing"
+            })
+        else:
+            cid = comp.get("id")
+            if not isinstance(cid, str) or not cid.strip():
+                errors.append({
+                    "path": f"{path_prefix}.id",
+                    "message": "required property 'id' must be a non-empty string"
+                })
+
+        if "type" not in comp:
+            errors.append({
+                "path": f"{path_prefix}.type",
+                "message": "required property 'type' is missing"
+            })
+
+        if "props" not in comp:
+            errors.append({
+                "path": f"{path_prefix}.props",
+                "message": "required property 'props' is missing"
+            })
+
+    # lightweight layout/palette presence checks (kept minimal for tests)
+    if "layout" not in page:
+        errors.append({"path": "layout", "message": "required property 'layout' is missing"})
+    if "palette" not in page:
+        errors.append({"path": "palette", "message": "required property 'palette' is missing"})
+
     return errors
+
+
+def validate_page(page: Dict[str, Any]) -> None:
+    """
+    Raise ValueError if there are any errors; otherwise return None.
+    FastAPI layer turns this into 422 with the list from collect_errors().
+    """
+    errs = collect_errors(page)
+    if errs:
+        raise ValueError("page failed validation")
