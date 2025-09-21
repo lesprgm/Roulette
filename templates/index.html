@@ -9,10 +9,12 @@
 <body class="min-h-screen bg-slate-100">
   <div class="max-w-3xl mx-auto p-6">
     <h1 class="text-2xl font-bold text-slate-800">Generator</h1>
-    <div class="mt-4 flex gap-2">
-      <input id="brief" class="flex-1 px-3 py-2 border rounded" placeholder="Brief (e.g., Hero for a coffee shop)">
-      <input id="seed" type="number" class="w-28 px-3 py-2 border rounded" placeholder="Seed">
-      <button id="go" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Generate</button>
+
+    <div class="mt-4 grid gap-2 md:grid-cols-6">
+      <input id="brief" class="md:col-span-3 px-3 py-2 border rounded" placeholder="Brief (e.g., Hero for a coffee shop)">
+      <input id="seed" type="number" class="md:col-span-1 px-3 py-2 border rounded" placeholder="Seed">
+      <input id="apikey" class="md:col-span-1 px-3 py-2 border rounded" placeholder="API key">
+      <button id="go" class="md:col-span-1 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Generate</button>
     </div>
 
     <pre id="out" class="mt-4 p-4 bg-white rounded shadow overflow-x-auto text-sm"></pre>
