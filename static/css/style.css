@@ -1,7 +1,64 @@
-:root { --fg: #111; --muted: #555; --bg: #fff; }
-body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); margin: 0; }
-main { max-width: 780px; margin: 3rem auto; padding: 0 1rem; }
-h1 { margin: 0 0 0.5rem; }
-.sub { color: var(--muted); margin-top: 0; }
-.controls { display: flex; gap: .5rem; margin: 1rem 0; }
-input, button { padding: .6rem .8rem; font-size: 1rem; }
+:root{
+  --primary:#334155;
+  --accent:#4f46e5;  
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  line-height:1.5;
+  color:#111827;
+  background:#f8fafc;
+}
+
+.container{
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.toolbar{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  margin-bottom: 16px;
+}
+.toolbar input{
+  padding:10px 12px;
+  border:1px solid #e5e7eb;
+  border-radius: 10px;
+  flex: 1;
+}
+.toolbar button{
+  padding:10px 14px;
+  border-radius: 10px;
+  border:none;
+  background: var(--accent);
+  color:white;
+  cursor:pointer;
+}
+.toolbar .small{
+  font-size:12px;
+  color:#6b7280;
+  margin-left:auto;
+}
+
+.hero{
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color:white;
+  border-radius: 16px;
+  padding: 40px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.08);
+  margin-top: 16px;
+}
+.hero h1{
+  margin:0 0 8px;
+  font-size: clamp(28px, 5vw, 48px);
+  letter-spacing:-.02em;
+}
+.hero .sub{
+  margin:0;
+  opacity:.95;
+  font-size: clamp(16px, 2.4vw, 20px);
+}

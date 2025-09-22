@@ -1,3 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+/* Scan the app HTML + scripts for class usage (Tailwind v4) */
+@source "../../index.html";
+@source "../../templates/**/*.html";
+@source "../../static/js/**/*.js";
