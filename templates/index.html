@@ -1,26 +1,51 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Nondeterministic Website - Demo</title>
-  <link rel="stylesheet" href="/static/tailwind.css" />
-  <link rel="stylesheet" href="/static/css/style.css" />
-</head>
-<body class="min-h-screen bg-slate-100">
-  <div class="max-w-3xl mx-auto p-6">
-    <h1 class="text-2xl font-bold text-slate-800">Generator</h1>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Non-Deterministic Website</title>
 
-    <div class="mt-4 grid gap-2 md:grid-cols-6">
-      <input id="brief" class="md:col-span-3 px-3 py-2 border rounded" placeholder="Brief (e.g., Hero for a coffee shop)">
-      <input id="seed" type="number" class="md:col-span-1 px-3 py-2 border rounded" placeholder="Seed">
-      <input id="apikey" class="md:col-span-1 px-3 py-2 border rounded" placeholder="API key">
-      <button id="go" class="md:col-span-1 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Generate</button>
+  <link href="/static/tailwind.css" rel="stylesheet">
+
+
+  <script defer src="/static/js/app.js"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="max-w-4xl mx-auto p-6 space-y-6">
+    <h1 class="text-3xl font-bold">Non-Deterministic Website</h1>
+
+    <div class="bg-white rounded-xl shadow p-4 space-y-3">
+      <div class="grid grid-cols-1 md:grid-cols-[1fr_140px_auto] gap-3">
+        <input id="brief" type="text"
+               class="input input-bordered px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               placeholder="Brief (e.g., Hero for a coffee shop)" />
+        <input id="seed" type="number"
+               class="px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               placeholder="Seed" />
+        <button id="btn-generate"
+                class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+          Generate
+        </button>
+      </div>
+
+      <details class="mt-1">
+        <summary class="cursor-pointer text-sm text-gray-600">API key</summary>
+        <div class="flex gap-2 mt-2">
+          <input id="apiKey" type="text"
+                 class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 placeholder="x-api-key (e.g., demo_123)" />
+          <button id="btn-save-key"
+                  class="px-3 py-2 rounded-lg bg-gray-900 text-white">Save</button>
+          <button id="btn-clear-key"
+                  class="px-3 py-2 rounded-lg border border-gray-300 bg-white">Clear</button>
+        </div>
+      </details>
     </div>
 
-    <pre id="out" class="mt-4 p-4 bg-white rounded shadow overflow-x-auto text-sm"></pre>
-    <div id="render" class="mt-6"></div>
-  </div>
+    <pre id="out"
+         class="bg-slate-900 text-slate-100 rounded-xl p-4 min-h-[160px] overflow-auto">{ }</pre>
 
-  <script src="/static/js/app.js"></script>
+    <div id="render" class="space-y-4"></div>
+  </div>
 </body>
 </html>

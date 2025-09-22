@@ -1,113 +1,115 @@
-async function callGenerate() {
-  const brief = document.getElementById('brief').value || '';
-  const seedVal = document.getElementById('seed').value;
-  const apikey = document.getElementById('apikey').value || '';
-  const seed = seedVal ? Number(seedVal) : null;
+const API_KEY = 'demo_123'; // Dev only. Remove for public deployments.
 
-  const res = await fetch('/generate', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apikey ? { 'x-api-key': apikey } : {})
-    },
-    body: JSON.stringify({ brief, seed })
-  });
+const $ = (sel, el = document) => el.querySelector(sel);
+const root = $('#app');
+const briefInput = $('#brief');
+const seedInput = $('#seed');
+const btn = $('#go');
+const remainingEl = $('#remaining');
 
-  let data;
-  try {
-    data = await res.json();
-  } catch {
-    data = { error: 'Non-JSON response', status: res.status };
-  }
-  document.getElementById('out').textContent = JSON.stringify(data, null, 2);
-  if (res.ok) renderPage(data);
+const PALETTE = {
+  slate:  '#334155',
+  gray:   '#374151',
+  indigo: '#4f46e5',
+  blue:   '#2563eb',
+  teal:   '#0d9488',
+  rose:   '#e11d48',
+  emerald:'#10b981',
+};
+
+function applyPalette(palette) {
+  if (!palette) return;
+  document.documentElement.style.setProperty('--primary', PALETTE[palette.primary] || '#334155');
+  document.documentElement.style.setProperty('--accent',  PALETTE[palette.accent]  || '#4f46e5');
+}
+
+
+function renderHero(component) {
+  const { title = 'Untitled', subtitle = '' } = component.props || {};
+  const sec = document.createElement('section');
+  sec.className = 'hero';
+
+  const h1 = document.createElement('h1');
+  h1.textContent = title;
+
+  const p = document.createElement('p');
+  p.className = 'sub';
+  p.textContent = subtitle;
+
+  sec.append(h1, p);
+  return sec;
+}
+
+function renderUnknown(component) {
+  const pre = document.createElement('pre');
+  pre.textContent = `Unknown component: ${component.type}`;
+  return pre;
 }
 
 function renderPage(page) {
-  const root = document.getElementById('render');
   root.innerHTML = '';
+  applyPalette(page.palette);
 
-  const palette = page.palette || {};
-  const accent = palette.accent || 'indigo';
-
-  (page.components || []).forEach(c => {
-    switch (c.type) {
-      case 'hero': {
-        const div = document.createElement('div');
-        div.className = "mt-4 p-8 bg-white rounded-2xl shadow";
-        div.innerHTML = `
-          <h2 class="text-3xl font-bold text-${accent}-600">${c.props?.title || 'Untitled'}</h2>
-          <p class="mt-2 text-slate-600">${c.props?.subtitle || ''}</p>
-        `;
-        root.appendChild(div);
-        break;
-      }
-      case 'card': {
-        const div = document.createElement('div');
-        div.className = "mt-4 p-6 bg-white rounded-xl shadow";
-        div.innerHTML = `
-          <div class="font-semibold text-slate-800">${c.props?.title || 'Card'}</div>
-          <p class="mt-1 text-slate-600">${c.props?.body || ''}</p>
-        `;
-        root.appendChild(div);
-        break;
-      }
-      case 'cta': {
-        const div = document.createElement('div');
-        div.className = "mt-4 p-6 bg-white rounded-xl shadow flex items-center gap-3";
-        div.innerHTML = `
-          <div class="flex-1">
-            <div class="font-semibold text-slate-800">${c.props?.title || 'Call to action'}</div>
-            <p class="mt-1 text-slate-600">${c.props?.subtitle || ''}</p>
-          </div>
-          <a href="${c.props?.href || '#'}" class="px-4 py-2 bg-${accent}-600 text-white rounded hover:bg-${accent}-700">
-            ${c.props?.label || 'Learn more'}
-          </a>
-        `;
-        root.appendChild(div);
-        break;
-      }
-      case 'grid': {
-        const cols = Math.min(Math.max(Number(c.props?.columns || 3), 1), 4);
-        const div = document.createElement('div');
-        div.className = "mt-4 grid gap-4 " + ({
-          1: "grid-cols-1", 2: "grid-cols-2", 3: "grid-cols-3", 4: "grid-cols-4"
-        }[cols]);
-        (c.props?.items || []).forEach(item => {
-          const card = document.createElement('div');
-          card.className = "p-4 bg-white rounded-xl shadow";
-          card.innerHTML = `
-            <div class="font-semibold text-slate-800">${item.title || 'Item'}</div>
-            <p class="mt-1 text-slate-600">${item.body || ''}</p>
-          `;
-          div.appendChild(card);
-        });
-        root.appendChild(div);
-        break;
-      }
-      case 'text': {
-        const p = document.createElement('p');
-        p.className = "mt-3 text-slate-700";
-        p.textContent = c.props?.content || '';
-        root.appendChild(p);
-        break;
-      }
-      case 'image': {
-        const img = document.createElement('img');
-        img.className = "mt-4 rounded-xl shadow";
-        img.src = c.props?.src || '';
-        img.alt = c.props?.alt || '';
-        root.appendChild(img);
-        break;
-      }
-      default: {
-        const pre = document.createElement('pre');
-        pre.className = "mt-4 p-4 bg-white rounded shadow overflow-x-auto text-xs";
-        pre.textContent = JSON.stringify(c, null, 2);
-        root.appendChild(pre);
-      }
+  const { components = [] } = page;
+  for (const comp of components) {
+    let el;
+    switch (comp.type) {
+      case 'hero': el = renderHero(comp); break;
+      default:     el = renderUnknown(comp);
     }
-  });
+    root.appendChild(el);
+  }
 }
 
-document.getElementById('go').addEventListener('click', callGenerate);
+
+async function generate(brief, seed) {
+  const resp = await fetch('/generate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY, // required while API_KEYS is set in .env
+    },
+    body: JSON.stringify({
+      brief: brief || 'Landing page',
+      seed: seed !== '' ? Number(seed) : undefined,
+    }),
+  });
+
+  const rem = resp.headers.get('X-RateLimit-Remaining');
+  if (rem !== null) {
+    remainingEl.textContent = `Requests left: ${rem}`;
+  } else {
+    remainingEl.textContent = '';
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Generate failed: ${resp.status} ${text}`);
+  }
+
+  return resp.json();
+}
+
+
+btn.addEventListener('click', async () => {
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Generating…';
+  try {
+    const page = await generate(briefInput.value, seedInput.value);
+    renderPage(page);
+  } catch (err) {
+    root.innerHTML = `<pre>${(err?.message || String(err))}</pre>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+// Auto-fill some defaults and optionally trigger a first render
+window.addEventListener('DOMContentLoaded', async () => {
+  if (!briefInput.value) briefInput.value = 'Coffee shop';
+  if (!seedInput.value) seedInput.value = '1';
+  // Uncomment to auto-generate on load:
+  // btn.click();
+});
