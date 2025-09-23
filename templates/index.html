@@ -1,51 +1,59 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Non-Deterministic Website</title>
 
-  <link href="/static/tailwind.css" rel="stylesheet">
-
-
-  <script defer src="/static/js/app.js"></script>
+  <link rel="stylesheet" href="/static/tailwind.css" />
 </head>
-<body class="bg-gray-50 text-gray-900">
-  <div class="max-w-4xl mx-auto p-6 space-y-6">
-    <h1 class="text-3xl font-bold">Non-Deterministic Website</h1>
 
-    <div class="bg-white rounded-xl shadow p-4 space-y-3">
-      <div class="grid grid-cols-1 md:grid-cols-[1fr_140px_auto] gap-3">
-        <input id="brief" type="text"
-               class="input input-bordered px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-               placeholder="Brief (e.g., Hero for a coffee shop)" />
-        <input id="seed" type="number"
-               class="px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-               placeholder="Seed" />
-        <button id="btn-generate"
-                class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-          Generate
+<body class="bg-slate-50 text-slate-900" data-api-key="">
+  <header class="bg-slate-900 text-slate-100 py-6">
+    <div class="container mx-auto max-w-4xl px-4">
+      <h1 class="text-3xl font-extrabold tracking-wide">Non-Deterministic Website</h1>
+      <p class="text-slate-300 mt-1">Generate a page JSON with an LLM and preview it instantly.</p>
+    </div>
+  </header>
+
+  <main class="container mx-auto max-w-4xl px-4 py-10 space-y-6">
+    <section class="border border-slate-200 bg-white rounded-2xl p-6 shadow-sm">
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-slate-600">Click to generate a new page with varied theme and palette.</p>
+        <button
+          id="generateBtn"
+          type="button"
+          class="px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
+        >
+          Regenerate
+        </button>
+      </div>
+      <div id="status" class="mt-2 text-sm text-slate-600"></div>
+    </section>
+
+    <section class="border border-slate-200 bg-white rounded-2xl shadow-sm">
+      <div class="flex items-center justify-between p-4 border-b border-slate-200">
+        <h2 class="text-sm font-semibold text-slate-700">Preview</h2>
+        <button
+          id="toggleJsonBtn"
+          type="button"
+          class="px-3 py-2 rounded bg-slate-100 text-sm hover:bg-slate-50"
+          aria-expanded="false"
+          aria-controls="jsonPanel"
+        >
+          Show JSON
         </button>
       </div>
 
-      <details class="mt-1">
-        <summary class="cursor-pointer text-sm text-gray-600">API key</summary>
-        <div class="flex gap-2 mt-2">
-          <input id="apiKey" type="text"
-                 class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                 placeholder="x-api-key (e.g., demo_123)" />
-          <button id="btn-save-key"
-                  class="px-3 py-2 rounded-lg bg-gray-900 text-white">Save</button>
-          <button id="btn-clear-key"
-                  class="px-3 py-2 rounded-lg border border-gray-300 bg-white">Clear</button>
-        </div>
-      </details>
-    </div>
+      <div id="preview" class="min-h-[160px] p-6 overflow-auto"></div>
 
-    <pre id="out"
-         class="bg-slate-900 text-slate-100 rounded-xl p-4 min-h-[160px] overflow-auto">{ }</pre>
+      <div id="jsonPanel" class="hidden border-t border-slate-200">
+        <pre id="jsonOut" class="p-4 text-xs overflow-auto"></pre>
+      </div>
+    </section>
 
-    <div id="render" class="space-y-4"></div>
-  </div>
+  </main>
+
+  <script src="/static/js/app.js"></script>
 </body>
 </html>
