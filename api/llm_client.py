@@ -1,167 +1,248 @@
-import os
+from __future__ import annotations
 import json
-import random
 import logging
+import os
+import random
+from typing import Any, Dict, Generator, Optional
 import requests
-from typing import Optional
-from dotenv import load_dotenv
-from api.validators import collect_errors
 
-log = logging.getLogger(__name__)
-load_dotenv()
+PROVIDER = "gemini"
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-1.5-pro")
+try:
+    TEMPERATURE = float(os.getenv("TEMPERATURE", "1.2"))
+except Exception:
+    TEMPERATURE = 1.2
 
-HF_TOKEN = os.getenv("HF_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+GEMINI_ENDPOINT = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+)
 
-CANDIDATE_MODELS = [
-    # Fast, free default → works immediately on Hugging Face
-    "mistralai/Mistral-7B-Instruct-v0.2",
+USING = "gemini" if GEMINI_API_KEY else "stub"
 
-    # Preferred Google Gemma models (require access approval)
-    "google/gemma-3-1b-it",
-    "google/gemma-3-4b-it",
-]
+def status() -> Dict[str, Any]:
+    return {
+        "provider": PROVIDER,
+        "model": MODEL_NAME if GEMINI_API_KEY else None,
+        "has_token": bool(GEMINI_API_KEY),
+        "using": USING,
+    }
 
 
-SYSTEM_PROMPT = """You are a planner. Output ONE JSON object that VALIDATES against my schema.
+def probe() -> Dict[str, Any]:
+    ok = bool(GEMINI_API_KEY)
+    return {"ok": ok, "using": "gemini" if ok else "stub"}
+
+
+def generate_page(brief: str, seed: int) -> Dict[str, Any]:
+    """Return a complete page JSON (Gemini when possible, stub otherwise).
+
+    Behaviors for hands-off demo:
+    - If 'brief' is falsy or looks like an auto cue ("auto", "random", "surprise me"), let the model pick a short creative theme.
+    - If 'seed' is falsy/0, pick a random seed so subsequent clicks differ.
+    """
+    auto_cues = {"", "auto", "random", "surprise me"}
+    brief_str = (brief or "").strip()
+    is_auto = brief_str.lower() in auto_cues
+    if not brief_str or is_auto:
+        brief_str = ""  # pass empty downstream; prompt will instruct to invent a theme
+    seed_val = int(seed or 0)
+    if not seed_val:
+        seed_val = random.randint(1, 10_000_000)
+
+    if GEMINI_API_KEY:
+        page = _call_gemini_for_page(brief_str, seed_val)
+        if page:
+            page.setdefault("model_version", MODEL_NAME)
+            return page
+        logging.warning("Gemini failed or returned invalid JSON; using stub.")
+
+    return _stub_page(brief_str or "Creative brand", seed_val)
+
+
+def stream_page(brief: str, seed: int) -> Generator[str, None, None]:
+    """
+    NDJSON stream compatible with tests/FE:
+      1) {"event":"meta","request_id":"..."}
+      2) {"event":"page","data":{...full page...}}
+    """
+    rid = _make_request_id()
+    yield json.dumps({"event": "meta", "request_id": rid}) + "\n"
+    page = generate_page(brief, seed)
+    yield json.dumps({"event": "page", "data": page}) + "\n"
+
+
+_PAGE_SHAPE_HINT = """
+Return ONLY a single JSON object with these top-level keys:
+- "components": array of component objects, each:
+     { "id": string, "type": string, "props": object }
+    Allowed types (only these): "hero", "cta", "feature_grid", "testimonial", "stats", "pricing", "gallery", "text", "card_list".
+- "layout": { "flow": "stack" | "grid" }
+- "palette": { "primary": string, "accent": string }
+    Choose contrasting values for both from this set: { slate, indigo, rose, emerald, amber, violet }.
+- "links": array of strings (like "/about")
+- "seed": integer (echo the chosen seed)
 Rules:
-- Output JSON only. No prose, markdown, or comments.
-- Must include: components[], layout, palette, links, seed (int), model_version (string).
-- For components: each item must have id, type ∈ {hero, card, cta, grid, text, image}, props as an object.
-- Keep props concise and schema-friendly (no HTML, no markdown).
-- If you cannot satisfy the schema, output exactly: {"error":"schema_violation"}.
-- For each component type, follow these props strictly.
-- Do NOT include HTML or markdown in props; plain strings only.
-- IDs must be unique and URL-safe.
+- Generate a fresh, short brief and a fresh seed on each call; do not rely on client inputs.
+- Output raw JSON only (no prose, no code fences). JSON must be valid/parseable.
+- Include ≥3 different component types from the allowed set and vary order, types, and copy length across calls (avoid only "hero + text + cta").
+- Use layout.flow randomly: choose "grid" ~30% of the time, otherwise "stack".
+- Provide sensible defaults (titles, labels, hrefs), and omit empty values. No demo cards.
+- Prefer adding one of: "feature_grid", "testimonial", "stats", "pricing", "gallery", or "card_list".
+- Fill required fields for each component; omit a component if you cannot provide minimal content.
 """
 
-def _query_hf(model: str, prompt: str) -> str:
-    """
-    Calls the Hugging Face Inference API for a given model.
-    Returns the generated text (string). Raises for HTTP errors or unexpected shapes.
-    """
-    if not HF_TOKEN:
-        raise RuntimeError("HF_TOKEN not set. Put it in your .env")
+def _call_gemini_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
+    """Call Gemini 1.5 Pro via REST and parse a page dict; None on failure."""
+    # Higher temperature increases variety; the seed nudges palette/layout hints below.
+    temperature = TEMPERATURE
+    palette_hint = _seeded_palette_hint(seed)
+    layout_hint = _seeded_layout_hint(seed)
 
-    url = f"https://api-inference.huggingface.co/models/{model}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": prompt}
-    resp = requests.post(url, headers=headers, json=payload, timeout=90)
+    prompt = f"""
+You are a webpage generator that returns JSON only.
 
-    # 404/403 → you likely haven’t accepted access to the repo yet
-    if resp.status_code in (403, 404):
-        raise FileNotFoundError(f"Model unavailable via HF API: {model} ({resp.status_code})")
+Brief (may be empty → you choose a theme): {brief}
+Seed: {seed}
 
-    # 503 sometimes means “model is loading”; bubble it up for a retry at higher level
-    resp.raise_for_status()
+{_PAGE_SHAPE_HINT}
 
-    data = resp.json()
-    # Common response: [{"generated_text": "..."}]
-    if isinstance(data, list) and data and isinstance(data[0], dict) and "generated_text" in data[0]:
-        return data[0]["generated_text"]
-    # Some backends return a raw string
-    if isinstance(data, str):
-        return data
-    # Last-ditch: try common keys
-    if isinstance(data, dict):
-        for k in ("generated_text", "text", "output"):
-            if k in data:
-                return data[k]
+ Palette hint (optional): {palette_hint}
+ Layout hint (optional): {layout_hint}
+"""
 
-    raise RuntimeError(f"Unexpected HF response shape: {data}")
+    try:
+        resp = requests.post(
+            GEMINI_ENDPOINT + f"?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
+            },
+            timeout=45,
+        )
+    except Exception as e:
+        logging.warning("Gemini request error: %r", e)
+        return None
 
-def _fallback_stub(brief: str, seed: Optional[int], model_label: str) -> dict:
-    """
-    Deterministic local fallback so your API keeps working even if the remote model fails.
-    """
-    rng = random.Random(seed or 42)
+    if resp.status_code != 200:
+        logging.warning("Gemini HTTP %s: %s", resp.status_code, resp.text[:400])
+        return None
+
+    try:
+        data = resp.json()
+    except Exception:
+        logging.warning("Gemini: non-JSON HTTP body")
+        return None
+
+    text = (
+        data.get("candidates", [{}])[0]
+        .get("content", {})
+        .get("parts", [{}])[0]
+        .get("text")
+    )
+    if not text or not isinstance(text, str):
+        logging.warning("Gemini: empty response text")
+        return None
+
+    try:
+        page = _json_from_text(text)
+    except Exception as e:
+        logging.warning("Gemini: failed to extract JSON: %r", e)
+        return None
+
+    # Minimal validation + defaults
+    if not isinstance(page, dict) or "components" not in page or not isinstance(
+        page["components"], list
+    ):
+        logging.warning("Gemini: missing 'components' array")
+        return None
+
+    page.setdefault("layout", {"flow": "stack"})
+    page.setdefault("palette", {"primary": "slate", "accent": "indigo"})
+    page.setdefault("links", ["/about"])
+    page["seed"] = seed
+    return page
+
+
+def _json_from_text(text: str) -> Any:
+    """Extract first {...} block from text and json.loads it."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found")
+    return json.loads(text[start : end + 1])
+
+
+def _seeded_palette_hint(seed: int) -> Dict[str, str]:
+    random.seed(seed)
+    # Use the requested six-color set for both primary and accent
+    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet"]
+    primaries = colors
+    accents = colors
+    return {"primary": random.choice(primaries), "accent": random.choice(accents)}
+
+
+def _seeded_layout_hint(seed: int) -> str:
+    random.seed(seed + 1337)
+    # ~30% grid, else stack
+    return "grid" if random.random() < 0.3 else "stack"
+
+
+def _make_request_id() -> str:
+    return f"{random.randint(0, 16**8):08x}"
+
+
+def _stub_page(brief: str, seed: int) -> Dict[str, Any]:
+    random.seed(seed)
+    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet"]
+    primary = random.choice(colors)
+    accent = random.choice(colors)
+    # Invent a short theme when brief is empty
+    themes = [
+        "Indie film fest", "Eco cleaning brand", "Retro arcade", "Yoga studio",
+        "Coffee roastery", "Trail running club", "AI startup", "Artisanal bakery"
+    ]
+    theme = brief.strip() or random.choice(themes)
+    title = f"{theme} landing page"
+    allowed = ["hero", "cta", "feature_grid", "testimonial", "stats", "pricing", "gallery", "text", "card_list"]
+    picks = random.sample(allowed, k=random.randint(3, 5))
+    comps = []
+    for i, t in enumerate(picks, start=1):
+        if t == "hero":
+            comps.append({"id": f"hero-{i}", "type": "hero", "props": {"title": title, "subtitle": "Discover what's new"}})
+        elif t == "feature_grid":
+            comps.append({
+                "id": f"features-{i}", "type": "feature_grid",
+                "props": {
+                    "title": "Highlights",
+                    "features": [
+                        {"title": "Fast setup", "body": "Start in minutes."},
+                        {"title": "Responsive", "body": "Looks great everywhere."},
+                        {"title": "Customizable", "body": "Tweak content easily."}
+                    ]
+                }
+            })
+        elif t == "cta":
+            comps.append({"id": f"cta-{i}", "type": "cta", "props": {"title": "Get started", "label": "Learn more", "href": "#"}})
+        elif t == "text":
+            comps.append({"id": f"text-{i}", "type": "text", "props": {"title": "About", "body": "Short blurb about the project."}})
+        elif t == "testimonial":
+            comps.append({"id": f"testi-{i}", "type": "testimonial", "props": {"quote": "Love this demo!", "author": "Alex"}})
+        elif t == "stats":
+            comps.append({"id": f"stats-{i}", "type": "stats", "props": {"stats": [{"value": "24k", "label": "Users"}, {"value": "99.9%", "label": "Uptime"}]}})
+        elif t == "pricing":
+            comps.append({"id": f"pricing-{i}", "type": "pricing", "props": {"title": "Simple pricing", "items": [{"title": "Basic", "body": "$9/mo"}, {"title": "Pro", "body": "$29/mo"}]}})
+        elif t == "gallery":
+            comps.append({"id": f"gallery-{i}", "type": "gallery", "props": {"images": ["https://picsum.photos/seed/1/400/240", "https://picsum.photos/seed/2/400/240"]}})
+        elif t == "card_list":
+            comps.append({"id": f"cards-{i}", "type": "card_list", "props": {"items": [{"title": "Card A", "body": "Details"}, {"title": "Card B", "body": "Details"}]}})
+    layout = {"flow": "grid"} if random.random() < 0.3 else {"flow": "stack"}
     return {
-        "components": [
-            {"id": "hero-1", "type": "hero",
-             "props": {"title": (brief[:32] or "Welcome"), "subtitle": "Fast, cached pages"}}
-        ],
-        "layout": {"flow": "stack"},
-        "palette": {"primary": rng.choice(["slate", "gray"]), "accent": rng.choice(["indigo", "emerald"])},
+        "components": comps,
+        "layout": layout,
+        "palette": {"primary": primary, "accent": accent},
         "links": ["/about"],
-        "seed": seed or 42,
-        "model_version": model_label,
+        "seed": seed,
+        "model_version": "v0",
     }
-
-def generate_page(brief: str, seed: Optional[int] = None, model_version: Optional[str] = None) -> dict:
-    """
-    High-level function your API calls.
-    1) Builds a strict prompt.
-    2) Tries the provided model_version (if any), else tries candidates in order.
-    3) Parses JSON, validates against your schema, returns the page.
-    4) If everything fails, returns the deterministic stub (so your UI doesn't break).
-    """
-    prompt = f"{SYSTEM_PROMPT}\nBrief: {brief}\nSeed: {seed or 42}"
-    last_err: Exception | None = None
-
-    # List of models to try this call
-    models_to_try = [model_version] if model_version else []
-    models_to_try += [m for m in CANDIDATE_MODELS if m not in models_to_try]
-
-    for model in models_to_try:
-        try:
-            text = _query_hf(model, prompt)
-            data = json.loads(text)
-            errors = collect_errors(data)
-            if errors:
-                log.warning("LLM schema fail for %s: %s", model, errors)
-                raise RuntimeError(f"Schema validation failed: {errors}")
-            log.info("LLM: %s ok (seed=%s)", model, seed or 42)
-            return data
-        except FileNotFoundError as e:
-            log.warning("Model not available: %s", e)
-            last_err = e
-            continue
-        except Exception as e:
-            log.error("LLM call failed for %s: %s", model, e)
-            last_err = e
-            # If it’s a transient 503 you could continue; we stop here to avoid long loops.
-            break
-
-    # Fallback stub keeps the app usable
-    log.warning("Falling back to deterministic stub due to: %s", last_err)
-    return _fallback_stub(brief, seed, (model_version or CANDIDATE_MODELS[0]))
-
-def llm_status() -> dict:
-    """
-    Report which models are configured and whether HF_TOKEN is set.
-    This does NOT make a network call — it's just a quick check.
-    """
-    return {
-        "hf_token_set": bool(HF_TOKEN),
-        "candidate_models": CANDIDATE_MODELS,
-        "default_model": os.getenv("MODEL_NAME", CANDIDATE_MODELS[0]),
-    }
-    
-def llm_probe() -> dict:
-    """
-    Actually ping the first available model with a tiny prompt.
-    Returns status info about success/failure.
-    """
-    prompt = "Return: {\"probe\": true}"
-    for model in CANDIDATE_MODELS:
-        try:
-            text = _query_hf(model, prompt)
-            data = json.loads(text)
-            return {
-                "model": model,
-                "ok": True,
-                "response": data,
-            }
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            return {
-                "model": model,
-                "ok": False,
-                "error": str(e),
-            }
-    return {
-        "ok": False,
-        "error": "No models responded",
-    }
-
-
