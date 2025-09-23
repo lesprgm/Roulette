@@ -1,43 +1,202 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/page.schema.json",
   "title": "Page",
   "type": "object",
   "required": ["components", "layout", "palette", "links", "seed", "model_version"],
+  "additionalProperties": false,
+
   "properties": {
     "components": {
       "type": "array",
+      "minItems": 1,
       "items": {
-        "type": "object",
-        "required": ["id", "type", "props"],
-        "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "type": {
-            "type": "string",
-            "enum": ["hero", "card", "cta", "grid", "text", "image"]
-          },
-          "props": { "type": "object", "additionalProperties": true }
-        },
-        "additionalProperties": false
+        "oneOf": [
+          { "$ref": "#/$defs/hero" },
+          { "$ref": "#/$defs/card" },
+          { "$ref": "#/$defs/cta" },
+          { "$ref": "#/$defs/grid" },
+          { "$ref": "#/$defs/text" },
+          { "$ref": "#/$defs/image" }
+        ]
       }
     },
+
     "layout": {
       "type": "object",
+      "required": ["flow"],
+      "additionalProperties": false,
       "properties": {
         "flow": { "type": "string", "enum": ["grid", "stack"] }
-      },
-      "additionalProperties": true
+      }
     },
+
     "palette": {
       "type": "object",
+      "required": ["primary", "accent"],
+      "additionalProperties": false,
       "properties": {
-        "primary": { "type": "string" },
-        "accent": { "type": "string" }
-      },
-      "additionalProperties": true
+        "primary": { "$ref": "#/$defs/colorToken" },
+        "accent":  { "$ref": "#/$defs/colorToken" }
+      }
     },
-    "links": { "type": "array", "items": { "type": "string" } },
+
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^(\\/|https?://)"  
+      }
+    },
+
     "seed": { "type": "integer" },
-    "model_version": { "type": "string" }
+    "model_version": { "type": "string", "minLength": 1 }
   },
-  "additionalProperties": false
+
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9-]+$"
+    },
+
+    "colorToken": {
+      "type": "string",
+      "enum": [
+        "slate","gray","zinc","neutral","stone",
+        "red","orange","amber","yellow",
+        "lime","green","emerald","teal","cyan",
+        "sky","blue","indigo","violet","purple",
+        "fuchsia","pink","rose"
+      ]
+    },
+
+    "hero": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "hero" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "subtitle": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "card" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "minLength": 1 },
+            "body": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "cta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "cta" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["label", "href"],
+          "properties": {
+            "title": { "type": "string" },
+            "subtitle": { "type": "string" },
+            "label": { "type": "string", "minLength": 1 },
+            "href": { "type": "string", "minLength": 1, "pattern": "^(\\/|https?://)" }
+          }
+        }
+      }
+    },
+
+    "grid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "grid" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["columns", "items"],
+          "properties": {
+            "columns": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title"],
+                "properties": {
+                  "title": { "type": "string", "minLength": 1 },
+                  "body": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "text" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["content"],
+          "properties": {
+            "content": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "props"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "type": { "const": "image" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["src"],
+          "properties": {
+            "src": { "type": "string", "minLength": 1 },
+            "alt": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
 }
