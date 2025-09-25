@@ -73,23 +73,27 @@ def stream_page(brief: str, seed: int) -> Generator[str, None, None]:
 
 
 _PAGE_SHAPE_HINT = """
+You generate an interactive micro-site as a single JSON object that follows our page schema.
+
 Return ONLY a single JSON object with these top-level keys:
-- "components": array of component objects, each:
-     { "id": string, "type": string, "props": object }
-    Allowed types (only these): "hero", "cta", "feature_grid", "testimonial", "stats", "pricing", "gallery", "text", "card_list".
+- "components": array of component objects, each: { "id": string, "type": string, "props": object }
+    Allowed types include: "hero", "cta", "feature_grid", "stats", "pricing", "gallery", "text", "card_list", and must include at least one "widget".
+    For the widget, require: {"type":"widget","props":{"kind": one of [click_counter, dont_press, compliment_generator, color_party, emoji_rain, pixel_painter, yes_or_no, coin_flip, guess_number, tic_tac_toe]}}.
 - "layout": { "flow": "stack" | "grid" }
 - "palette": { "primary": string, "accent": string }
-    Choose contrasting values for both from this set: { slate, indigo, rose, emerald, amber, violet }.
+    Rotate and vary values (e.g., violet, emerald, rose, amber, indigo, cyan, slate) and choose contrasting pairs.
 - "links": array of strings (like "/about")
 - "seed": integer (echo the chosen seed)
+
 Rules:
-- Generate a fresh, short brief and a fresh seed on each call; do not rely on client inputs.
-- Output raw JSON only (no prose, no code fences). JSON must be valid/parseable.
-- Include ≥3 different component types from the allowed set and vary order, types, and copy length across calls (avoid only "hero + text + cta").
+- Avoid marketing/testimonial/agency/service pages unless the brief explicitly demands it. Prefer playful, interactive micro-app vibes with short text.
+- Always include at least one widget component as described above.
+- Generate a fresh, short theme and seed each call; do not rely solely on client inputs.
+- Output raw JSON only (no prose, no code fences). JSON must be valid/parseable and safe (no HTML/script in fields).
+- Include ≥3 different component types overall and vary order/types across calls; discourage long paragraphs.
 - Use layout.flow randomly: choose "grid" ~30% of the time, otherwise "stack".
 - Provide sensible defaults (titles, labels, hrefs), and omit empty values. No demo cards.
-- Prefer adding one of: "feature_grid", "testimonial", "stats", "pricing", "gallery", or "card_list".
-- Fill required fields for each component; omit a component if you cannot provide minimal content.
+- Fill required fields for each component; skip any component if you cannot provide minimal content.
 """
 
 def _call_gemini_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
@@ -107,8 +111,8 @@ Seed: {seed}
 
 {_PAGE_SHAPE_HINT}
 
- Palette hint (optional): {palette_hint}
- Layout hint (optional): {layout_hint}
+Palette hint (optional): {palette_hint}
+Layout hint (optional): {layout_hint}
 """
 
     try:
