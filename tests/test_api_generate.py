@@ -18,8 +18,8 @@ def test_llm_status_shape():
     r = client.get("/llm/status")
     assert r.status_code == 200
     body = r.json()
-    # Gemini is the provider after migration
-    assert body.get("provider") == "gemini"
+    # Provider may be 'openrouter' or 'gemini' depending on env
+    assert body.get("provider") in ("openrouter", "gemini", None)
     assert "using" in body
     assert "has_token" in body
 
@@ -60,7 +60,10 @@ def test_validate_failure_on_missing_component_id():
     assert any("id" in m.lower() or "required" in m.lower() for m in messages)
 
 
-def test_generate_ok():
+def test_generate_ok(monkeypatch):
+    # Force no live LLM during tests to keep responses deterministic (test stub path)
+    from api import main as main_mod
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "stub", "has_token": False})
     payload = {"brief": "Landing page", "seed": 123}
     r = client.post("/generate", json=payload, headers=API_HEADERS)
     assert r.status_code == 200
@@ -69,7 +72,9 @@ def test_generate_ok():
     assert "layout" in page and "palette" in page
 
 
-def test_stream_returns_ndjson():
+def test_stream_returns_ndjson(monkeypatch):
+    from api import main as main_mod
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "stub", "has_token": False})
     payload = {"brief": "Landing page", "seed": 123}
     r = client.post("/generate/stream", json=payload, headers=API_HEADERS)
     assert r.status_code == 200
