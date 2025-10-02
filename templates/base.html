@@ -14,27 +14,6 @@
     </style>
   </head>
   <body class="bg-white text-slate-900">
-    <header class="border-b border-slate-200">
-      <div class="container flex items-center justify-between py-4">
-        <a href="/" class="text-xl font-bold">Generator</a>
-        {% if links %}
-        <nav class="flex gap-4 text-sm">
-          {% for href in links %}
-          <a class="text-slate-600 hover:text-slate-900" href="{{ href }}">{{ href }}</a>
-          {% endfor %}
-        </nav>
-        {% endif %}
-      </div>
-    </header>
-
-    <main class="container py-10">
-      {% block content %}{% endblock %}
-    </main>
-
-    <footer class="border-t border-slate-200">
-      <div class="container py-6 text-xs text-slate-500">
-        Seed: {{ page.seed }} • Model: {{ page.model_version }}
-      </div>
-    </footer>
+<!-- Deprecated: legacy server-side template base; not used by the app. -->
   </body>
 </html>
