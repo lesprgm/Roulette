@@ -130,6 +130,7 @@
         coin_flip: 'Coin Flip',
         guess_number: 'Guess the Number',
         tic_tac_toe: 'Tic Tac Toe',
+        timer: 'Countdown Timer',
       }[kind] || 'Widget';
 
       // Utility: random helpers
@@ -311,6 +312,59 @@
             msg.textContent = `Player ${player}'s turn`;
           });
           render();
+          break;
+        }
+        case 'timer': {
+          const duration = Math.min(Math.max(parseInt(props?.duration||'10',10)||10, 5), 300);
+          let timeLeft = duration;
+          let intervalId = null;
+          el.innerHTML = mkSection(`
+            <div class="flex items-center gap-4">
+              <div class="text-3xl font-extrabold" id="timerDisplay">${timeLeft}s</div>
+              <button type="button" class="px-4 py-2 rounded text-white" data-role="cta-btn" id="startBtn">Start</button>
+              <button type="button" class="px-4 py-2 rounded bg-slate-600 text-white hover:bg-slate-700" id="resetBtn">Reset</button>
+            </div>
+            <div class="mt-2 text-sm text-slate-600" id="timerMsg">Click Start to begin countdown.</div>`);
+          const display = el.querySelector('#timerDisplay');
+          const startBtn = el.querySelector('#startBtn');
+          const resetBtn = el.querySelector('#resetBtn');
+          const msg = el.querySelector('#timerMsg');
+          const updateDisplay = () => { display.textContent = `${timeLeft}s`; };
+          const startTimer = () => {
+            if (intervalId) return;
+            intervalId = setInterval(() => {
+              timeLeft--;
+              updateDisplay();
+              if (timeLeft <= 0) {
+                clearInterval(intervalId);
+                intervalId = null;
+                msg.textContent = 'Time\'s up!';
+                startBtn.textContent = 'Start';
+              }
+            }, 1000);
+            startBtn.textContent = 'Pause';
+            msg.textContent = 'Counting down...';
+          };
+          const pauseTimer = () => {
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = null;
+              startBtn.textContent = 'Resume';
+              msg.textContent = 'Paused.';
+            }
+          };
+          const resetTimer = () => {
+            if (intervalId) clearInterval(intervalId);
+            intervalId = null;
+            timeLeft = duration;
+            updateDisplay();
+            startBtn.textContent = 'Start';
+            msg.textContent = 'Click Start to begin countdown.';
+          };
+          startBtn.addEventListener('click', () => {
+            if (intervalId) pauseTimer(); else startTimer();
+          });
+          resetBtn.addEventListener('click', resetTimer);
           break;
         }
         default: {
@@ -582,7 +636,7 @@
     try {
       const hasWidget = (Array.isArray(page?.components) ? page.components : []).some(c => String(c?.type||'').toLowerCase()==='widget');
       if (hasWidget) return page;
-      const kinds = ['click_counter','dont_press','compliment_generator','color_party','emoji_rain','pixel_painter','yes_or_no','coin_flip','guess_number','tic_tac_toe'];
+      const kinds = ['click_counter','dont_press','compliment_generator','color_party','emoji_rain','pixel_painter','yes_or_no','coin_flip','guess_number','tic_tac_toe','timer'];
       const kind = kinds[Math.floor(Math.random()*kinds.length)];
       const widget = {
         id: `widget-${Math.floor(Math.random()*1e6)}`,
@@ -603,7 +657,7 @@
     if (e) e.preventDefault();
     const briefs = [
       'Emoji Rain Party', 'Tiny Painter Studio', 'Yes or No Oracle', 'Color Chaos Button', 'Coin-Flip Arena',
-      'Guess-the-Number Mini', 'Pixel Paintboard', 'Speed Click Challenge', "Don't Press It", 'Mini Tic-Tac-Toe'
+      'Guess-the-Number Mini', 'Pixel Paintboard', 'Speed Click Challenge', "Don't Press It", 'Mini Tic-Tac-Toe', 'Countdown Timer App'
     ];
     const brief = briefs[Math.floor(Math.random()*briefs.length)];
     const seed = Math.floor(Math.random() * 1e9);

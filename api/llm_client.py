@@ -78,7 +78,7 @@ You generate an interactive micro-site as a single JSON object that follows our 
 Return ONLY a single JSON object with these top-level keys:
 - "components": array of component objects, each: { "id": string, "type": string, "props": object }
     Allowed types include: "hero", "cta", "feature_grid", "stats", "pricing", "gallery", "text", "card_list", and must include at least one "widget".
-    For the widget, require: {"type":"widget","props":{"kind": one of [click_counter, dont_press, compliment_generator, color_party, emoji_rain, pixel_painter, yes_or_no, coin_flip, guess_number, tic_tac_toe]}}.
+    For the widget, require: {"type":"widget","props":{"kind": one of [click_counter, dont_press, compliment_generator, color_party, emoji_rain, pixel_painter, yes_or_no, coin_flip, guess_number, tic_tac_toe, timer]}}.
 - "layout": { "flow": "stack" | "grid" }
 - "palette": { "primary": string, "accent": string }
     Rotate and vary values (e.g., violet, emerald, rose, amber, indigo, cyan, slate) and choose contrasting pairs.
@@ -181,7 +181,7 @@ def _json_from_text(text: str) -> Any:
 def _seeded_palette_hint(seed: int) -> Dict[str, str]:
     random.seed(seed)
     # Use the requested six-color set for both primary and accent
-    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet"]
+    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet", "cyan"]
     primaries = colors
     accents = colors
     return {"primary": random.choice(primaries), "accent": random.choice(accents)}
@@ -199,7 +199,7 @@ def _make_request_id() -> str:
 
 def _stub_page(brief: str, seed: int) -> Dict[str, Any]:
     random.seed(seed)
-    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet"]
+    colors = ["slate", "indigo", "rose", "emerald", "amber", "violet", "cyan"]
     primary = random.choice(colors)
     accent = random.choice(colors)
     # Invent a short theme when brief is empty
@@ -209,7 +209,7 @@ def _stub_page(brief: str, seed: int) -> Dict[str, Any]:
     ]
     theme = brief.strip() or random.choice(themes)
     title = f"{theme} landing page"
-    allowed = ["hero", "cta", "feature_grid", "testimonial", "stats", "pricing", "gallery", "text", "card_list"]
+    allowed = ["hero", "cta", "feature_grid", "testimonial", "stats", "pricing", "gallery", "text", "card_list", "widget"]
     picks = random.sample(allowed, k=random.randint(3, 5))
     comps = []
     for i, t in enumerate(picks, start=1):
@@ -241,6 +241,10 @@ def _stub_page(brief: str, seed: int) -> Dict[str, Any]:
             comps.append({"id": f"gallery-{i}", "type": "gallery", "props": {"images": ["https://picsum.photos/seed/1/400/240", "https://picsum.photos/seed/2/400/240"]}})
         elif t == "card_list":
             comps.append({"id": f"cards-{i}", "type": "card_list", "props": {"items": [{"title": "Card A", "body": "Details"}, {"title": "Card B", "body": "Details"}]}})
+        elif t == "widget":
+            widget_kinds = ["click_counter", "dont_press", "compliment_generator", "color_party", "emoji_rain", "pixel_painter", "yes_or_no", "coin_flip", "guess_number", "tic_tac_toe", "timer"]
+            kind = random.choice(widget_kinds)
+            comps.append({"id": f"widget-{i}", "type": "widget", "props": {"kind": kind}})
     layout = {"flow": "grid"} if random.random() < 0.3 else {"flow": "stack"}
     return {
         "components": comps,
