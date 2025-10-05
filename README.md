@@ -1,191 +1,107 @@
 # Non‑Deterministic Website
 
-LLM‑as‑backend demo: a thin FastAPI gateway prompts an LLM to synthesize exactly one self‑contained interactive web app per request and renders it safely in a sandboxed iframe.
+A tiny FastAPI app that prompts an LLM to generate exactly one self‑contained interactive web app per request and renders it safely inside a sandboxed iframe. It emphasizes instant, meaningful interaction (clear controls, visible effects) and enforces strict output and sandbox rules.
 
-- Backend: FastAPI + a minimal LLM client (OpenRouter by default) that enforces strict output shapes, normalizes results, dedupes repeats, and can prefetch in batches.
-- Frontend: vanilla JS + Tailwind v4; renders returned HTML/JS inside a sandboxed iframe (no external scripts) and auto‑resizes.
-- “Backendless” for business logic: no DB, no classic models—just a tiny server that proxies the LLM and enforces safety.
+## How it works
 
+- Request → Generation
+  - POST `/generate` accepts an optional `brief` and `seed`.
+  - The server first tries to serve a prefetched page (dequeue‑first). If it serves from prefetch, it simulates LLM latency with a small configurable delay.
+  - On success, a persistent counter increments; the UI shows a floating “Sites generated” badge sourced from `/metrics/total`.
 
-## Prerequisites
+- Prefetch queue
+  - Disk‑backed FIFO at `cache/prefetch/`. A fill endpoint asks the LLM for 5–10 pages and enqueues them (LLM‑only; no offline prefetch).
+  - Background top‑up: when the queue is low, the server refills in the background (guarded by env flags). A small warmup can run at startup.
+  - Dedupe: a signature registry avoids recent repeats; duplicates prompt a retry with a nudged seed.
 
-- Python 3.10+ and pip
-- Node.js 18+ and npm
-- Optional: Redis (only if you swap in a Redis rate limiter; default is in‑process)
+- Output constraints and safety
+  - The LLM must return JSON in one of two shapes only: a single `{kind:"full_page_html"}` document or a single custom component with inline HTML/JS.
+  - The frontend strips external `<script src>` tags and runs only inline JS in a sandboxed iframe with a strict CSP. The iframe auto‑resizes and auto‑focuses so keyboard input works immediately.
 
-## Setup
+## Quickstart
 
-1) Python env and dependencies
+Prereqs: Python 3.10+ and pip. (Node is optional; a prebuilt `static/tailwind.css` is used in dev.)
 
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install fastapi pydantic uvicorn jsonschema requests ndjson redis
-```
+pip install -r requirements.txt  # or: pip install fastapi uvicorn requests pydantic jsonschema ndjson
 
-2) Node dependencies
-
-```bash
-npm install
-```
-
-## Build CSS (Tailwind)
-
-One-off build:
-
-```bash
-npm run build:css
-```
-
-Watch during development:
-
-```bash
-npm run watch:css
-```
-
-Input: `src/styles/input.css` → Output: `static/tailwind.css`.
-Tailwind v4 scans sources via `@source` directives in `src/styles/input.css` (templates + JS).
-
-## Run the API
-
-With auto-reload for development:
-
-```bash
+# Run the API (dev reload)
 uvicorn api.main:app --reload --port 8000
 ```
 
-Then visit:
-- Health: http://127.0.0.1:8000/health
-- Demo UI: http://127.0.0.1:8000/ (renders and regenerates pages on click)
+Open http://127.0.0.1:8000/ for the demo UI.
 
-Environment is auto‑loaded from `.env` on startup (no extra deps). Put your keys there.
-
-Allow CORS origins via env:
+Put provider keys in `.env` (auto‑loaded), for example:
 
 ```bash
-export ALLOW_ORIGINS="http://localhost:3000,https://yourdomain.com"
+OPENROUTER_API_KEY=sk-...
+OPENROUTER_MODEL=google/gemma-3n-e2b-it:free
+# optional: FORCE_OPENROUTER_ONLY=1
 ```
 
-## API endpoints
-- GET `/health` → `{ "status": "ok" }`
-- GET `/llm/status` → Current provider/model/has_token (no model call)
-- GET `/llm/probe` → Quick readiness probe
-- POST `/validate` → Validate a page against the schema or minimal checks
-- POST `/generate` → Generate a page (dedupe applied; dequeues from prefetch queue first)
-- POST `/generate/stream` → NDJSON stream: `{ "event":"meta" }` then `{ "event":"page", "data":{...} }`
-- POST `/prefetch/fill` → Generate 5–10 pages per request and enqueue them for later `/generate`
-- POST `/generate/stream` → NDJSON stream with two events: `{ "event":"meta" }` then `{ "event":"page", "data":{...} }`
+## Endpoints
 
-### Example: validate JSON
+- GET `/` — Demo UI
+- GET `/health` — `{ "status": "ok" }`
+- GET `/llm/status` — Provider/model/has_token without calling the model
+- GET `/llm/probe` — Lightweight readiness probe
+- GET `/metrics/total` — Global “sites generated” counter
+- GET `/prefetch/status` — Current queue size and directory
+- POST `/validate` — Validate a page structure
+- POST `/generate` — Generate or dequeue a page (dedupe applied; counter increments)
+- POST `/generate/stream` — NDJSON stream: `{event:"meta"}` then `{event:"page", data:{...}}`
+- POST `/prefetch/fill` — Ask the LLM for N pages (5–10) and enqueue
 
-```bash
-curl -s -X POST http://127.0.0.1:8000/validate \
-	-H 'Content-Type: application/json' \
-	-d @example_outputs/gold.json | jq
-```
+## Configuration (env)
 
-### Example: generate a page
+LLM provider (OpenRouter by default):
+- `OPENROUTER_API_KEY` (required for live generation)
+- `OPENROUTER_MODEL` (default: `google/gemma-3n-e2b-it:free`)
+- `FORCE_OPENROUTER_ONLY` (default: `0`) — force OpenRouter path when set
+- Optional Gemini: `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `MODEL_NAME`
 
-```bash
-curl -s -X POST http://127.0.0.1:8000/generate \
-	-H 'Content-Type: application/json' \
-	-H 'x-api-key: demo_123' \
-	-d '{"brief":"Landing page for a JSON-first site","seed":123}' | jq
-```
+Generation:
+- `TEMPERATURE` (default `1.2`)
+- `ALLOW_OFFLINE_GENERATION` (dev only; affects `/generate` fallback, not prefetch)
 
-Notes:
-- `brief` may be empty: the model invents a theme. `seed` is optional.
-- If the server’s own rate limit triggers (HTTP 429), check `X-RateLimit-*` headers.
-- If the LLM provider rate limits you, the server will return a page with `{ "error": "..." }` in the body; prefetch helps hide transient outages.
+Prefetch:
+- `PREFETCH_DIR` (default `cache/prefetch`)
+- `PREFETCH_BATCH_MIN`/`PREFETCH_BATCH_MAX` (default `5`/`10`)
+- `PREFETCH_DELAY_MS` (delay when serving dequeued pages)
+- `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED`
 
-### Example: stream (NDJSON)
+Dedupe:
+- `DEDUPE_ENABLED` (default `1`), `DEDUPE_MAX`, `DEDUPE_RECENT_FILE`
 
-```bash
-curl -N -X POST http://127.0.0.1:8000/generate/stream \
-	-H 'Content-Type: application/json' \
-	-H 'x-api-key: dev-key' \
-	-d '{"brief":"Landing page for a JSON-first site"}'
-```
+Access / CORS / rate limiting:
+- `API_KEYS` (comma‑separated; if empty, local dev is open)
+- `ALLOW_ORIGINS` (default `*`)
+- `RATE_WINDOW_SECONDS`, `RATE_MAX_REQUESTS`
 
 ## Development
 
-- Run tests:
+Run tests:
 
 ```bash
 pytest -q
 ```
 
-- Lint/format (optional if installed): `flake8`, `black .`
+The test suite covers the prefetch queue (enqueue/dequeue, dedupe, fill clamping), dequeue‑first generation, background top‑ups, and status endpoints. During tests, artificial delays and background workers are disabled for speed and determinism.
 
-- Tailwind scanning is configured in `src/styles/input.css` via `@source`.
+## Notes on generation rules
 
-## Configuration
+- The prompt strictly bans passive visuals, randomizers‑only, and menu‑only UIs, plus utility archetypes like calculators/clocks/to‑dos/quizzes.
+- Classic/trivial mini‑games are allowed but must still meet the interactivity bar (clear controls, visible feedback, responsiveness).
+- Apps must provide clear, immediate input → effect loops, obvious affordances, and at least two input modes (mouse/touch plus another) with visible feedback.
 
-Environment is read from `.env` at startup.
+## Troubleshooting
 
-LLM provider (OpenRouter by default):
-- `OPENROUTER_API_KEY` (required for live generation)
-- `OPENROUTER_MODEL` (default: `google/gemma-3n-e2b-it:free`)
-- `FORCE_OPENROUTER_ONLY` (default: `1`) — ignore Gemini even if set
-
-Legacy Gemini vars (optional):
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
-- `MODEL_NAME` (e.g., `gemini-1.5-pro`)
-
-Generation controls:
-- `TEMPERATURE` (default: `1.2`)
-- `ALLOW_OFFLINE_GENERATION` (dev only): if set, generates a tiny sandbox app without calling an LLM
-
-Access and rate limiting:
-- `API_KEYS` (comma‑separated). If empty, auth is disabled for local dev.
-- `ALLOW_ORIGINS` (default `*`)
-- `RATE_WINDOW_SECONDS`, `RATE_MAX_REQUESTS`
-
-Caching / dedupe / prefetch:
-- `CACHE_DIR`, `CACHE_TTL_SECONDS`
-- `DEDUPE_ENABLED` (default `1`), `DEDUPE_MAX` (default `200`)
-- `PREFETCH_DIR` (default `cache/prefetch`)
-- `PREFETCH_BATCH_MIN` (default `5`), `PREFETCH_BATCH_MAX` (default `10`)
-
-Notes:
-- The backend normalizes model output to exactly one of two shapes:
-	1) `{ "kind":"full_page_html", "html":"<!doctype html>..." }`
-	2) `{ "components": [ { "id": "custom-1", "type": "custom", "props": { "html": "<div>...<script>...</script></div>", "height": 360 } } ] }`
-- The frontend renders either a full‑page HTML app or the first custom component’s HTML inside a sandboxed iframe.
-- External `<script src>` tags are stripped; only inline scripts run inside the sandbox.
-
-## Project structure (minimal)
-
-```
-.
-├── api/
-│   ├── main.py          # FastAPI app (routes, rate limiting, prefetch)
-│   ├── llm_client.py    # OpenRouter/Gemini client + normalization + dedupe
-│   ├── prefetch.py      # File‑backed prefetch queue (5–10 per /prefetch/fill)
-│   ├── dedupe.py        # Signature‑based recent app registry
-│   └── auth.py          # Optional API key enforcement
-├── static/
-│   └── js/app.js        # Frontend: sandboxed iframe renderer + spinner
-├── src/styles/input.css # Tailwind v4 source (+ @source scan globs)
-├── templates/index.html # Demo UI (hands‑off regenerate button)
-├── page_schema.json (optional)
-├── requirements.txt (optional)
-├── package.json
-└── README.md
-```
-
-That’s it: a small, pragmatic stack that turns LLM output into a live, sandboxed app.
-
-## Optional: live LLM tests
-
-To verify real provider calls (skipped by default):
-
-```bash
-RUN_LIVE_LLM_TESTS=1 ./venv/bin/pytest -q tests/test_live_llm_openrouter.py
-```
-
-Requires `OPENROUTER_API_KEY` set in `.env`.
+- Provider 429 rate limit: back off; prefetch masks transient spikes.
+- SSL/cert issues: ensure system trust/certifi is up‑to‑date; avoid disabling verification globally.
+- “Invalid JSON” from provider: the server extracts the first JSON object and validates/normalizes it; try again or adjust temperature/model.
 
 ## License
 
-See `LICENSE` for details.
+MIT — see `LICENSE`.
