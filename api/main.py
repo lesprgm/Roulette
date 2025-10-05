@@ -2,16 +2,18 @@ import json
 import os
 import time
 import uuid
+import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from api.auth import require_api_key, extract_client_key, keys_required
+from api import counter
 from api import prefetch
 
 try:
@@ -108,20 +110,17 @@ def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
             return True, 9999, int(time.time()) + 60
 
     if _rl_mod:
-        # Try most likely signatures
         if hasattr(_rl_mod, "check_and_increment"):
-            return _rl_mod.check_and_increment(bucket, key)  # type: ignore[attr-defined]
-        # Fallbacks: try_acquire / allow
+            return _rl_mod.check_and_increment(bucket, key)  
         if hasattr(_rl_mod, "try_acquire"):
-            ok, remaining, reset_ts = _rl_mod.try_acquire(bucket, key)  # type: ignore[attr-defined]
+            ok, remaining, reset_ts = _rl_mod.try_acquire(bucket, key)
             return ok, remaining, reset_ts
         if hasattr(_rl_mod, "allow"):
-            ok = _rl_mod.allow(bucket, key)  # type: ignore[attr-defined]
-            remaining = getattr(_rl_mod, "remaining", lambda *_: 0)(bucket, key)  # type: ignore[misc]
-            reset_ts = getattr(_rl_mod, "reset_ts", lambda *_: int(time.time()) + 60)(bucket, key)  # type: ignore[misc]
+            ok = _rl_mod.allow(bucket, key)
+            remaining = getattr(_rl_mod, "remaining", lambda *_: 0)(bucket, key)
+            reset_ts = getattr(_rl_mod, "reset_ts", lambda *_: int(time.time()) + 60)(bucket, key)
             return ok, remaining, reset_ts
 
-    # No limiter available -> allow
     return True, 9999, int(time.time()) + 60
 
 
@@ -131,6 +130,48 @@ def _rate_limit_headers(remaining: int, reset_ts: int) -> Dict[str, str]:
         "X-RateLimit-Reset": str(reset_ts),
     }
     return headers
+
+
+# Prefetch tuning knobs
+PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "2") or 2)
+try:
+    # Prefer the batch max if available for a fill-to target
+    from api.prefetch import BATCH_MAX as _PF_BATCH_MAX
+    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 10)
+except Exception:
+    _DEFAULT_FILL_TO = 10
+PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
+PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "5000") or 5000)
+
+
+def _prefetch_topup_enabled() -> bool:
+    # Disable during pytest runs or when env flag set to 0/false
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    v = os.getenv("PREFETCH_TOPUP_ENABLED", "1").lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
+    """Background job: if queue is at/below low water, generate until it reaches min_fill.
+    Uses the configured LLM only; no offline prefetch here.
+    """
+    try:
+        if llm_generate_page is None or not llm_status().get("has_token"):
+            return
+        current = prefetch.size()
+        if current > PREFETCH_LOW_WATER and current >= min_fill:
+            return
+        i = 0
+        while prefetch.size() < min_fill:
+            seed = (int(time.time() * 1000) + i) % 1_000_000_007
+            page = llm_generate_page(brief or "", seed=seed)
+            if isinstance(page, dict) and page.get("error"):
+                break
+            prefetch.enqueue(page)
+            i += 1
+    except Exception:
+        pass
 
 
 def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]]]:
@@ -155,7 +196,7 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
         return (len(errors) == 0), errors
 
     try:
-        import jsonschema  # lazy import
+        import jsonschema
     except Exception:
         _light_checks(page)
         return (len(errors) == 0), errors
@@ -165,7 +206,6 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
         validator = jsonschema.Draft202012Validator(schema)
         for err in validator.iter_errors(page):
             loc = ".".join([str(p) for p in err.path]) or "(root)"
-            # keep 'required' wording to satisfy the test
             msg = str(err.message)
             errors.append({"path": loc, "message": msg})
     except Exception as e:
@@ -207,10 +247,17 @@ def llm_probe_endpoint() -> Dict[str, Any]:
     return llm_probe()
 
 
+@app.get("/metrics/total")
+def metrics_total() -> Dict[str, int]:
+    """Return the total number of websites generated across all users."""
+    return {"total": counter.get_total()}
+
+
 @app.post("/generate")
 def generate_endpoint(
     req: GenerateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     api_key: str = Depends(require_api_key),
 ):
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
@@ -222,7 +269,26 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts),
         )
 
-    # no stub fallbacks
+    # Prefer serving from prefetch queue regardless of LLM availability
+    page = prefetch.dequeue()
+    if page:
+        try:
+            if PREFETCH_DELAY_MS > 0:
+                time.sleep(PREFETCH_DELAY_MS / 1000.0)
+        except Exception:
+            pass
+        if isinstance(page, dict) and not page.get("error"):
+            try:
+                counter.increment(1)
+            except Exception:
+                pass
+        try:
+            if _prefetch_topup_enabled() and prefetch.size() <= PREFETCH_LOW_WATER:
+                background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
+        except Exception:
+            pass
+        return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
+
     if llm_generate_page is None or not llm_status().get("has_token"):
         # escape hatch
         if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
@@ -278,11 +344,13 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts),
         )
 
-    # Prefer serving from prefetch queue
-    page = prefetch.dequeue()
-    if not page:
-        # Call the LLM client; it will return either a valid doc or {error}
-        page = llm_generate_page(req.brief, seed=req.seed or 0)
+    page = llm_generate_page(req.brief, seed=req.seed or 0)
+
+    if isinstance(page, dict) and not page.get("error"):
+        try:
+            counter.increment(1)
+        except Exception:
+            pass
 
     return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
 
@@ -291,6 +359,7 @@ def generate_endpoint(
 def generate_stream(
     req: GenerateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     api_key: str = Depends(require_api_key),
 ):
     """
@@ -309,26 +378,28 @@ def generate_stream(
         meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
         yield json.dumps(meta) + "\n"
 
-        # Produce the same spec as /generate (no stub except under tests/dev offline)
         if llm_generate_page is None or not llm_status().get("has_token"):
             if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
-                page = {
-                    "components": [
-                        {
-                            "id": "custom-offline",
-                            "type": "custom",
-                            "props": {
-                                "html": "<div class=\"p-4 rounded-xl border border-slate-200 bg-white\">Offline Stream App</div>",
-                                "height": 220,
-                            },
-                        }
-                    ],
-                    "layout": {"flow": "stack"},
-                    "palette": {"primary": "slate", "accent": "indigo"},
-                    "links": ["/about"],
-                    "seed": req.seed or 0,
-                    "model_version": "offline",
-                }
+                # Try prefetch first; if empty, return a simple offline doc
+                page = prefetch.dequeue()
+                if not page:
+                    page = {
+                        "components": [
+                            {
+                                "id": "custom-offline",
+                                "type": "custom",
+                                "props": {
+                                    "html": "<div class=\"p-4 rounded-xl border border-slate-200 bg-white\">Offline Stream App</div>",
+                                    "height": 220,
+                                },
+                            }
+                        ],
+                        "layout": {"flow": "stack"},
+                        "palette": {"primary": "slate", "accent": "indigo"},
+                        "links": ["/about"],
+                        "seed": req.seed or 0,
+                        "model_version": "offline",
+                    }
                 yield json.dumps({"event": "page", "data": page}) + "\n"
                 return
             if os.getenv("PYTEST_CURRENT_TEST"):
@@ -355,11 +426,56 @@ def generate_stream(
                 yield json.dumps({"event": "error", "data": {"error": "Missing LLM credentials"}}) + "\n"
                 return
 
-        page = prefetch.dequeue() or llm_generate_page(req.brief, seed=req.seed or 0)
+        # Normal path: prefer prefetch; apply delay if served from queue
+        served_from_prefetch = False
+        page = prefetch.dequeue()
+        if page is not None:
+            served_from_prefetch = True
+            try:
+                if PREFETCH_DELAY_MS > 0:
+                    time.sleep(PREFETCH_DELAY_MS / 1000.0)
+            except Exception:
+                pass
+        else:
+            page = llm_generate_page(req.brief, seed=req.seed or 0)
+        if isinstance(page, dict) and not page.get("error"):
+            try:
+                counter.increment(1)
+            except Exception:
+                pass
+        try:
+            if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
+                background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
+        except Exception:
+            pass
         yield json.dumps({"event": "page", "data": page}) + "\n"
 
     headers = _rate_limit_headers(remaining, reset_ts)
     return StreamingResponse(_iter(), media_type="application/x-ndjson", headers=headers)
+
+
+@app.get("/prefetch/status")
+def prefetch_status() -> Dict[str, Any]:
+    """Return prefetch queue status and directory."""
+    try:
+        qsize = prefetch.size()
+    except Exception:
+        qsize = 0
+    return {"size": qsize, "dir": str(prefetch.PREFETCH_DIR)}
+
+
+@app.on_event("startup")
+def _prefetch_startup_topup() -> None:
+    """On startup, ensure the prefetch queue is warmed up using the LLM if available."""
+    try:
+        if not _prefetch_topup_enabled():
+            return
+        if llm_generate_page is None or not llm_status().get("has_token"):
+            return
+        t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
+        t.start()
+    except Exception:
+        pass
 
 
 class PrefetchRequest(BaseModel):
@@ -385,17 +501,18 @@ def prefetch_fill(
             headers=_rate_limit_headers(remaining, reset_ts),
         )
 
-    # Ensure credentials exist
-    if llm_generate_page is None or not llm_status().get("has_token"):
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Missing LLM credentials"},
-            headers=_rate_limit_headers(remaining, reset_ts),
-        )
+    # Only allow prefetch when LLM is available (no offline injection here)
+    llm_ok = not (llm_generate_page is None or not llm_status().get("has_token"))
 
     n = prefetch.clamp_batch(int(req.count or 0))
     added = 0
     for i in range(n):
+        if not llm_ok:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Missing LLM credentials"},
+                headers=_rate_limit_headers(remaining, reset_ts),
+            )
         page = llm_generate_page(req.brief or "", seed=(int(time.time()*1000) + i) % 1_000_000_007)
         if isinstance(page, dict) and page.get("error"):
             break
