@@ -171,7 +171,7 @@
           el.innerHTML = mkSection(`
             <div class="flex items-center gap-3">
               <button type="button" class="px-4 py-2 rounded text-white" data-role="cta-btn" id="gbtn">Compliment me</button>
-              <div class="text-sm text-slate-700" id="gout">Click for a compliment ✨</div>
+              <div class="text-sm text-slate-700" id="gout">Click for a compliment</div>
             </div>`);
           const b = el.querySelector('#gbtn');
           const o = el.querySelector('#gout');
@@ -181,7 +181,7 @@
         case 'color_party': {
           el.innerHTML = mkSection(`
             <div class="h-24 rounded border border-slate-200" id="cbox"></div>
-            <button type="button" class="mt-3 px-4 py-2 rounded text-white" data-role="cta-btn" id="pbtn">Party 🎉</button>`);
+            <button type="button" class="mt-3 px-4 py-2 rounded text-white" data-role="cta-btn" id="pbtn">Party</button>`);
           const box = el.querySelector('#cbox');
           const b = el.querySelector('#pbtn');
           const randColor = () => `hsl(${Math.floor(Math.random()*360)}, 85%, 60%)`;
@@ -192,10 +192,10 @@
         case 'emoji_rain': {
           el.innerHTML = mkSection(`
             <div class="relative h-32 overflow-hidden rounded border border-slate-200 bg-white" id="er"></div>
-            <button type="button" class="mt-3 px-4 py-2 rounded text-white" data-role="cta-btn" id="ebtn">Make it rain 🌧️</button>`);
+            <button type="button" class="mt-3 px-4 py-2 rounded text-white" data-role="cta-btn" id="ebtn">Make it rain</button>`);
           const area = el.querySelector('#er');
           const b = el.querySelector('#ebtn');
-          const pool = props?.emojis && Array.isArray(props.emojis) && props.emojis.length ? props.emojis : ['✨','🎈','🎉','🌟','💫','🔥','🍀','🌈','🪄'];
+          const pool = props?.emojis && Array.isArray(props.emojis) && props.emojis.length ? props.emojis : ['*','o','+','x','#','@','&','%','$'];
           b.addEventListener('click', () => {
             for (let i=0;i<12;i++) {
               const span = document.createElement('span');
@@ -656,7 +656,7 @@
   async function generateNew(e) {
     if (e) e.preventDefault();
     const briefs = [
-      'Emoji Rain Party', 'Tiny Painter Studio', 'Yes or No Oracle', 'Color Chaos Button', 'Coin-Flip Arena',
+      'Symbol Rain Party', 'Tiny Painter Studio', 'Yes or No Oracle', 'Color Chaos Button', 'Coin-Flip Arena',
       'Guess-the-Number Mini', 'Pixel Paintboard', 'Speed Click Challenge', "Don't Press It", 'Mini Tic-Tac-Toe', 'Countdown Timer App'
     ];
     const brief = briefs[Math.floor(Math.random()*briefs.length)];
