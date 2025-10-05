@@ -16,6 +16,7 @@ def isolated_prefetch(monkeypatch, tmp_path):
     seen_file = tmp_path / "seen.json"
     monkeypatch.setenv("PREFETCH_DIR", str(pf_dir))
     monkeypatch.setenv("DEDUPE_RECENT_FILE", str(seen_file))
+    monkeypatch.setenv("PREFETCH_TOPUP_ENABLED", "0")
 
     from api import dedupe as dd
     from api import prefetch as pf
@@ -24,6 +25,8 @@ def isolated_prefetch(monkeypatch, tmp_path):
 
     from api import main as main_mod
     monkeypatch.setattr(main_mod, "prefetch", pf)
+    # Speed up tests: remove any artificial prefetch delay during dequeue
+    main_mod.PREFETCH_DELAY_MS = 0
 
     return pf
 
@@ -141,18 +144,73 @@ def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefet
     assert r.status_code == 503
 
 
-def test_prefetch_fill_offline_allowed_enqueues_unique(monkeypatch, isolated_prefetch):
+def test_prefetch_fill_offline_disallowed_without_llm(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod
 
+    # Even if offline generation is generally allowed for /generate, /prefetch/fill is LLM-only now
     monkeypatch.setenv("ALLOW_OFFLINE_GENERATION", "1")
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
     client = TestClient(app)
 
     r = client.post("/prefetch/fill", json={"brief": "", "count": 6}, headers=API_HEADERS)
+    assert r.status_code == 503
+
+
+def test_prefetch_status_endpoint(monkeypatch, isolated_prefetch):
+    from api.main import app
+    from api import main as main_mod
+    pf = isolated_prefetch
+
+    # Seed queue with one doc
+    assert pf.enqueue(_make_custom_doc("<div>status-1</div>")) is True
+    client = TestClient(app)
+    r = client.get("/prefetch/status")
     assert r.status_code == 200
     body = r.json()
-    assert 5 <= body.get("requested") <= 10
-    assert body.get("added") == body.get("requested")
-    assert body.get("queue_size") == body.get("requested")
+    assert body.get("size") == 1
+    expected_dir = os.getenv("PREFETCH_DIR")
+    assert isinstance(body.get("dir"), str) and body["dir"] == expected_dir
+
+
+def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefetch):
+    """When we serve from prefetch and queue size becomes <= low-water, a background top-up should run."""
+    from api.main import app
+    from api import main as main_mod
+    pf = isolated_prefetch
+
+    # Keep tests fast: remove delay and set small targets
+    main_mod.PREFETCH_DELAY_MS = 0
+    main_mod.PREFETCH_LOW_WATER = 1
+    main_mod.PREFETCH_FILL_TO = 3
+
+    # Two items in queue so that after one generate, size=1 triggers top-up to 3
+    assert pf.enqueue(_make_custom_doc("<div>T1</div>")) is True
+    assert pf.enqueue(_make_custom_doc("<div>T2</div>")) is True
+
+    # Mock LLM as available and generate unique docs for top-up
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+
+    def _fake_llm(brief: str, seed: int):
+        return _make_custom_doc(f"<div>topup-{seed}</div>")
+
+    monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)
+    client = TestClient(app)
+
+    # Allow background top-up in this test (bypass pytest guard)
+    monkeypatch.setenv("PREFETCH_TOPUP_ENABLED", "1")
+    monkeypatch.setattr(main_mod, "_prefetch_topup_enabled", lambda: True)
+
+    # Consume one item to trigger top-up
+    r = client.post("/generate", json={"brief": "", "seed": 111}, headers=API_HEADERS)
+    assert r.status_code == 200
+
+    # Background task runs after response; poll briefly until size reaches target or timeout
+    deadline = time.time() + 2.0  # up to 2 seconds
+    target = main_mod.PREFETCH_FILL_TO
+    while time.time() < deadline:
+        if pf.size() >= target:
+            break
+        time.sleep(0.05)
+    assert pf.size() >= target

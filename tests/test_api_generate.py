@@ -44,7 +44,7 @@ def test_validate_success():
 def test_validate_failure_on_missing_component_id():
     bad_page = {
         "components": [
-            {"type": "hero", "props": {"title": "X"}}  # missing "id"
+            {"type": "hero", "props": {"title": "X"}}  
         ],
         "layout": {"flow": "stack"},
         "palette": {"primary": "slate", "accent": "indigo"},
