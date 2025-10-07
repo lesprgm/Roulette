@@ -14,11 +14,10 @@ def test_generate_offline_flag_allows_custom_app(monkeypatch):
     monkeypatch.setenv("ALLOW_OFFLINE_GENERATION", "1")
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "manually_set_for_other_tests")  # keep pytest behavior elsewhere
-    monkeypatch.setenv("GEMINI_API_KEY", "")
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": None, "has_token": False})
 
     r = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
     assert r.status_code == 200
@@ -35,11 +34,10 @@ def test_generate_503_when_no_creds_no_offline(monkeypatch):
     # Force no offline, no creds, and disable pytest stub
     monkeypatch.delenv("ALLOW_OFFLINE_GENERATION", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setenv("GEMINI_API_KEY", "")
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": None, "has_token": False})
 
     r = client.post("/generate", json={"brief": "Anything", "seed": 2}, headers=API_HEADERS)
     assert r.status_code == 503
@@ -50,11 +48,10 @@ def test_generate_503_when_no_creds_no_offline(monkeypatch):
 def test_stream_error_event_without_creds_and_offline(monkeypatch):
     monkeypatch.delenv("ALLOW_OFFLINE_GENERATION", raising=False)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setenv("GEMINI_API_KEY", "")
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": None, "has_token": False})
 
     r = client.post("/generate/stream", json={"brief": "X", "seed": 3}, headers=API_HEADERS)
     assert r.status_code == 200

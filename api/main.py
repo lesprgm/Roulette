@@ -22,7 +22,7 @@ except Exception:
     llm_generate_page = None
 
     def llm_status() -> Dict[str, Any]:
-        return {"provider": "gemini", "model": None, "has_token": False, "using": "stub"}
+        return {"provider": None, "model": None, "has_token": False, "using": "stub"}
 
     def llm_probe() -> Dict[str, Any]:
         return {"ok": False, "error": "Model or token not configured", "using": "stub"}

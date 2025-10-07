@@ -18,8 +18,8 @@ def test_llm_status_shape():
     r = client.get("/llm/status")
     assert r.status_code == 200
     body = r.json()
-    # Provider may be 'groq', 'openrouter', or 'gemini' depending on env
-    assert body.get("provider") in ("groq", "openrouter", "gemini", None)
+    # Provider may be 'groq' or 'openrouter' depending on env
+    assert body.get("provider") in ("groq", "openrouter", None)
     assert "using" in body
     assert "has_token" in body
 

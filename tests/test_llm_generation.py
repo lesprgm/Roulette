@@ -10,13 +10,13 @@ API_HEADERS = {"x-api-key": "demo_123"}
 
 
 def test_llm_generate_normalizes_full_page_html(monkeypatch):
-    # Force Gemini path and disable OpenRouter selection
-    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
-    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
-    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "fake-key")
+    # Force OpenRouter path (Groq disabled)
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     html = "<!doctype html><html><body><div id='app'>Hi</div><script>console.log('ok')</script></body></html>"
-    monkeypatch.setattr(llm_client, "_call_gemini_for_page", lambda brief, seed: {"kind": "full_page_html", "html": html})
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: {"kind": "full_page_html", "html": html})
 
     out = llm_client.generate_page("any brief", seed=123)
     assert isinstance(out, dict)
@@ -25,9 +25,10 @@ def test_llm_generate_normalizes_full_page_html(monkeypatch):
 
 
 def test_llm_generate_normalizes_components_to_custom(monkeypatch):
-    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
-    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
-    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "fake-key")
+    # Use OpenRouter path
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     comp_doc = {
         "components": [
@@ -38,12 +39,8 @@ def test_llm_generate_normalizes_components_to_custom(monkeypatch):
             }
         ]
     }
-    # The real _call_gemini_for_page returns a normalized doc; mimic that here
-    monkeypatch.setattr(
-        llm_client,
-        "_call_gemini_for_page",
-        lambda brief, seed: llm_client._normalize_doc(comp_doc),
-    )
+    # Mimic normalized doc via OpenRouter
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: llm_client._normalize_doc(comp_doc))
 
     out = llm_client.generate_page("any", seed=1)
     assert "components" in out and isinstance(out["components"], list)
@@ -55,9 +52,9 @@ def test_llm_generate_normalizes_components_to_custom(monkeypatch):
 
 
 def test_llm_generate_picks_first_renderable_component(monkeypatch):
-    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
-    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
-    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     doc = {
         "components": [
@@ -65,11 +62,7 @@ def test_llm_generate_picks_first_renderable_component(monkeypatch):
             {"id": "b", "type": "weird", "props": {"html": "<div>ok</div>", "height": 250}},
         ]
     }
-    monkeypatch.setattr(
-        llm_client,
-        "_call_gemini_for_page",
-        lambda brief, seed: llm_client._normalize_doc(doc),
-    )
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: llm_client._normalize_doc(doc))
 
     out = llm_client.generate_page("x", seed=5)
     comp = out["components"][0]
@@ -79,11 +72,13 @@ def test_llm_generate_picks_first_renderable_component(monkeypatch):
 
 
 def test_llm_generate_returns_error_on_call_failure(monkeypatch):
+    # No providers available
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
-    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "fake-key")
-    # Simulate transport/parse failure path (returns None)
-    monkeypatch.setattr(llm_client, "_call_gemini_for_page", lambda brief, seed: None)
+    # Simulate failure path (returns None)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: None)
+    monkeypatch.setattr(llm_client, "_call_groq_for_page", lambda brief, seed: None)
 
     out = llm_client.generate_page("y", seed=7)
     assert isinstance(out, dict) and "error" in out
@@ -93,7 +88,7 @@ def test_generate_endpoint_returns_llm_page_when_available(monkeypatch):
     # Force API layer to think LLM is available
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>OK</body></html>"}
     monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed: page)
 
@@ -105,7 +100,7 @@ def test_generate_endpoint_returns_llm_page_when_available(monkeypatch):
 def test_stream_endpoint_emits_page_event_with_llm(monkeypatch):
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
     page = {
         "components": [
             {"id": "c1", "type": "custom", "props": {"html": "<div>Stream OK</div>", "height": 200}}
