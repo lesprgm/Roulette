@@ -65,7 +65,7 @@ def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
     def _fake_llm(brief: str, seed: int):
         return _make_custom_doc(f"<div>seed-{seed}</div>")
@@ -85,7 +85,7 @@ def test_prefetch_fill_skips_duplicates(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
     def _same_doc(brief: str, seed: int):
         return _make_custom_doc("<div>same</div>")
@@ -111,7 +111,7 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
     assert pf.enqueue(docA) is True
     assert pf.enqueue(docB) is True
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
     sentinel = _make_custom_doc("<div>LLM-Fallback</div>")
     monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed: sentinel)
     client = TestClient(app)
@@ -136,7 +136,7 @@ def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefet
     from api import main as main_mod
 
     monkeypatch.delenv("ALLOW_OFFLINE_GENERATION", raising=False)
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": None, "has_token": False})
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
     client = TestClient(app)
 
@@ -150,7 +150,7 @@ def test_prefetch_fill_offline_disallowed_without_llm(monkeypatch, isolated_pref
 
     # Even if offline generation is generally allowed for /generate, /prefetch/fill is LLM-only now
     monkeypatch.setenv("ALLOW_OFFLINE_GENERATION", "1")
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": False})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": None, "has_token": False})
     monkeypatch.setattr(main_mod, "llm_generate_page", None)
     client = TestClient(app)
 
@@ -190,7 +190,7 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
     assert pf.enqueue(_make_custom_doc("<div>T2</div>")) is True
 
     # Mock LLM as available and generate unique docs for top-up
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
     def _fake_llm(brief: str, seed: int):
         return _make_custom_doc(f"<div>topup-{seed}</div>")

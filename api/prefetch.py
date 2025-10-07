@@ -38,7 +38,8 @@ def enqueue(doc: Dict[str, Any]) -> bool:
     # Record in dedupe and persist
     dedupe.add(sig)
     _ensure_dir()
-    fname = f"{int(time.time()*1000)}-{uuid.uuid4().hex[:8]}.json"
+    # Use nanosecond resolution to preserve enqueue order reliably under fast successive calls
+    fname = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
     path = PREFETCH_DIR / fname
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
