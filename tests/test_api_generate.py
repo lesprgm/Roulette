@@ -18,8 +18,8 @@ def test_llm_status_shape():
     r = client.get("/llm/status")
     assert r.status_code == 200
     body = r.json()
-    # Provider may be 'openrouter' or 'gemini' depending on env
-    assert body.get("provider") in ("openrouter", "gemini", None)
+    # Provider may be 'groq', 'openrouter', or 'gemini' depending on env
+    assert body.get("provider") in ("groq", "openrouter", "gemini", None)
     assert "using" in body
     assert "has_token" in body
 
@@ -61,7 +61,6 @@ def test_validate_failure_on_missing_component_id():
 
 
 def test_generate_ok(monkeypatch):
-    # Force no live LLM during tests to keep responses deterministic (test stub path)
     from api import main as main_mod
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "stub", "has_token": False})
     payload = {"brief": "Landing page", "seed": 123}
@@ -90,10 +89,8 @@ def test_stream_returns_ndjson(monkeypatch):
         try:
             obj = json.loads(ln)
             parsed_lines.append(obj)
-            # Accept per-line component objects
             if not (isinstance(obj, dict) and "component" in obj):
                 all_component_lines = False
-            # Accept event-wrapped page JSON
             if isinstance(obj, dict) and obj.get("event") == "page" and isinstance(obj.get("data"), dict):
                 page_from_event = obj["data"]
         except json.JSONDecodeError:
@@ -107,7 +104,6 @@ def test_stream_returns_ndjson(monkeypatch):
         assert "components" in page_from_event and isinstance(page_from_event["components"], list) and len(page_from_event["components"]) >= 1
         return
 
-    # Fallback: some servers stream a single JSON page split across lines
     stitched = "".join(raw_lines)
     try:
         page = json.loads(stitched)
@@ -123,7 +119,6 @@ def test_stream_returns_ndjson(monkeypatch):
 
 
 def test_rate_limit(monkeypatch):
-    # Exercise in-process limiter if present.
     import api.ratelimit as rl
 
     rl._reset()
@@ -137,7 +132,6 @@ def test_rate_limit(monkeypatch):
         resp = client.post("/generate", json=payload, headers=headers)
         assert resp.status_code == 429
         j = resp.json()
-        # Accept either retry_after (seconds) or reset (epoch).
         assert ("retry_after" in j) or ("reset" in j)
     finally:
         rl.MAX_REQUESTS = old_max
