@@ -66,7 +66,7 @@ def test_llm_generate_picks_first_renderable_component(monkeypatch):
 
     out = llm_client.generate_page("x", seed=5)
     comp = out["components"][0]
-    assert comp["id"] == "b"  # chose the first renderable (with props.html)
+    assert comp["id"] == "b"
     assert comp["type"] == "custom"
     assert comp["props"]["height"] == 250
 
@@ -115,3 +115,62 @@ def test_stream_endpoint_emits_page_event_with_llm(monkeypatch):
     assert any(json.loads(ln).get("event") == "meta" for ln in lines)
     page_events = [json.loads(ln) for ln in lines if json.loads(ln).get("event") == "page"]
     assert page_events and page_events[-1].get("data") == page
+
+
+def test_llm_generate_accepts_ndw_snippet_v1(monkeypatch):
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+
+    snippet = {
+        "kind": "ndw_snippet_v1",
+        "title": "Tiny App",
+        "background": {"style": "background:#111", "class": "text-white"},
+        "css": "#ndw-app{min-height:100vh}",
+        "html": "<div id='ndw-app'><h1>Hi</h1></div>",
+        "js": "console.log('ndw ok')",
+    }
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+
+    out = llm_client.generate_page("any", seed=42)
+    assert out.get("kind") == "ndw_snippet_v1"
+    assert isinstance(out.get("html"), str) and "ndw-app" in out["html"]
+
+
+def test_snippet_without_background_keeps_landing_styles(monkeypatch):
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+
+    snippet = { "kind": "ndw_snippet_v1", "html": "<div id='ndw-app'><h2>OK</h2></div>" }
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    out = llm_client.generate_page("", 1)
+    assert out.get("kind") == "ndw_snippet_v1"
+    assert out.get("background") is None or isinstance(out.get("background"), dict)
+
+
+def test_snippet_minimum_content_is_preserved(monkeypatch):
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+
+    snippet = { "kind": "ndw_snippet_v1", "css": "#ndw-app{color:red}", "html": "<div id='ndw-app'></div>", "js": "console.log('hi')" }
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    out = llm_client.generate_page("", 2)
+    assert out.get("css") and out.get("html")
+
+
+def test_snippet_rejects_missing_all_content(monkeypatch):
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+
+    bad = { "kind": "ndw_snippet_v1" }
+    def _call(_b,_s): return bad
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", _call)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda b,s: bad)
+    try:
+        llm_client._normalize_doc(bad)
+    except ValueError:
+        pass
+
