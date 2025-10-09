@@ -1,4 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ["./index.html", "./static/js/**/*.js", "./api/**/*.py"], 
+  // Scan templates, TypeScript sources, compiled JS (for any dynamic injections), and backend templates
+  content: [
+    "./templates/**/*.html",
+    "./static/ts-src/**/*.ts",
+    "./api/**/*.py"
+  ],
 };

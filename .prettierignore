@@ -1,0 +1,6 @@
+node_modules
+static/ts-build
+cache
+artifacts
+venv
+**/*.map

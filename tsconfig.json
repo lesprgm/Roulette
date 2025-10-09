@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Node",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "rootDir": "static/ts-src",
+    "outDir": "static/ts-build",
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "useDefineForClassFields": true,
+    "sourceMap": true
+  },
+  "include": ["static/ts-src/**/*", "types/**/*"],
+  "exclude": ["node_modules", "static/ts-build"]
+}
