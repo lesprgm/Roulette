@@ -50,6 +50,14 @@ export interface NdwRuntime {
       return target || document;
     },
     loop(fn:NdwLoopFn){
+      if (typeof fn !== 'function') {
+        console.error('[NDW] loop requires a function');
+        return;
+      }
+      // Warn if callback doesn't accept dt parameter (common mistake)
+      if (fn.length === 0) {
+        console.warn('[NDW] Your loop callback should accept dt parameter: NDW.loop((dt) => { ... })');
+      }
       NDW._tick = fn;
       NDW._last = performance.now();
       if (!NDW._bound) NDW._bound = NDW._frame.bind(NDW);
@@ -60,7 +68,16 @@ export interface NdwRuntime {
       NDW._last = now;
       NDW.time.now = now;
       NDW.time.elapsed = now - NDW.time.start;
-      try { NDW._tick && NDW._tick(dt); } catch(e){ console.error('NDW.tick error', e); }
+      try { 
+        NDW._tick && NDW._tick(dt); 
+      } catch(e){ 
+        console.error('[NDW] Loop callback error:', e);
+        // Try to show error overlay if available
+        if (typeof (window as any).__NDW_showSnippetErrorOverlay === 'function') {
+          (window as any).__NDW_showSnippetErrorOverlay(e);
+        }
+        // Don't stop the loop; let it continue for debugging
+      }
       requestAnimationFrame(NDW._bound!);
     },
     onKey(fn:(e:KeyboardEvent)=>void){ NDW._keyHandlers.push(fn); },
@@ -73,6 +90,9 @@ export interface NdwRuntime {
       const parent = typeof opts.parent === 'string' ? (document.querySelector(opts.parent) as HTMLElement) || document.getElementById('ndw-app') || document.body : (opts.parent || document.getElementById('ndw-app') || document.body);
       const c = document.createElement('canvas') as NdwCanvas;
       c.style.display = 'block';
+      c.style.position = 'absolute';
+      c.style.top = '0';
+      c.style.left = '0';
       const dpr = Math.max(1, Math.min(3, (opts && opts.dpr) || window.devicePixelRatio || 1));
       const ctx = c.getContext('2d', { alpha: true, desynchronized: true }) as CanvasRenderingContext2D;
       function _applySize(widthCss:number, heightCss:number){
@@ -84,11 +104,25 @@ export interface NdwRuntime {
         c.style.height = heightCss + 'px';
         try { ctx.setTransform(dpr,0,0,dpr,0,0); } catch(_) {}
       }
-      if (opts.fullScreen) _applySize(window.innerWidth, window.innerHeight); else _applySize(opts.width||800, opts.height||600);
+      if (opts.fullScreen) {
+        _applySize(window.innerWidth, window.innerHeight);
+        // Ensure parent can hold positioned canvas
+        if (parent && parent.style.position !== 'absolute' && parent.style.position !== 'relative' && parent.style.position !== 'fixed') {
+          parent.style.position = 'relative';
+        }
+      } else {
+        _applySize(opts.width||800, opts.height||600);
+      }
       parent && parent.appendChild(c);
+      // LLM compatibility aliases to prevent undefined errors
+      (c as any).element = c;  // some snippets expect canvas.element
+      (c as any).canvas = c;   // some snippets expect result.canvas
       Object.defineProperty(ctx, 'width', { get(){ return c.width / dpr; } });
       Object.defineProperty(ctx, 'height', { get(){ return c.height / dpr; } });
       c.ctx = ctx; c.dpr = dpr; c.clear = ()=>{ try { ctx.clearRect(0,0,(ctx as any).width,(ctx as any).height); } catch(_) {} };
+      // Ensure inputs and resize listeners are installed even if NDW.init isn't called explicitly
+      try { NDW._installInput(document); } catch(_) {}
+      try { NDW._installResize(); } catch(_) {}
       return c;
     },
     resizeCanvasToViewport(canvas:HTMLCanvasElement, opts?:{dpr?:number}){
@@ -120,12 +154,21 @@ export interface NdwRuntime {
         doc.addEventListener('keydown', e=>{ NDW._keys.add(e.key); for(const f of NDW._keyHandlers) f(e); });
         doc.addEventListener('keyup', e=>{ NDW._keys.delete(e.key); for(const f of NDW._keyHandlers) f(e); });
       }
-      const ptr = (type:string)=>(e:PointerEvent)=>{ const p:NdwPointer={type, x:e.clientX, y:e.clientY, raw:e, down:NDW.pointer.down}; NDW.pointer.x=p.x; NDW.pointer.y=p.y; const wasDown = NDW.pointer.down; NDW.pointer.down = (type==='down'? true : (type==='up'? false : NDW.pointer.down));
-        // Mirror pointer state into a pseudo key 'mouse' so snippets can call NDW.isDown('mouse')
+      const ptr = (type:string) => (e:PointerEvent)=>{
+        // Map to canvas if present, else use viewport coordinates
+        const targetCanvas = document.querySelector('#ndw-app canvas') as HTMLCanvasElement | null;
+        let px = e.clientX, py = e.clientY;
+        if (targetCanvas && targetCanvas.getBoundingClientRect){
+          const r = targetCanvas.getBoundingClientRect();
+          px = e.clientX - r.left; py = e.clientY - r.top;
+        }
+        const p:NdwPointer={type, x:px, y:py, raw:e, down:NDW.pointer.down};
+        NDW.pointer.x=p.x; NDW.pointer.y=p.y; const wasDown = NDW.pointer.down; NDW.pointer.down = (type==='down'? true : (type==='up'? false : NDW.pointer.down));
         if (!NDW._keys) NDW._keys = new Set<string>();
         if (!wasDown && NDW.pointer.down) NDW._keys.add('mouse');
         if (wasDown && !NDW.pointer.down) NDW._keys.delete('mouse');
-        for(const f of NDW._ptrHandlers) f(p); };
+        for(const f of NDW._ptrHandlers) f(p);
+      };
       doc.addEventListener('pointerdown', ptr('down'));
       doc.addEventListener('pointermove', ptr('move'));
       doc.addEventListener('pointerup', ptr('up'));
@@ -136,17 +179,7 @@ export interface NdwRuntime {
       window.addEventListener('resize', ()=>{ if(!req) req = requestAnimationFrame(fire); });
     },
     audio:{
-      _ctx: null as AudioContext | null,
-      _ensure(){ if(!this._ctx){ try { this._ctx = new AudioContext(); } catch(_) { this._ctx = null; } } return this._ctx; },
-      playTone(freq?:number, durationMs=150, type:OscillatorType='sine', gain=0.02){
-        const ctx = this._ensure(); if(!ctx) return;
-        const osc = ctx.createOscillator(); const g = ctx.createGain();
-        const f = (typeof freq==='number' && !isNaN(freq)) ? freq : 440;
-        osc.type = type; osc.frequency.value = Math.max(20, Math.min(8000, f));
-        g.gain.value = Math.max(0, Math.min(1, gain));
-        osc.connect(g); g.connect(ctx.destination);
-        const t0 = ctx.currentTime; osc.start(t0); osc.stop(t0 + Math.max(0.01, durationMs/1000));
-      }
+      playTone(_freq?:number, _durationMs?:number, _type?:OscillatorType, _gain?:number){ /* audio disabled */ }
     }
   };
   global.NDW = NDW as NdwRuntime;
