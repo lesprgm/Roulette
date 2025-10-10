@@ -5,20 +5,82 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Non-Deterministic Website</title>
   <link rel="stylesheet" href="/static/tailwind.css" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    :root{
+      --ndw-pop1:#38bdf8; /* sky-400 */
+      --ndw-pop2:#60a5fa; /* blue-400 */
+      --ndw-pop3:#1e40af; /* blue-800 (accent reserve) */
+      --ndw-pop4:#22d3ee; /* cyan-400 */
+      --ndw-bg:#0b1220;   /* deep blue */
+    }
+    html,body{height:100%}
+  body{ color:#f7f7fb; }
+    /* Stage centers the hero without affecting other sections */
+    .ndw-stage{ position:relative; min-height:48vh; display:grid; place-items:center; overflow:hidden; }
+    /* Animated background */
+    .ndw-bg{ position:absolute; inset:0; z-index:0; overflow:hidden; }
+    .ndw-bg::before{ content:""; position:absolute; inset:-22vmax; background:conic-gradient(from 0deg, var(--ndw-pop1), var(--ndw-pop2), var(--ndw-pop4), var(--ndw-pop1)); filter:blur(90px) saturate(130%); opacity:.55; animation:ndw-spin 18s linear infinite; }
+    /* Blue tint overlay so this section reads blue over the purple body */
+    .ndw-bg::after{ content:""; position:absolute; inset:0; background:
+      radial-gradient(60% 60% at 50% 40%, rgba(30, 64, 175, .35), rgba(2, 6, 23, 0) 70%),
+      linear-gradient(180deg, rgba(2, 8, 23, .25), rgba(2, 8, 23, 0));
+      pointer-events:none;
+    }
+    @keyframes ndw-spin{ to{ transform:rotate(1turn) } }
+    .ndw-blob{ position:absolute; width:48vmin; height:48vmin; border-radius:50%; filter:blur(60px) saturate(140%); opacity:.45; mix-blend-mode:screen; will-change:transform; }
+    .ndw-b1{ background:radial-gradient(circle at 30% 30%, var(--ndw-pop2), transparent 60%); animation:ndw-float1 22s ease-in-out infinite; }
+    .ndw-b2{ background:radial-gradient(circle at 70% 40%, var(--ndw-pop1), transparent 60%); animation:ndw-float2 26s ease-in-out infinite; }
+    .ndw-b3{ background:radial-gradient(circle at 40% 70%, var(--ndw-pop4), transparent 60%); animation:ndw-float3 28s ease-in-out infinite; }
+    @keyframes ndw-float1{ 0%{transform:translate(-20vmin,-10vmin) scale(1)} 50%{transform:translate(10vmin,10vmin) scale(1.15)} 100%{transform:translate(-20vmin,-10vmin) scale(1)} }
+    @keyframes ndw-float2{ 0%{transform:translate(30vmin,-15vmin) scale(1)} 50%{transform:translate(-5vmin,5vmin) scale(1.1)} 100%{transform:translate(30vmin,-15vmin) scale(1)} }
+    @keyframes ndw-float3{ 0%{transform:translate(-10vmin,25vmin) scale(1)} 50%{transform:translate(15vmin,0vmin) scale(1.2)} 100%{transform:translate(-10vmin,25vmin) scale(1)} }
+    /* Cursor-follow glow */
+    .ndw-glow{ position:absolute; width:36vmin; height:36vmin; border-radius:50%; pointer-events:none; z-index:1; background:radial-gradient(circle, rgba(255,255,255,.35), rgba(255,255,255,0) 60%); mix-blend-mode:overlay; filter:blur(18px); transform:translate(-50%,-50%); }
+    /* Minimal hero text */
+    .ndw-hero{ position:relative; z-index:2; text-align:center; padding:2rem 1.25rem; backdrop-filter:blur(6px); }
+    .ndw-title{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; font-size:clamp(2.2rem,7vw,4.6rem); line-height:.95; letter-spacing:.02em; text-shadow:0 6px 28px rgba(0,0,0,.35); }
+    .ndw-accent{ background:linear-gradient(120deg,var(--ndw-pop1),var(--ndw-pop2),var(--ndw-pop4)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    @media (prefers-reduced-motion: reduce){ .ndw-bg::before,.ndw-blob,.ndw-glow{ animation:none } }
+    /* Fallback gradient if Tailwind fails to load */
+    body.ndw-base{
+      background: linear-gradient(135deg, #2e1065, #701a75 45%, #3b0764);
+      color:#ffffff;
+    }
+  </style>
 </head>
 
-<body class="min-h-screen bg-slate-50 text-slate-900" data-api-key="">
-  <main id="appMain" class="container mx-auto max-w-3xl px-4 py-16">
-    <section class="rounded-2xl p-10 bg-slate-900 text-white text-center" data-role="hero">
-      <h1 class="text-4xl font-extrabold tracking-wide">Non-Deterministic Website</h1>
-      <p class="mt-3 text-slate-300">Click Generate to conjure a brand-new interactive mini-site.</p>
-      <p id="sitesCounter" class="mt-2 text-slate-400 text-sm">Sites generated: 0</p>
-      <div class="mt-6">
-        <button id="landingGenerate" type="button" class="px-6 py-3 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700" data-role="cta-btn">Generate</button>
+<body class="min-h-screen bg-gradient-to-br from-purple-950 via-fuchsia-900 to-violet-900 text-white ndw-base" data-api-key="">
+  <main id="appMain" class="relative w-full min-h-screen px-6 md:px-10 py-16 md:py-20">
+    <section class="relative text-center overflow-hidden flex flex-col items-center justify-center min-h-[70vh]" data-role="hero">
+      <div class="ndw-stage w-full">
+        <div class="ndw-bg">
+          <div class="ndw-blob ndw-b1"></div>
+          <div class="ndw-blob ndw-b2"></div>
+          <div class="ndw-blob ndw-b3"></div>
+        </div>
+        <div id="ndw-glow" class="ndw-glow" aria-hidden="true"></div>
+        <div class="ndw-hero">
+          <h1 class="ndw-title">Non-Deterministic <span class="ndw-accent">Website</span></h1>
+        </div>
       </div>
+
     </section>
   </main>
 
-  <script src="/static/js/app.js"></script>
+  <!-- Compiled TypeScript outputs (replacing legacy /static/js/*.js) -->
+  <!-- Load compiled TypeScript as ES modules (required because output contains export markers) -->
+  <script type="module" src="/static/ts-build/ndw.js"></script>
+  <script type="module" src="/static/ts-build/app.js"></script>
+  <script>
+    (function(){
+      var glow = document.getElementById('ndw-glow');
+      if(!glow) return;
+      var x = window.innerWidth/2, y = window.innerHeight/3, rafId = 0;
+      function onMove(e){ x = e.clientX; y = e.clientY; if(!rafId){ rafId = requestAnimationFrame(tick); } }
+      function tick(){ glow.style.left = x + 'px'; glow.style.top = y + 'px'; rafId = 0; }
+      window.addEventListener('pointermove', onMove, { passive: true });
+    })();
+  </script>
 </body>
 </html>
