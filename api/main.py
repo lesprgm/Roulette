@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
 from api.auth import require_api_key, extract_client_key, keys_required
 from api import counter
@@ -43,7 +44,24 @@ except Exception:
 
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    try:
+        if _prefetch_topup_enabled():
+            try:
+                # Only warm prefetch if LLM credentials are available
+                if llm_generate_page is not None and llm_status().get("has_token"):
+                    t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
+                    t.start()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    yield
+    # Shutdown: nothing specific (threads are daemonized)
+
+app = FastAPI(lifespan=lifespan)
 
 allow_origins = [o.strip() for o in os.getenv("ALLOW_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
@@ -179,7 +197,7 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
     Validate `page` against your JSON schema file if present.
     If schema file is absent, do a light required-fields check to satisfy tests.
     """
-    schema_path = Path("page_schema.json")
+    schema_path = Path("schemas/page_schema.json")
     errors: List[Dict[str, Any]] = []
 
     # Minimal checks even without schema to support tests
@@ -190,6 +208,55 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
         for idx, comp in enumerate(p["components"]):
             if not isinstance(comp, dict) or "id" not in comp:
                 errors.append({"path": f"components[{idx}].id", "message": "required property 'id'"})
+
+    # First try strict Pydantic models if available/valid
+    try:
+        from typing import Literal, Union, Optional as _Optional
+
+        class NdwBackground(BaseModel):
+            style: _Optional[str] = None
+            class_: _Optional[str] = Field(default=None, alias="class")
+
+        class NdwSnippetV1(BaseModel):
+            kind: Literal["ndw_snippet_v1"]
+            title: _Optional[str] = None
+            background: _Optional[NdwBackground] = None
+            css: _Optional[str] = None
+            html: _Optional[str] = None
+            js: _Optional[str] = None
+
+        class FullPageHtml(BaseModel):
+            kind: Literal["full_page_html"]
+            html: str
+
+        class CustomProps(BaseModel):
+            html: str
+            height: int
+
+        class Component(BaseModel):
+            id: str
+            type: str
+            props: CustomProps
+
+        class ComponentsDoc(BaseModel):
+            components: List[Component]
+
+        PageUnion = Union[NdwSnippetV1, FullPageHtml, ComponentsDoc]
+        TypeAdapter(PageUnion).validate_python(page)
+        return True, []
+    except ValidationError as ve:
+        pydantic_errors: List[Dict[str, Any]] = []
+        try:
+            for e in ve.errors():
+                loc = ".".join(str(p) for p in e.get("loc", [])) or "(root)"
+                pydantic_errors.append({"path": loc, "message": e.get("msg", "invalid")})
+        except Exception:
+            pydantic_errors = [{"path": "(root)", "message": "invalid"}]
+        errors.extend([])
+        _pyd_errs = pydantic_errors
+    except Exception:
+        # If Pydantic import/types fail, fall back silently
+        pass
 
     if not schema_path.exists():
         _light_checks(page)
@@ -204,10 +271,20 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
     try:
         schema = json.loads(schema_path.read_text())
         validator = jsonschema.Draft202012Validator(schema)
+        schema_errors: List[Dict[str, Any]] = []
         for err in validator.iter_errors(page):
             loc = ".".join([str(p) for p in err.path]) or "(root)"
             msg = str(err.message)
-            errors.append({"path": loc, "message": msg})
+            schema_errors.append({"path": loc, "message": msg})
+        if not schema_errors:
+            # Schema accepts the document; ignore earlier Pydantic complaints
+            return True, []
+        # If schema failed, combine with any Pydantic errors if present
+        try:
+            combined = schema_errors + locals().get('_pyd_errs', [])
+        except Exception:
+            combined = schema_errors
+        return False, combined
     except Exception as e:
         errors.append({"path": "(schema)", "message": f"schema load/validate error: {e}"})
 
@@ -464,18 +541,7 @@ def prefetch_status() -> Dict[str, Any]:
     return {"size": qsize, "dir": str(prefetch.PREFETCH_DIR)}
 
 
-@app.on_event("startup")
-def _prefetch_startup_topup() -> None:
-    """On startup, ensure the prefetch queue is warmed up using the LLM if available."""
-    try:
-        if not _prefetch_topup_enabled():
-            return
-        if llm_generate_page is None or not llm_status().get("has_token"):
-            return
-        t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
-        t.start()
-    except Exception:
-        pass
+## (Deprecated startup handler removed; logic moved to lifespan above)
 
 
 class PrefetchRequest(BaseModel):

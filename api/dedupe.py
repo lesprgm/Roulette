@@ -25,6 +25,9 @@ def signature_for_doc(doc: Dict) -> str:
     """
     if not isinstance(doc, dict):
         return ""
+    if doc.get("kind") == "ndw_snippet_v1":
+        payload = _norm_text((doc.get("html") or "") + "\n" + (doc.get("css") or "") + "\n" + (doc.get("js") or ""))
+        h = hashlib.sha256(); h.update(payload.encode("utf-8")); return h.hexdigest()
     if doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
         payload = _norm_text(doc["html"])
     else:
