@@ -108,7 +108,7 @@ ensureFloatingGenerate();
 
 function renderLanding(){
   const btn = document.getElementById('landingGenerate');
-  if (!btn) { console.warn('[ndw] landingGenerate not found on first attempt'); return; }
+  if (!btn) return;
   if ((btn as any).__ndwBound) return;
   btn.addEventListener('click', generateNew);
   (btn as any).__ndwBound = true;
@@ -143,6 +143,23 @@ async function refreshSitesCounter(){
 }
 refreshSitesCounter();
 
+// Small UI helper to show or remove a snippet title overlay.
+function upsertTitleOverlay(title?: string){
+  const id = 'ndw-title';
+  let el = document.getElementById(id) as HTMLDivElement | null;
+  if (!title){
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    return;
+  }
+  if (!el){
+    el = document.createElement('div');
+    el.id = id;
+    el.style.cssText = 'position:fixed;z-index:9998;top:10px;left:10px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.4);backdrop-filter:saturate(120%) blur(2px);color:#fff;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;pointer-events:none;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    document.body.appendChild(el);
+  }
+  el.textContent = String(title || '').trim();
+}
+
 function escapeHtml(s:string){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
 
 function renderFullPage(html:string){
@@ -170,6 +187,7 @@ function renderFullPage(html:string){
     if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
     scripts.forEach(old=>{ if(old.src) return; const sc=document.createElement('script'); if (old.type) sc.type=old.type; sc.textContent=old.textContent||''; mainEl?.appendChild(sc); });
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
+    upsertTitleOverlay(undefined);
   } catch(e){ console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
@@ -190,14 +208,17 @@ function renderInline(html:string){
     if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
     scripts.forEach(old=>{ if(old.src) return; const sc=document.createElement('script'); if(old.type) sc.type=old.type; sc.textContent=old.textContent||''; mainEl?.appendChild(sc); });
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
+    upsertTitleOverlay(undefined);
   } catch(e){ console.error('Inline render error:', e); showError('Failed to render content.'); }
 }
 
 function renderNdwSnippet(snippet:NdwSnippet){
   try {
-    const bg = snippet.background || {};
-    const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
-    if (hasBg){ document.body.removeAttribute('style'); document.body.className=''; if (bg.style) document.body.setAttribute('style',bg.style); if (bg.class) document.body.setAttribute('class',bg.class); }
+  const bg = snippet.background || {};
+  const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
+  // Apply background first to avoid any white flash behind canvas
+  document.body.removeAttribute('style'); document.body.className='';
+  if (hasBg){ if (bg.style) document.body.setAttribute('style',bg.style); if (bg.class) document.body.setAttribute('class',bg.class); }
     document.querySelectorAll('style[data-ndw-snippet="1"]').forEach(s=>s.remove());
     if (snippet.css && snippet.css.trim()){ const st=document.createElement('style'); st.setAttribute('data-ndw-snippet','1'); st.textContent=snippet.css; document.head.appendChild(st); }
     if (mainEl){
@@ -205,9 +226,12 @@ function renderNdwSnippet(snippet:NdwSnippet){
       const wrap=document.createElement('div'); wrap.id='ndw-app';
       const html = snippet.html || '';
       const safeHtml = stripExternalScripts(html);
+      const hasCanvasCreation = /NDW\.makeCanvas/.test(snippet.js || '');
+      
       if (safeHtml.trim()) {
         wrap.innerHTML = safeHtml;
-      } else {
+      } else if (!hasCanvasCreation) {
+        // Only create fallback canvas if snippet doesn't call NDW.makeCanvas
         const c = document.createElement('canvas');
         c.id = 'canvas';
         c.style.display = 'block';
@@ -215,6 +239,7 @@ function renderNdwSnippet(snippet:NdwSnippet){
         c.style.height = '100vh';
         wrap.appendChild(c);
       }
+      // else: snippet has no HTML but calls makeCanvas; leave wrap empty, JS will populate
       const innerApp = wrap.querySelector('#ndw-app');
       if (innerApp && innerApp !== wrap){
         const cls = innerApp.getAttribute('class'); const sty = innerApp.getAttribute('style');
@@ -224,6 +249,7 @@ function renderNdwSnippet(snippet:NdwSnippet){
       }
       mainEl.appendChild(wrap);
     }
+    upsertTitleOverlay(snippet.title);
     if (snippet.js && snippet.js.trim()){
       if (!_w.NDW) console.warn('NDW runtime not found; snippet JS may fail.');
       if (!_w.__NDW_showSnippetErrorOverlay){
@@ -276,6 +302,5 @@ function hideSpinner(){ ensureSpinner().classList.add('hidden'); }
 
 const _origEnterSite = enterSite;
 function enterSiteWithCounter(doc:any){ _origEnterSite(doc); if (doc && !doc.error) refreshSitesCounter(); }
-// Replace reference so future calls use wrapper
 // @ts-ignore
 enterSite = enterSiteWithCounter;
