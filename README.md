@@ -1,107 +1,137 @@
-# Non‑Deterministic Website
+Non‑Deterministic Website
+=========================
 
-A tiny FastAPI app that prompts an LLM to generate exactly one self‑contained interactive web app per request and renders it safely inside a sandboxed iframe. It emphasizes instant, meaningful interaction (clear controls, visible effects) and enforces strict output and sandbox rules.
+Generate a brand-new interactive site every time you ask. The FastAPI backend orchestrates Groq/OpenRouter LLMs, normalizes the response into rich HTML or NDW snippets, and the TypeScript front-end renders the result directly into the page—no iframes, no reloads.
 
-## How it works
+## Demo
 
-- Request → Generation
-  - POST `/generate` accepts an optional `brief` and `seed`.
-  - The server first tries to serve a prefetched page (dequeue‑first). If it serves from prefetch, it simulates LLM latency with a small configurable delay.
-  - On success, a persistent counter increments; the UI shows a floating “Sites generated” badge sourced from `/metrics/total`.
+[🌠 Demo screenshot (add link here)](https://example.com/path-to-demo-image)
 
-- Prefetch queue
-  - Disk‑backed FIFO at `cache/prefetch/`. A fill endpoint asks the LLM for 5–10 pages and enqueues them (LLM‑only; no offline prefetch).
-  - Background top‑up: when the queue is low, the server refills in the background (guarded by env flags). A small warmup can run at startup.
-  - Dedupe: a signature registry avoids recent repeats; duplicates prompt a retry with a nudged seed.
+> Replace the URL above with your production screenshot when it’s ready.
 
-- Output constraints and safety
-  - The LLM must return JSON in one of two shapes only: a single `{kind:"full_page_html"}` document or a single custom component with inline HTML/JS.
-  - The frontend strips external `<script src>` tags and runs only inline JS in a sandboxed iframe with a strict CSP. The iframe auto‑resizes and auto‑focuses so keyboard input works immediately.
+## Highlights
 
-## Quickstart
+- **Two rendering modes:** full HTML pages or compact `ndw_snippet_v1` apps powered by the shared NDW runtime.
+- **LLM orchestration:** Groq primary with configurable OpenRouter fallback, automatic retries, and duplication checks.
+- **Prompt guardrails:** strict JSON schema, dt usage rules, category rotation, instructions/context requirements, and canvas safety nets.
+- **Prefetch engine:** background top-ups keep generations snappy while dedupe stops repeats.
+- **UX polish:** floating summon button, generation counter, error overlays, and automatic theme adoption from generated output.
+- **End-to-end tests:** pytest suite covering prompt expectations, runtime validation, schema conformance, and renderer behavior.
 
-Prereqs: Python 3.10+ and pip. (Node is optional; a prebuilt `static/tailwind.css` is used in dev.)
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Client
+        UI[Landing UI & Controls]
+        Renderer[Renderer (full HTML / NDW runtime)]
+    end
+
+    subgraph Backend
+        API[FastAPI
+        /generate]
+        Orchestrator[LLM Orchestrator
+        (Groq ▶ OpenRouter)]
+        Normalizer[Shape Normalizer
+        & Validator]
+        Prefetcher[Prefetch Queue
+        + Dedupe]
+        Metrics[(Metrics Store)]
+    end
+
+    UI -->|POST /generate| API
+    API --> Orchestrator --> Normalizer --> Renderer
+    API <-->|queue refill| Prefetcher
+    Prefetcher --> Orchestrator
+    Renderer -->|UX updates| UI
+    UI -->|GET /metrics/total| Metrics --> UI
+    Normalizer -->|ndw_snippet_v1| Renderer
+    Normalizer -->|full_page_html| Renderer
+```
+
+### Component rundown
+
+| Layer | Responsibilities |
+|-------|------------------|
+| **Browser UI (`templates/index.html`, `static/ts-src/app.ts`)** | Handles user prompts, seeds, status overlays, and renders generated documents. |
+| **NDW Runtime (`static/ts-src/ndw.ts`)** | Tiny game/visual library providing `loop(dt)`, input helpers, RNG utilities, and canvas helpers with validation guards. |
+| **FastAPI Backend (`api/main.py`)** | Exposes `/generate`, `/metrics`, `/prefetch`, `/llm/status`; manages lifespan hooks and background tasks. |
+| **LLM Client (`api/llm_client.py`)** | Builds prompt, enforces schema, rotates categories, and retries across Groq/OpenRouter. |
+| **Prefetch & Dedupe (`api/prefetch.py`, `api/dedupe.py`)** | Warms a queue of ready-to-serve pages and prevents near-duplicate outputs. |
+
+## Runtime & Prompt Guardrails
+
+The latest prompt instructions (see `_PAGE_SHAPE_HINT`) enforce:
+
+- Use `NDW.loop((dt) => {...})` with the provided millisecond delta—no manual `Date.now()` tracking.
+- Register `NDW.onKey` / `NDW.onPointer` once, outside the loop, and avoid chaining `.NDW` on other expressions.
+- Provide HTML-based instructions or descriptive context so players know how to interact.
+- Rotate genres and mediums so the generator doesn’t spam Asteroids clones.
+- For websites, output multi-section layouts with headings, copy, CTAs, and visuals—not just a fullscreen canvas.
+- NDW snippets must clear the canvas each frame, initialize state before the loop, and use the shared RNG helper correctly.
+
+## API Surface
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Landing page + summon controls. |
+| `POST /generate` | Returns full-page HTML or `ndw_snippet_v1` JSON. |
+| `POST /generate/stream` | NDJSON streaming version (metadata then document). |
+| `GET /metrics/total` | Total number of conjured experiences. |
+| `GET /prefetch/status`, `POST /prefetch/fill` | Inspect or manually refill the prefetch queue. |
+| `GET /llm/status`, `GET /llm/probe` | Provider diagnostics. |
+
+Environment configuration (see `.env.sample` if present):
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL` | Primary LLM provider credentials & models. | `meta-llama/llama-4-scout-17b-16e-instruct`, fallback `llama-3.1-8b-instant` |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `FORCE_OPENROUTER_ONLY` | Optional fallback provider. | `google/gemma-3n-e2b-it:free` |
+| `LLM_MAX_TOKENS`, `GROQ_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS` | Output limits. | `15000` |
+| `LLM_TIMEOUT_SECS` | Request timeout seconds. | `75` |
+| `PREFETCH_DIR`, `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED` | Prefetch queue tuning. | reasonable defaults |
+| `ALLOW_OFFLINE_GENERATION` | Dev/test stub mode for `/generate`. | Disabled |
+
+## Local Development
 
 ```bash
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt  # or: pip install fastapi uvicorn requests pydantic jsonschema ndjson
+pip install -r requirements.txt
+npm install
 
-# Run the API (dev reload)
-uvicorn api.main:app --reload --port 8000
+# Build or watch TypeScript + CSS
+npm run build      # once
+npm run watch      # dev loop (Ctrl+C to stop)
+
+# Start API
+uvicorn api.main:app --reload
+
+# Visit http://localhost:8000
 ```
 
-Open http://127.0.0.1:8000/ for the demo UI.
-
-Put provider keys in `.env` (auto‑loaded), for example:
+Run the full validation suite:
 
 ```bash
-OPENROUTER_API_KEY=sk-...
-OPENROUTER_MODEL=google/gemma-3n-e2b-it:free
-# optional: FORCE_OPENROUTER_ONLY=1
+pytest
 ```
 
-## Endpoints
+## Testing & Quality Gates
 
-- GET `/` — Demo UI
-- GET `/health` — `{ "status": "ok" }`
-- GET `/llm/status` — Provider/model/has_token without calling the model
-- GET `/llm/probe` — Lightweight readiness probe
-- GET `/metrics/total` — Global “sites generated” counter
-- GET `/prefetch/status` — Current queue size and directory
-- POST `/validate` — Validate a page structure
-- POST `/generate` — Generate or dequeue a page (dedupe applied; counter increments)
-- POST `/generate/stream` — NDJSON stream: `{event:"meta"}` then `{event:"page", data:{...}}`
-- POST `/prefetch/fill` — Ask the LLM for N pages (5–10) and enqueue
+The pytest collection (70+ tests) verifies:
 
-## Configuration (env)
+- Prompt guidance strings (dt usage, category rotation, instructions, etc.).
+- NDW runtime safety (dt propagation, error overlays, canvas helpers).
+- Schema normalization, dedupe, provider fallback, and renderer behavior.
+- DOM rendering of both full-page HTML and snippet documents.
 
-LLM provider (OpenRouter by default):
-- `OPENROUTER_API_KEY` (required for live generation)
-- `OPENROUTER_MODEL` (default: `google/gemma-3n-e2b-it:free`)
-- `FORCE_OPENROUTER_ONLY` (default: `0`) — force OpenRouter path when set
-- Optional Gemini: `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `MODEL_NAME`
+## Roadmap
 
-Generation:
-- `TEMPERATURE` (default `1.2`)
-- `ALLOW_OFFLINE_GENERATION` (dev only; affects `/generate` fallback, not prefetch)
-
-Prefetch:
-- `PREFETCH_DIR` (default `cache/prefetch`)
-- `PREFETCH_BATCH_MIN`/`PREFETCH_BATCH_MAX` (default `5`/`10`)
-- `PREFETCH_DELAY_MS` (delay when serving dequeued pages)
-- `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED`
-
-Dedupe:
-- `DEDUPE_ENABLED` (default `1`), `DEDUPE_MAX`, `DEDUPE_RECENT_FILE`
-
-Access / CORS / rate limiting:
-- `API_KEYS` (comma‑separated; if empty, local dev is open)
-- `ALLOW_ORIGINS` (default `*`)
-- `RATE_WINDOW_SECONDS`, `RATE_MAX_REQUESTS`
-
-## Development
-
-Run tests:
-
-```bash
-pytest -q
-```
-
-The test suite covers the prefetch queue (enqueue/dequeue, dedupe, fill clamping), dequeue‑first generation, background top‑ups, and status endpoints. During tests, artificial delays and background workers are disabled for speed and determinism.
-
-## Notes on generation rules
-
-- The prompt strictly bans passive visuals, randomizers‑only, and menu‑only UIs, plus utility archetypes like calculators/clocks/to‑dos/quizzes.
-- Classic/trivial mini‑games are allowed but must still meet the interactivity bar (clear controls, visible feedback, responsiveness).
-- Apps must provide clear, immediate input → effect loops, obvious affordances, and at least two input modes (mouse/touch plus another) with visible feedback.
-
-## Troubleshooting
-
-- Provider 429 rate limit: back off; prefetch masks transient spikes.
-- SSL/cert issues: ensure system trust/certifi is up‑to‑date; avoid disabling verification globally.
-- “Invalid JSON” from provider: the server extracts the first JSON object and validates/normalizes it; try again or adjust temperature/model.
+- Expose a lightweight metrics dashboard.
+- Explore WebGL helpers inside NDW runtime.
+- Add automated visual diffing for generated pages.
+- Offer downloadable generation history.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT
