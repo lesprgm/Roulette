@@ -95,7 +95,7 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
         seed_val = random.randint(1, 10_000_000)
 
     attempts = 0
-    max_attempts = 3  # initial + up to 2 retries on duplicates
+    max_attempts = 3
     while attempts < max_attempts:
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
@@ -115,12 +115,10 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
                 logging.warning("llm chosen provider=%s", p)
                 break
         if not doc:
-            # All providers failed for this attempt; return an error immediately
             logging.warning("All providers failed; returning error doc.")
             return {"error": "Model generation failed"}
 
         if not doc:
-            # Transport or normalization failure — return an error immediately
             logging.warning("Model call failed or returned invalid JSON; returning error doc.")
             return {"error": "Model generation failed"}
 
@@ -135,15 +133,12 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
             dedupe.add(sig)
         return doc
 
-    # If we exhausted retries, return the last doc we saw (should be valid)
     return doc or {"error": "Model generation failed"}
 
 
 def _call_groq_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
     """Call Groq (OpenAI-compatible) and parse a page dict; None on failure."""
     temperature = TEMPERATURE
-    palette_hint = _seeded_palette_hint(seed)
-    layout_hint = _seeded_layout_hint(seed)
 
     prompt = f"""
 You generate exactly one self-contained interactive web app per request.
@@ -153,10 +148,6 @@ Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
 
 {_PAGE_SHAPE_HINT}
-
-Optional hints you may use internally (do not include them in the output):
-- Palette hint: {palette_hint}
-- Layout hint: {layout_hint}
 """
 
     headers = {
@@ -192,20 +183,28 @@ Optional hints you may use internally (do not include them in the output):
             return None
 
     if resp.status_code != 200:
-        # If model is invalid, attempt a single fallback model
+        # Attempt a single fallback model on common failure modes
         fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.1-8b-instant").strip()
         raw = None
         try:
             raw = resp.text
         except Exception:
             raw = None
-        if (
-            fallback_model
-            and GROQ_MODEL != fallback_model
-            and ("model" in (raw or "").lower())
-            and (("not found" in (raw or "").lower()) or ("invalid" in (raw or "").lower()))
-        ):
-            logging.warning("Groq model '%s' rejected; retrying with fallback '%s'", GROQ_MODEL, fallback_model)
+
+        lower = (raw or "").lower()
+        should_try_fallback = False
+        reason = None
+        # 1) Explicit model issues (invalid/not found)
+        if ("model" in lower) and (("not found" in lower) or ("invalid" in lower)):
+            should_try_fallback = True
+            reason = "model rejected"
+        # 2) Rate limited — try a different model if configured
+        elif resp.status_code == 429:
+            should_try_fallback = True
+            reason = "rate limited"
+
+        if fallback_model and GROQ_MODEL != fallback_model and should_try_fallback:
+            logging.warning("Groq model '%s' %s; retrying with fallback '%s'", GROQ_MODEL, reason or "failed", fallback_model)
             body_fallback = dict(body)
             body_fallback["model"] = fallback_model
             try:
@@ -263,107 +262,96 @@ Optional hints you may use internally (do not include them in the output):
 
 
 _PAGE_SHAPE_HINT = """
-You are an expert web designer and creative developer creating modern, visually striking websites and interactive experiences.
+Output valid JSON only. No markdown fences.
 
-OUTPUT FORMAT (CRITICAL):
-You must output valid JSON in one of these exact formats:
-1. { "kind": "full_page_html", "html": "<!doctype html>...complete HTML document..." }
-2. { "components": [{ "id": "custom-1", "type": "custom", "props": { "html": "<div>...inline HTML with <script>...</div>", "height": "100vh" }}] }
+FORMATS (prefer #1):
+1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}
+2. {"kind":"full_page_html","html":"<!doctype html>..."}
+3. {"components":[{"id":"x","type":"custom","props":{"html":"...","height":360}}]}
 
-Choose format 1 for full-page experiences. Choose format 2 for embedded components. 
-For full-screen experiences in format 2, set height to "100vh". For games or immersive experiences, always use full viewport height.
+RUNTIME (snippet only):
+window.NDW provides:
+- NDW.loop((dt) => ...) → dt in milliseconds since last frame
+  CRITICAL: dt is passed as parameter. DO NOT manually track time (no lastTime=Date.now() or NDW.time.elapsed).
+  Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000);
+  Example: NDW.loop((dt) => { update(dt/1000); draw(); });
+- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) → returns canvas element with .ctx, .dpr
+  Usage: const canvas = NDW.makeCanvas({fullScreen:true}); const ctx = canvas.ctx;
+  Dimensions: canvas.width, canvas.height (NOT canvas.canvas.width)
+- NDW.onKey((e) => ...) → e is KeyboardEvent; check e.key ('ArrowUp', 'w', ' ', etc.)
+    Register once, outside the loop. Do NOT reference dt inside the handler; use NDW.isDown inside NDW.loop for continuous input.
+- NDW.onPointer((e) => ...) → e = {x, y, down, type, raw}
+    Attach once outside the loop; inside handler mutate state flags. Pointer listeners inside NDW.loop will multiply events.
+- NDW.isDown(key) → true if key pressed; works for 'ArrowUp', 'w', 'Space', 'mouse'
+- NDW.onResize(() => ...)
+- NDW.utils: clamp(v,min,max), lerp(a,b,t), rng(seed), hash(seed)
+    rng(seed) returns a GENERATOR FUNCTION. Call it once to get a PRNG: const rand = NDW.utils.rng(seed); const value = rand();
+    Shortcut: rand.valueOf() is overloaded, so rand * 1 also yields the next random, but prefer rand().
+- NDW.pointer: {x,y,down}
 
-EXECUTION MODE (choose before coding):
-* MODE A: Interactive app - User directly controls objects and behavior
-* MODE B: Entertaining non-interactive - Automatically entertaining with motion/reveals (no static content)
+RULES:
+- NO external resources (scripts/fonts/images/fetch)
+- NO manual time tracking (never use Date.now(), performance.now(), or NDW.time.elapsed for dt calculation)
+- Initialize ALL state BEFORE NDW.loop() call
+- Register event listeners (NDW.onKey / NDW.onPointer) BEFORE NDW.loop(); never define them inside the loop callback.
+- Never chain NDW.* calls onto other expressions (no `.NDW`). Call each NDW method as its own statement terminated with a semicolon.
+- Rotate categories so consecutive generations feel different. If the last request was a space shooter (Asteroids, etc.), pick a different genre or medium next.
+- Include clear, readable instructions or context for the user in the HTML outside the canvas.
+- Inline all CSS/JS
+- For snippets: host provides #ndw-app; don't wrap another
+- For canvas: NDW.makeCanvas auto-appends; clearRect(0,0,canvas.width,canvas.height) each frame
+- Physics with dt parameter: v += a*(dt/1000); p += v*(dt/1000); (dt is milliseconds, convert to seconds)
+- Title: include and use it (draw on canvas or small UI label)
+- Do not prefix output HTML with stray characters; the host injects it directly.
 
-Core Requirements:
-- Create complete, functional experiences using HTML, CSS, and vanilla JavaScript only
-- NO external scripts, fonts, images, or network calls allowed
-- Inline all CSS and JavaScript within the HTML
-- Make it fully interactive with smooth animations and engaging user experiences
-- Use modern design trends: gradients, animations, hover effects, contemporary typography
-- Ensure the design has personality and visual interest - avoid generic aesthetics
-- For full-page experiences, use full viewport dimensions (width: 100vw, height: 100vh)
+CONTROLS:
+- Keyboard discrete: NDW.onKey((e) => { if(e.key==='ArrowUp') jump(); });
+- Keyboard continuous: if(NDW.isDown('ArrowLeft')) x -= speed*(dt/1000);
+- Mouse/touch: NDW.onPointer((e) => { if(e.down) shoot(e.x, e.y); });
+- Mouse pressed: if(NDW.isDown('mouse')) dragObject();
 
-GAMES AND INTERACTIVE EXPERIENCES:
-When creating games or interactive toys, FUNCTIONALITY is paramount. Follow these strict rules:
+CHOOSE ONE TYPE (rotate variety; avoid repeating same category):
+1. GAMES: ping pong, snake, tic tac toe, brick breaker, flappy bird, space invaders, memory match, connect four, tetris, asteroids
+   - Initialize state (score=0, pos, vel) BEFORE NDW.loop
+   - Pattern: NDW.loop((dt) => { ctx.clearRect(0,0,w,h); update(dt/1000); draw(); });
+   - Physics: v += a*(dt/1000); p += v*(dt/1000); (dt in ms, convert to seconds)
+    - Controls: NDW.onKey handlers toggle flags; NDW.isDown inside NDW.loop applies movement (no dt in handlers)
+    - Provide on-screen instructions (controls, goals) and simple UI elements (score, lives, title) using HTML/CSS.
+   - Full viewport for immersion
+2. WEBSITES: landing page, portfolio, blog/article, product feature, pricing table, about/contact, gallery, FAQ, testimonials, dashboard, form
+    - Use rich HTML+CSS sections (hero, features, CTA) with headings, paragraphs, buttons, and imagery styles.
+    - Avoid relying solely on a canvas; craft a complete webpage layout.
+3. INTERACTIVE ART: particles, flow fields, boids, cellular automata, noise field, kaleidoscope, gradient morph
+   - Canvas pattern: const canvas=NDW.makeCanvas({fullScreen:true}); const ctx=canvas.ctx;
+     - Initialize particle arrays BEFORE loop. Generate randoms via const rand = NDW.utils.rng(seed); const x = rand();
+     - Auto-motion or pointer-reactive; ensure visible activity within 1s
+      - Pointer handlers belong outside NDW.loop; inside the loop read NDW.pointer.
+      - Add a short descriptive caption in HTML explaining the concept or interaction.
 
-Pre-Code Verification (answer these before writing ANY game code):
-1. VARIABLES: List all variables. Which are let vs const? Where declared?
-2. INITIALIZATION: What is the initial value of each variable? None used before being set?
-3. SCOPE: Do callbacks/timers reference variables? Are those variables in safe outer scope?
-4. ANIMATION: Where is requestAnimationFrame called? (Must be inside loop function)
-5. EVENTS: List each addEventListener. Which element? Does it exist at that line?
-6. FIRST INTERACTION: User interacts - which handler runs, what state changes, what becomes visible within 0.5s?
+CANONICAL GAME TEMPLATE:
+const canvas = NDW.makeCanvas({ fullScreen: true });
+const ctx = canvas.ctx;
+const rand = NDW.utils.rng(seed);
+let state = { x: 0, vx: 0 };
 
-Game Design Principles (CRITICAL):
-- Prioritize FUNCTIONALITY and PLAYABILITY above all else
-- Ensure smooth, responsive controls (target 60fps)
-- ALWAYS initialize all variables before use
-- Attach event listeners ONLY AFTER elements exist
-- For keyboard input: addEventListener on document or auto-focus an element
-- For canvas animations: MUST call clearRect(0, 0, width, height) every frame before drawing
-- Animation loop pattern: clear → update(state) → draw(state) → requestAnimationFrame(loop)
-- Place requestAnimationFrame INSIDE the loop function, never outside
-- Use a single state object for mutable values
-- Include clear UI: score display, instructions, start/restart buttons
-- Test the interaction path: input → handler → state change → visual update
-- For games, use full viewport: canvas or container should be width: 100vw, height: 100vh
+NDW.onKey((e) => {
+    if (e.key === 'ArrowLeft') state.vx = -1;
+    if (e.key === 'ArrowRight') state.vx = 1;
+});
 
-Game Feel & Polish:
-- Add satisfying feedback: sound effects (Web Audio API), particle effects, screen shake
-- Smooth, responsive controls with immediate visual feedback
-- Include game states: menu, playing, paused, game over
-- Display score/timer/lives clearly
-- Make it immediately playable - minimal tutorial needed
+NDW.loop((dt) => {
+    const seconds = dt / 1000;
+    state.x += state.vx * seconds * 200;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(state.x, canvas.height - 40, 40, 20);
+});
 
-Forbidden Game Bugs (check before output):
-- Uninitialized arrays or objects
-- Listeners attached before elements exist
-- Missing clearRect in canvas loops
-- Undefined variable references
-- Functions defined but never called
-- requestAnimationFrame called outside loop function
-
-Allowed Game Types:
-- Classic arcade: Snake, Pong, Breakout, Tetris, Space Invaders (but change at least one core mechanic)
-- Puzzle: Memory matching, Tic-tac-toe, Connect Four, Sliding puzzles
-- Casual: Flappy Bird clones, endless runners, catch/avoid games
-- Physics toys: Particle systems, gravity simulations, collision playgrounds
-- Creative: Drawing apps, music makers, generative art tools
-
-For Non-Game Websites:
-- Default to bold, contemporary aesthetics
-- Every interactive element needs feedback (hover, transitions, micro-animations)
-- Use modern palettes: dark mode, glassmorphism, vibrant gradients
-- Typography should be expressive with hierarchy
-- Design should feel alive and premium, not sterile
-- Make responsive where applicable
-- Can use full viewport height or scroll naturally based on content needs
-
-Technical Constraints:
-- HTML, CSS, vanilla JavaScript only - NO libraries or external resources
-- Canvas for game graphics when appropriate (size to full viewport for immersive experiences)
-- Use CSS Grid/Flexbox for layouts
-- Tailwind utility classes allowed
-- Keep code organized and commented
-- Remove all dead code - every function must be used
-- Set appropriate dimensions: games/immersive experiences should use 100vw x 100vh
-
-MANDATORY FINAL CHECK (before output):
-1. Trace full execution path from start to first visible change
-2. All variables initialized before use
-3. All event listeners attached after elements exist
-4. If canvas animation: clearRect called every frame, requestAnimationFrame inside loop
-5. If game: test one complete interaction (input → handler → state → render)
-6. Layout is visible and properly sized (full viewport for games/immersive content)
-7. Output is valid JSON in the specified format with appropriate height value
-8. No undefined references or missing elements
-
-The output should feel premium and engaging from the first moment. For games: prioritize playability and smoothness. For websites: prioritize visual impact and interactivity.
-
-Topic: [USER'S WEBSITE REQUEST]
+OUTPUT CHECKLIST:
+✓ Valid JSON in format #1, #2, or #3
+✓ Title present (if snippet) and used; or omit cleanly
+✓ All vars initialized; listeners after DOM ready
+✓ Canvas: clearRect called; rAF inside loop fn
+✓ No undefined refs or missing elements
 """
 
 # Removed Gemini provider support completely
@@ -372,8 +360,6 @@ Topic: [USER'S WEBSITE REQUEST]
 def _call_openrouter_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
     """Call OpenRouter Chat Completions and parse a page dict; None on failure."""
     temperature = TEMPERATURE
-    palette_hint = _seeded_palette_hint(seed)
-    layout_hint = _seeded_layout_hint(seed)
 
     prompt = f"""
 You generate exactly one self-contained interactive web app per request.
@@ -383,10 +369,6 @@ Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
 
 {_PAGE_SHAPE_HINT}
-
-Optional hints you may use internally (do not include them in the output):
-- Palette hint: {palette_hint}
-- Layout hint: {layout_hint}
 """
 
     headers = {
@@ -394,13 +376,8 @@ Optional hints you may use internally (do not include them in the output):
         "Content-Type": "application/json",
         "X-Title": "non-deterministic-website",
     }
-    # Heuristic: only some providers support OpenAI-style JSON mode. Use conservatively for OpenAI‑compatible models.
-    def _supports_json_mode(model: str) -> bool:
-        m = (model or "").lower()
-        return m.startswith("openai/") or "gpt-" in m or m.startswith("openrouter/"
-            )  
-
-    wants_json_mode = _supports_json_mode(OPENROUTER_MODEL)
+    # Prefer JSON mode first; if rejected by provider, we'll retry without it.
+    wants_json_mode = True
 
     body = {
         "model": OPENROUTER_MODEL,
@@ -428,7 +405,7 @@ Optional hints you may use internally (do not include them in the output):
         except Exception:
             txt = None
         msg = (txt or "")[:400]
-        if wants_json_mode and "JSON mode is not enabled" in (txt or ""):
+        if wants_json_mode and ("JSON mode is not enabled" in (txt or "") or "response_format" in (txt or "")):
             try:
                 body.pop("response_format", None)
                 resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body, timeout=LLM_TIMEOUT_SECS)
@@ -457,14 +434,23 @@ Optional hints you may use internally (do not include them in the output):
     except Exception:
         text = None
     if not text or not isinstance(text, str):
-        logging.warning("OpenRouter: empty response text")
-        return None
+        try:
+            text = resp.text
+        except Exception:
+            text = None
+        if not text or not isinstance(text, str):
+            logging.warning("OpenRouter: empty response text")
+            return None
 
     try:
         page = _json_from_text(text)
     except Exception as e:
-        logging.warning("OpenRouter: failed to extract JSON: %r", e)
-        return None
+        logging.warning("OpenRouter: failed to extract JSON/HTML: %r", e)
+        tl = (text or "")
+        if isinstance(tl, str) and ("<html" in tl.lower() or "<!doctype" in tl.lower() or "<div" in tl.lower() or "<body" in tl.lower()):
+            page = {"kind": "full_page_html", "html": tl}
+        else:
+            return None
 
     try:
         norm = _normalize_doc(page)
@@ -476,16 +462,18 @@ Optional hints you may use internally (do not include them in the output):
 
 
 def _json_from_text(text: str) -> Any:
-    """Extract JSON object from text with several fallbacks; raise on failure.
+    """Extract JSON object or HTML from text with robust fallbacks; raise on failure.
 
-    Order:
-    - Try strict json.loads on the first balanced {...} block (brace-matching aware of strings).
-    - Try code-fenced blocks ```json ... ```.
-    - Try sanitization (strip trailing commas, normalize quotes) on the candidate block.
-    - If text looks like raw HTML (<!doctype or <html or <div ...>), wrap it into a full_page_html doc.
+    Strategy:
+    - If text starts with HTML tags, wrap as full_page_html.
+    - Try fenced blocks: ```json ...``` first, then any ``` ... ```.
+    - Try first balanced {...} object (brace-aware in presence of strings).
+    - Sanitize: remove trailing commas, normalize smart quotes.
+    - If any HTML-like tag appears anywhere, wrap remaining text as full_page_html.
     """
-    t = text.strip()
-    if t.lower().lstrip().startswith("<!doctype") or t.lower().lstrip().startswith("<html") or t.lower().lstrip().startswith("<div"):
+    t = (text or "").strip()
+    tl = t.lower().lstrip()
+    if tl.startswith("<!doctype") or tl.startswith("<html") or tl.startswith("<div") or tl.startswith("<body"):
         return {"kind": "full_page_html", "html": t}
 
     def _balanced_json_slice(s: str) -> Optional[str]:
@@ -517,21 +505,30 @@ def _json_from_text(text: str) -> Any:
     if m:
         candidate = m.group(1)
     else:
-        candidate = _balanced_json_slice(t)
-
+        m2 = re.search(r"```\s*([\s\S]*?)```", t)
+        if m2:
+            candidate = m2.group(1)
     if not candidate:
-        raise ValueError("No JSON object found")
+        candidate = _balanced_json_slice(t)
 
     def _try_load(s: str) -> Any:
         return json.loads(s)
 
-    try:
-        return _try_load(candidate)
-    except Exception:
-        # Sanitization: strip trailing commas before } or ] and normalize smart quotes
-        s = re.sub(r",\s*([}\]])", r"\1", candidate)
-        s = s.replace("“", '"').replace("”", '"').replace("’", "'")
-        return _try_load(s)
+    if candidate:
+        try:
+            return _try_load(candidate)
+        except Exception:
+            s = re.sub(r",\s*([}\]])", r"\1", candidate)
+            s = s.replace("“", '"').replace("”", '"').replace("’", "'")
+            try:
+                return _try_load(s)
+            except Exception:
+                pass
+
+    # Last resort: if any HTML-like tag appears anywhere, wrap as full_page_html
+    if re.search(r"<\s*(?:!doctype|html|body|div|section|canvas|main)\b", t, re.IGNORECASE):
+        return {"kind": "full_page_html", "html": t}
+    raise ValueError("No JSON or HTML content found")
 
 
 def _seeded_palette_hint(seed: int) -> Dict[str, str]:
@@ -556,6 +553,53 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("not a dict")
     if isinstance(doc.get("error"), str):
         return {"error": str(doc["error"])[:500]}
+    # Inference: if no explicit kind/components but looks like a snippet payload, coerce
+    if ("html" in doc or "css" in doc or "js" in doc) and not (doc.get("components") or doc.get("kind") or doc.get("type")):
+        doc = {"kind": "ndw_snippet_v1", **{k: v for k, v in doc.items() if k in {"title","background","css","html","js"}}}
+    # Accept the new compact snippet format directly
+    kind = str(doc.get("kind") or doc.get("type") or "").lower()
+    # Tolerate common synonyms for snippet kind
+    if kind in {"ndw_snippet", "snippet_v1", "ndw-canvas-snippet", "canvas_snippet", "canvas-snippet"}:
+        kind = "ndw_snippet_v1"
+    if kind == "ndw_snippet_v1":
+        # Validate minimal fields, coerce to expected keys
+        out: Dict[str, Any] = {"kind": "ndw_snippet_v1"}
+        if isinstance(doc.get("title"), str):
+            out["title"] = doc["title"]
+        bg = doc.get("background")
+        if isinstance(bg, dict):
+            out_bg: Dict[str, Any] = {}
+            sty = bg.get("style")
+            if isinstance(sty, list):
+                sty = "; ".join([s for s in sty if isinstance(s, str)])
+            if isinstance(sty, str) and sty.strip():
+                import re
+                sty = re.sub(r"^\s*background\s*:\s*", "", sty, flags=re.IGNORECASE)
+                out_bg["style"] = sty
+            cls = bg.get("class") or bg.get("className") or bg.get("classes")
+            if isinstance(cls, list):
+                cls = " ".join([c for c in cls if isinstance(c, str)])
+            if isinstance(cls, str) and cls.strip():
+                out_bg["class"] = cls
+            if out_bg:
+                out["background"] = out_bg
+        css = doc.get("css"); html = doc.get("html"); js = doc.get("js")
+        if isinstance(css, str) and css.strip():
+            out["css"] = css
+        if isinstance(html, str) and html.strip():
+            out["html"] = html
+        if isinstance(js, str) and js.strip():
+            out["js"] = js
+        if not out.get("html"):
+            # If no HTML provided, attempt to derive from any nested structure
+            for k in ("content", "body", "markup"):
+                v = doc.get(k)
+                if isinstance(v, str) and ("<" in v and ">" in v):
+                    out["html"] = v
+                    break
+        if not out.get("html") and not out.get("css") and not out.get("js"):
+            raise ValueError("ndw_snippet_v1 missing content")
+        return out
     # Accept common variants/synonyms for full-page HTML
     for key in ("kind", "type"):
         k = str(doc.get(key) or "").lower()
@@ -571,7 +615,6 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
             return {"kind": "full_page_html", "html": val}
         if isinstance(val, dict) and isinstance(val.get("html"), str):
             return {"kind": "full_page_html", "html": val.get("html")}
-    # Components list or single object
     comps = doc.get("components")
     if isinstance(comps, dict):
         comps = [comps]
@@ -580,16 +623,17 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(c, dict):
                 continue
             props = c.get("props") or {}
-            # tolerate html at component root
             html = props.get("html") if isinstance(props, dict) else None
             if not (isinstance(html, str) and html.strip()):
                 html = c.get("html") if isinstance(c.get("html"), str) else None
             if isinstance(html, str) and html.strip():
                 height = props.get("height") if isinstance(props, dict) else c.get("height")
+                # Attempt to coerce string heights like "100vh" to a reasonable pixel default
                 try:
                     h = int(height) if height is not None else 360
                 except Exception:
-                    h = 360
+                    # If string like "100vh", fall back to a tall default
+                    h = 720
                 return {
                     "components": [
                         {
@@ -599,7 +643,6 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
                         }
                     ]
                 }
-    # Fallback: scan shallowly for any HTML-looking string
     def _find_html(obj: Any, depth: int = 0) -> Optional[str]:
         if depth > 2:
             return None
