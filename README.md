@@ -116,6 +116,20 @@ Run the full validation suite:
 pytest
 ```
 
+## Deploying to Render
+
+This repo ships with [`render.yaml`](render.yaml) so you can spin up a fully managed Render Web Service:
+
+1. Push the latest code to GitHub.
+2. In Render, click **New > Blueprint** and point it at your repo.
+3. Review the generated service (plan defaults to the Free tier). The blueprint:
+    - Installs Python deps, installs Node deps, and runs `npm run build` during the build step.
+    - Starts FastAPI via `uvicorn api.main:app --host 0.0.0.0 --port $PORT`.
+4. Add your secrets under **Environment** (at minimum `GROQ_API_KEY` and `OPENROUTER_API_KEY`).
+5. Deploy. Render will auto-redeploy on subsequent pushes to the tracked branch.
+
+Need additional env vars? Edit `render.yaml` or add them in the Render dashboard.
+
 ## Testing & Quality Gates
 
 The pytest collection (70+ tests) verifies:

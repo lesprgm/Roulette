@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: non-deterministic-website
+    runtime: python
+    plan: free
+    autoDeploy: true
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      npm install
+      npm run build
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
+      - key: GROQ_FALLBACK_MODEL
+        value: llama-3.1-8b-instant
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: google/gemma-3n-e2b-it:free
+      - key: FORCE_OPENROUTER_ONLY
+        value: "0"
+      - key: LLM_MAX_TOKENS
+        value: "15000"
+      - key: LLM_TIMEOUT_SECS
+        value: "75"
