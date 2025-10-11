@@ -85,8 +85,8 @@ Environment configuration (see `.env.sample` if present):
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL` | Primary LLM provider credentials & models. | `meta-llama/llama-4-scout-17b-16e-instruct`, fallback `llama-3.1-8b-instant` |
-| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `FORCE_OPENROUTER_ONLY` | Optional fallback provider. | `google/gemma-3n-e2b-it:free` |
+| `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL` | Primary LLM provider credentials & models. | `llama-3.3-70b-versatile`, fallback `openai/gpt-oss-120b` |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `FORCE_OPENROUTER_ONLY` | Optional fallback provider. | `google/gemini-2.0-flash-exp:free` |
 | `LLM_MAX_TOKENS`, `GROQ_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS` | Output limits. | `15000` |
 | `LLM_TIMEOUT_SECS` | Request timeout seconds. | `75` |
 | `PREFETCH_DIR`, `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED` | Prefetch queue tuning. | reasonable defaults |

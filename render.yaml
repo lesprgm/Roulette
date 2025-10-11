@@ -16,13 +16,13 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: meta-llama/llama-4-scout-17b-16e-instruct
+        value: llama-3.3-70b-versatile
       - key: GROQ_FALLBACK_MODEL
-        value: llama-3.1-8b-instant
+        value: openai/gpt-oss-120b
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: google/gemma-3n-e2b-it:free
+        value: google/gemini-2.0-flash-exp:free
       - key: FORCE_OPENROUTER_ONLY
         value: "0"
       - key: LLM_MAX_TOKENS
