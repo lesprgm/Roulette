@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build:css": "npx tailwindcss -i ./src/styles/input.css -o ./static/tailwind.css --minify",
-    "watch:css": "./tailwindcss -i ./src/styles/input.css -o ./static/tailwind.css --watch",
+  "build:css": "npx @tailwindcss/cli -i ./src/styles/input.css -o ./static/tailwind.css --minify",
+  "watch:css": "npx @tailwindcss/cli -i ./src/styles/input.css -o ./static/tailwind.css --watch",
     "build:ts": "tsc --project tsconfig.json",
     "watch:ts": "tsc -w --project tsconfig.json",
     "typecheck": "tsc --noEmit --project tsconfig.json",
@@ -21,7 +21,8 @@
     "eslint": "^9.14.0",
     "postcss": "^8.5.6",
     "prettier": "^3.3.3",
-    "tailwindcss": "^4.1.14",
+  "@tailwindcss/cli": "^4.1.14",
+  "tailwindcss": "^4.1.14",
     "typescript": "^5.6.3"
   },
   "description": "An opinionated starter for generating and serving web pages from structured JSON: - A strict JSON Schema defines the page shape. - Prompts guide JSON-only LLM outputs. - A FastAPI backend validates and serves JSON (and an optional demo page). - Tailwind builds CSS from a simple source file.",
