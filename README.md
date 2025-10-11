@@ -5,9 +5,17 @@ Generate a brand-new interactive site every time you ask. The FastAPI backend or
 
 ## Demo
 
-[🌠 Demo screenshot (add link here)](https://example.com/path-to-demo-image)
+Experience a different website every time you click generate. The system creates everything from interactive games to full marketing pages, all rendered live in your browser.
 
-> Replace the URL above with your production screenshot when it’s ready.
+### Landing Page & Generation
+![Non-Deterministic Website Landing](screenshots/demo1.png)
+
+The landing page features an animated gradient hero with floating blobs. Click the generate button to conjure a completely new experience—every result is unique.
+
+### Generated Output Examples
+![Generated Interactive Content](screenshots/demo2.png)
+
+The system produces diverse outputs: interactive canvas games, multi-section websites, product showcases, and more. Each generation includes proper styling, interactivity, and follows the NDW runtime guardrails.
 
 ## Highlights
 
