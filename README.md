@@ -2,25 +2,25 @@
 
 > **Generate a brand-new interactive experience with every click.** This project uses AI to create unique, interactive web pages and games on demand—no two generations are ever the same.
 
-## 🎨 What Is This?
+##  What Is This?
 
 Non-Deterministic Website is an experimental platform that leverages large language models (LLMs) to generate interactive web experiences in real-time. Each generation produces something unique:
 
-- 🎮 **Interactive games** with canvas animations, player controls, and game loops
-- 🌐 **Complete web pages** with layouts, styling, and interactive elements  
-- 🎭 **Dynamic content** that adapts to user prompts or generates creative themes automatically
+-  **Interactive games** with canvas animations, player controls, and game loops
+-  **Complete web pages** with layouts, styling, and interactive elements  
+-  **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
 The system ensures variety through intelligent deduplication, category rotation, and prompt engineering—so you'll never see the same experience twice.
 
-## 📸 Screenshots
+##  Screenshots
 
-### Landing Page
+### Generated Page
 ![Landing Page](screenshots/demo1.png)
 
 ### Generated Experience
 ![Generated Interactive Experience](screenshots/demo2.png)
 
-## ⚡ How It Works
+##  How It Works
 
 ```mermaid
 graph TD
@@ -61,7 +61,7 @@ graph TD
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 - Python 3.9+
@@ -122,7 +122,7 @@ npm run watch
 uvicorn api.main:app --reload
 ```
 
-## 🎮 How to Use
+##  How to Use
 
 1. **Visit the landing page** at `http://localhost:8000`
 2. **Click "Generate"** to create a random interactive experience
@@ -142,7 +142,7 @@ uvicorn api.main:app --reload
 | `/llm/status` | GET | LLM provider configuration and status |
 | `/llm/probe` | GET | Test LLM provider connectivity |
 
-## 🔧 Configuration
+##  Configuration
 
 Configure behavior via environment variables:
 
@@ -177,7 +177,7 @@ Configure behavior via environment variables:
 | `ALLOW_OFFLINE_GENERATION` | Use stub generation (no LLM) for testing | `false` |
 | `ALLOW_ORIGINS` | CORS allowed origins (comma-separated) | `*` |
 
-## 🧪 Testing
+##  Testing
 
 Run the full test suite:
 
@@ -202,15 +202,15 @@ pytest --cov=api --cov-report=html
 ```
 
 The test suite includes **70+ tests** covering:
-- ✅ Prompt engineering and LLM response validation
-- ✅ NDW runtime behavior and safety checks
-- ✅ Schema normalization and validation
-- ✅ Deduplication logic
-- ✅ Prefetch queue management
-- ✅ API endpoint behavior
-- ✅ Frontend rendering (full HTML and NDW snippets)
+-  Prompt engineering and LLM response validation
+-  NDW runtime behavior and safety checks
+-  Schema normalization and validation
+-  Deduplication logic
+-  Prefetch queue management
+-  API endpoint behavior
+-  Frontend rendering (full HTML and NDW snippets)
 
-## 📦 Deployment
+##  Deployment
 
 ### Deploy to Render
 
@@ -259,7 +259,7 @@ For other platforms (Heroku, Railway, Fly.io, etc.):
    uvicorn api.main:app --host 0.0.0.0 --port $PORT
    ```
 
-## 🎯 Project Goals & Design Principles
+##  Project Goals & Design Principles
 
 ### Why "Non-Deterministic"?
 
@@ -297,7 +297,7 @@ Traditional websites show the same content every time. This project explores the
    - Runtime safety checks (canvas creation, error overlays)
    - Comprehensive test coverage
 
-## 🛠️ Development
+##  Development
 
 ### Project Structure
 
@@ -341,24 +341,24 @@ npm run format
 npm run lint
 ```
 
-## 📚 Additional Resources
+##  Additional Resources
 
 - **Groq API Docs**: https://console.groq.com/docs
 - **OpenRouter API Docs**: https://openrouter.ai/docs
 - **FastAPI Documentation**: https://fastapi.tiangolo.com/
 - **Mermaid Diagrams**: https://mermaid.js.org/
 
-## 🤝 Contributing
+##  Contributing
 
 Contributions welcome! Areas for improvement:
 
-- 🎨 New prompt engineering techniques
-- 🧩 Additional validation logic
-- 🎮 NDW runtime features (WebGL, audio, etc.)
-- 📊 Metrics dashboard
-- 🔍 Visual diff testing for generated pages
+-  New prompt engineering techniques
+-  Additional validation logic
+-  NDW runtime features (WebGL, audio, etc.)
+-  Metrics dashboard
+-  Visual diff testing for generated pages
 
-## 📄 License
+## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
