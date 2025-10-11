@@ -2,6 +2,26 @@ const _w = window;
 const bodyEl = document.body;
 const mainEl = document.getElementById('appMain');
 console.debug('[ndw] app script evaluated; readyState=', document.readyState);
+function ensureScrollableBody() {
+    try {
+        document.documentElement.style.overflowX = 'auto';
+        document.documentElement.style.overflowY = 'auto';
+        document.body.style.overflowX = 'auto';
+        document.body.style.overflowY = 'auto';
+        document.body.style.removeProperty('overscroll-behavior');
+        document.documentElement.style.removeProperty('overscroll-behavior');
+        const removable = ['overflow-hidden', 'no-scroll', 'lock-scroll'];
+        removable.forEach(cls => {
+            if (document.body.classList.contains(cls))
+                document.body.classList.remove(cls);
+            if (document.documentElement.classList.contains(cls))
+                document.documentElement.classList.remove(cls);
+        });
+    }
+    catch (err) {
+        console.warn('ensureScrollableBody failed', err);
+    }
+}
 function ensureJsonOverlay() {
     if (document.getElementById('jsonOverlay'))
         return;
@@ -213,6 +233,7 @@ function renderFullPage(html) {
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
+        ensureScrollableBody();
         upsertTitleOverlay(undefined);
     }
     catch (e) {
@@ -243,6 +264,7 @@ function renderInline(html) {
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
+        ensureScrollableBody();
         upsertTitleOverlay(undefined);
     }
     catch (e) {
@@ -336,6 +358,7 @@ function renderNdwSnippet(snippet) {
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
+        ensureScrollableBody();
     }
     catch (e) {
         console.error('NDW snippet render error:', e);
