@@ -264,75 +264,68 @@ Seed: {seed}
 _PAGE_SHAPE_HINT = """
 Output valid JSON only. No markdown fences.
 
-FORMATS (prefer #1):
+FORMATS (prefer #1 or #2 for websites/quizzes):
 1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}
 2. {"kind":"full_page_html","html":"<!doctype html>..."}
 3. {"components":[{"id":"x","type":"custom","props":{"html":"...","height":360}}]}
 
-RUNTIME (snippet only):
-window.NDW provides:
-- NDW.loop((dt) => ...) → dt in milliseconds since last frame
-  CRITICAL: dt is passed as parameter. DO NOT manually track time (no lastTime=Date.now() or NDW.time.elapsed).
-  Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000);
-  Example: NDW.loop((dt) => { update(dt/1000); draw(); });
-- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) → returns canvas element with .ctx, .dpr
-  Usage: const canvas = NDW.makeCanvas({fullScreen:true}); const ctx = canvas.ctx;
-  Dimensions: canvas.width, canvas.height (NOT canvas.canvas.width)
-- NDW.onKey((e) => ...) → e is KeyboardEvent; check e.key ('ArrowUp', 'w', ' ', etc.)
-    Register once, outside the loop. Do NOT reference dt inside the handler; use NDW.isDown inside NDW.loop for continuous input.
-- NDW.onPointer((e) => ...) → e = {x, y, down, type, raw}
-    Attach once outside the loop; inside handler mutate state flags. Pointer listeners inside NDW.loop will multiply events.
-- NDW.isDown(key) → true if key pressed; works for 'ArrowUp', 'w', 'Space', 'mouse'
-- NDW.onResize(() => ...)
-- NDW.utils: clamp(v,min,max), lerp(a,b,t), rng(seed), hash(seed)
-    rng(seed) returns a GENERATOR FUNCTION. Call it once to get a PRNG: const rand = NDW.utils.rng(seed); const value = rand();
-    Shortcut: rand.valueOf() is overloaded, so rand * 1 also yields the next random, but prefer rand().
-- NDW.pointer: {x,y,down}
-
-RULES:
+GENERAL RULES:
 - NO external resources (scripts/fonts/images/fetch)
-- NO manual time tracking (never use Date.now(), performance.now(), or NDW.time.elapsed for dt calculation)
-- Initialize ALL state BEFORE NDW.loop() call
-- Register event listeners (NDW.onKey / NDW.onPointer) BEFORE NDW.loop(); never define them inside the loop callback.
-- Never chain NDW.* calls onto other expressions (no `.NDW`). Call each NDW method as its own statement terminated with a semicolon.
-- Rotate categories so consecutive generations feel different. If the last request was a space shooter (Asteroids, etc.), pick a different genre or medium next.
-- Include clear, readable instructions or context for the user in the HTML outside the canvas.
-- Inline all CSS/JS
-- For snippets: host provides #ndw-app; don't wrap another
-- For canvas: NDW.makeCanvas auto-appends; clearRect(0,0,canvas.width,canvas.height) each frame
-- Physics with dt parameter: v += a*(dt/1000); p += v*(dt/1000); (dt is milliseconds, convert to seconds)
-- Title: include and use it (draw on canvas or small UI label)
 - Do not prefix output HTML with stray characters; the host injects it directly.
+- Inline all CSS/JS.
+- Include clear, readable instructions or context for the user in the HTML, not just canvas overlays.
+- Rotate categories so consecutive generations feel different.
 
-CONTROLS:
-- Keyboard discrete: NDW.onKey((e) => { if(e.key==='ArrowUp') jump(); });
-- Keyboard continuous: if(NDW.isDown('ArrowLeft')) x -= speed*(dt/1000);
-- Mouse/touch: NDW.onPointer((e) => { if(e.down) shoot(e.x, e.y); });
-- Mouse pressed: if(NDW.isDown('mouse')) dragObject();
+SNIPPET RUNTIME (when using NDW APIs):
+- NDW.loop((dt) => ...) → dt in milliseconds since last frame. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
+- Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000).
+- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) → returns canvas element with .ctx, .dpr. Dimensions: canvas.width / canvas.height (NOT canvas.canvas.width).
+- NDW.onKey((e) => ...) → KeyboardEvent; register once outside NDW.loop. Use NDW.isDown inside the loop for continuous input.
+- NDW.onPointer((e) => ...) → e = {x,y,down,type,raw}; register once outside NDW.loop.
+- NDW.isDown('ArrowLeft' | 'mouse' | ...), NDW.onResize, NDW.utils (clamp, lerp, rng(seed), hash(seed)), NDW.pointer {x,y,down}.
+- Initialize ALL state before calling NDW.loop().
+- Register event listeners before NDW.loop(); never define them inside the loop callback.
+- Never chain NDW.* off other expressions (no `.NDW`). Call each NDW method as its own statement.
+- Canvas scenes must clear via ctx.clearRect(0,0,canvas.width,canvas.height) each frame.
 
-CHOOSE ONE TYPE (rotate variety; avoid repeating same category):
-1. GAMES: ping pong, snake, tic tac toe, brick breaker, flappy bird, space invaders, memory match, connect four, tetris, asteroids
-   - Initialize state (score=0, pos, vel) BEFORE NDW.loop
+CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
+1. GAMES (canvas-driven): ping pong, snake, tic tac toe, brick breaker, flappy bird, space invaders, memory match, connect four, tetris, asteroids.
+   - Initialize state (score, positions, velocities) before NDW.loop.
    - Pattern: NDW.loop((dt) => { ctx.clearRect(0,0,w,h); update(dt/1000); draw(); });
-   - Physics: v += a*(dt/1000); p += v*(dt/1000); (dt in ms, convert to seconds)
-    - Controls: NDW.onKey handlers toggle flags; NDW.isDown inside NDW.loop applies movement (no dt in handlers)
-    - Provide on-screen instructions (controls, goals) and simple UI elements (score, lives, title) using HTML/CSS.
-   - Full viewport for immersion
-2. WEBSITES: landing page, portfolio, blog/article, product feature, pricing table, about/contact, gallery, FAQ, testimonials, dashboard, form
-    - Use rich HTML+CSS sections (hero, features, CTA) with headings, paragraphs, buttons, and imagery styles.
-    - Avoid relying solely on a canvas; craft a complete webpage layout.
-3. INTERACTIVE ART: particles, flow fields, boids, cellular automata, noise field, kaleidoscope, gradient morph
-   - Canvas pattern: const canvas=NDW.makeCanvas({fullScreen:true}); const ctx=canvas.ctx;
-     - Initialize particle arrays BEFORE loop. Generate randoms via const rand = NDW.utils.rng(seed); const x = rand();
-     - Auto-motion or pointer-reactive; ensure visible activity within 1s
-      - Pointer handlers belong outside NDW.loop; inside the loop read NDW.pointer.
-      - Add a short descriptive caption in HTML explaining the concept or interaction.
+   - Controls: NDW.onKey handlers set flags; NDW.isDown reads input inside the loop. Provide on-screen instructions and simple HUD elements.
+    - Mount the canvas inside a centered stage (e.g., <section class="game-stage">) with explicit width/height, padding, and a visible frame or background. Configure NDW.makeCanvas({ parent: stageEl, width: 900, height: 600 }) so the arena and walls live inside the box instead of filling the entire viewport.
+2. WEBSITES (DOM-first): landing page, portfolio, blog/article, product feature, pricing table, about/contact, gallery, FAQ, testimonials, dashboard, form, marketing site.
+    - Build multi-section layouts using semantic HTML (header/nav/main/section/footer, cards, grids, testimonials, CTA blocks).
+    - Avoid relying solely on a canvas; craft a complete webpage layout with DOM sections and components.
+    - Use gradients, layered backgrounds, photography/illustration placeholders, and accent colors so the page feels designed—not bland.
+    - Ensure the page scrolls naturally: never set overflow:hidden on html/body, and let content below the fold remain reachable.
+    - DO NOT call NDW.makeCanvas for this category.
+   - Prefer FORMAT #2 (full_page_html) or FORMAT #1 with expressive HTML+CSS. Provide interactive DOM elements (buttons, forms) where relevant.
+3. INTERACTIVE ART (canvas-driven): particles, flow fields, boids, cellular automata, noise field, kaleidoscope, gradient morph.
+    - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
+    - Example: const rand = NDW.utils.rng(seed); const x = rand();
+   - Ensure visible motion within 1 second. Pointer handlers belong outside NDW.loop; read NDW.pointer inside.
+   - Add a short descriptive caption in HTML explaining the concept or how to interact.
+4. QUIZZES (DOM-first): trivia, flashcards, study guides, knowledge checks, onboarding questionnaires.
+   - Use semantic HTML sections with question cards, form inputs (radio, checkbox, text), progress indicators, and call-to-action buttons.
+   - Provide clear instructions and a scoring/reveal mechanic using plain JS and DOM updates (no canvas, no NDW.makeCanvas).
+   - Prefer FORMAT #2 or #1 with rich HTML structure; ensure accessibility with labels and logical grouping.
+
+CONTROLS REFERENCE (for canvas-based categories only):
+- Keyboard discrete: NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
+- Keyboard continuous: if (NDW.isDown('ArrowLeft')) x -= speed * (dt/1000);
+- Mouse/touch: NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
+- Mouse held: if (NDW.isDown('mouse')) dragObject();
 
 CANONICAL GAME TEMPLATE:
-const canvas = NDW.makeCanvas({ fullScreen: true });
+const stage = document.createElement('section');
+stage.className = 'mx-auto my-6 w-full max-w-4xl rounded-xl bg-slate-900/95 p-6 shadow-lg';
+document.getElementById('ndw-app')?.appendChild(stage);
+
+const canvas = NDW.makeCanvas({ parent: stage, width: 960, height: 560 });
 const ctx = canvas.ctx;
 const rand = NDW.utils.rng(seed);
-let state = { x: 0, vx: 0 };
+let state = { x: canvas.width / 2, vx: 0 };
 
 NDW.onKey((e) => {
     if (e.key === 'ArrowLeft') state.vx = -1;
@@ -343,14 +336,16 @@ NDW.loop((dt) => {
     const seconds = dt / 1000;
     state.x += state.vx * seconds * 200;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillRect(state.x, canvas.height - 40, 40, 20);
+    ctx.fillStyle = '#10b981';
+    ctx.fillRect(state.x - 20, canvas.height - 60, 40, 40);
 });
 
 OUTPUT CHECKLIST:
 ✓ Valid JSON in format #1, #2, or #3
 ✓ Title present (if snippet) and used; or omit cleanly
-✓ All vars initialized; listeners after DOM ready
-✓ Canvas: clearRect called; rAF inside loop fn
+✓ All vars initialized; listeners bound before use
+✓ Canvas flows (categories 1 & 3 only): clearRect each frame, use dt parameter, no manual timers
+✓ Websites/Quizzes: multi-section DOM layout, accessible labels, no canvas usage
 ✓ No undefined refs or missing elements
 """
 
