@@ -24,8 +24,8 @@ function ensureJsonOverlay(){
   wrap.id='jsonOverlay';
   wrap.className='fixed top-3 right-3 z-50';
   wrap.innerHTML=`<button id="toggleJsonBtn" type="button" class="px-3 py-2 rounded bg-slate-900/80 text-white text-xs">Show JSON</button>
-  <div id="jsonPanel" class="hidden mt-2 max-w-[60vw] max-h-[60vh] overflow-auto bg-white/95 border border-slate-200 rounded shadow-lg p-3">
-    <pre id="jsonOut" class="text-[11px] whitespace-pre-wrap"></pre>
+  <div id="jsonPanel" class="hidden mt-2 max-w-[60vw] max-h-[60vh] overflow-auto bg-white border border-slate-200 rounded shadow-lg p-3 text-slate-900">
+    <pre id="jsonOut" class="text-[11px] whitespace-pre-wrap text-slate-900"></pre>
   </div>`;
   document.body.appendChild(wrap);
   const btn = document.getElementById('toggleJsonBtn') as HTMLButtonElement | null;
