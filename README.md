@@ -1,5 +1,4 @@
-Non‑Deterministic Website
-=========================
+# Non‑Deterministic Website
 
 Generate a brand-new interactive site every time you ask. The FastAPI backend orchestrates Groq/OpenRouter LLMs, normalizes the response into rich HTML or NDW snippets, and the TypeScript front-end renders the result directly into the page—no iframes, no reloads.
 
@@ -8,11 +7,13 @@ Generate a brand-new interactive site every time you ask. The FastAPI backend or
 Experience a different website every time you click generate. The system creates everything from interactive games to full marketing pages, all rendered live in your browser.
 
 ### Landing Page & Generation
+
 ![Non-Deterministic Website Landing](screenshots/demo1.png)
 
 The landing page features an animated gradient hero with floating blobs. Click the generate button to conjure a completely new experience—every result is unique.
 
 ### Generated Output Examples
+
 ![Generated Interactive Content](screenshots/demo2.png)
 
 The system produces diverse outputs: interactive canvas games, multi-section websites, product showcases, and more. Each generation includes proper styling, interactivity, and follows the NDW runtime guardrails.
@@ -59,13 +60,13 @@ flowchart TD
 
 ### Component rundown
 
-| Layer | Responsibilities |
-|-------|------------------|
-| **Browser UI (`templates/index.html`, `static/ts-src/app.ts`)** | Handles user prompts, seeds, status overlays, and renders generated documents. |
-| **NDW Runtime (`static/ts-src/ndw.ts`)** | Tiny game/visual library providing `loop(dt)`, input helpers, RNG utilities, and canvas helpers with validation guards. |
-| **FastAPI Backend (`api/main.py`)** | Exposes `/generate`, `/metrics`, `/prefetch`, `/llm/status`; manages lifespan hooks and background tasks. |
-| **LLM Client (`api/llm_client.py`)** | Builds prompt, enforces schema, rotates categories, and retries across Groq/OpenRouter. |
-| **Prefetch & Dedupe (`api/prefetch.py`, `api/dedupe.py`)** | Warms a queue of ready-to-serve pages and prevents near-duplicate outputs. |
+| Layer                                                           | Responsibilities                                                                                                        |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Browser UI (`templates/index.html`, `static/ts-src/app.ts`)** | Handles user prompts, seeds, status overlays, and renders generated documents.                                          |
+| **NDW Runtime (`static/ts-src/ndw.ts`)**                        | Tiny game/visual library providing `loop(dt)`, input helpers, RNG utilities, and canvas helpers with validation guards. |
+| **FastAPI Backend (`api/main.py`)**                             | Exposes `/generate`, `/metrics`, `/prefetch`, `/llm/status`; manages lifespan hooks and background tasks.               |
+| **LLM Client (`api/llm_client.py`)**                            | Builds prompt, enforces schema, rotates categories, and retries across Groq/OpenRouter.                                 |
+| **Prefetch & Dedupe (`api/prefetch.py`, `api/dedupe.py`)**      | Warms a queue of ready-to-serve pages and prevents near-duplicate outputs.                                              |
 
 ## Runtime & Prompt Guardrails
 
@@ -80,25 +81,25 @@ The latest prompt instructions (see `_PAGE_SHAPE_HINT`) enforce:
 
 ## API Surface
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | Landing page + summon controls. |
-| `POST /generate` | Returns full-page HTML or `ndw_snippet_v1` JSON. |
-| `POST /generate/stream` | NDJSON streaming version (metadata then document). |
-| `GET /metrics/total` | Total number of conjured experiences. |
-| `GET /prefetch/status`, `POST /prefetch/fill` | Inspect or manually refill the prefetch queue. |
-| `GET /llm/status`, `GET /llm/probe` | Provider diagnostics. |
+| Endpoint                                      | Description                                        |
+| --------------------------------------------- | -------------------------------------------------- |
+| `GET /`                                       | Landing page + summon controls.                    |
+| `POST /generate`                              | Returns full-page HTML or `ndw_snippet_v1` JSON.   |
+| `POST /generate/stream`                       | NDJSON streaming version (metadata then document). |
+| `GET /metrics/total`                          | Total number of conjured experiences.              |
+| `GET /prefetch/status`, `POST /prefetch/fill` | Inspect or manually refill the prefetch queue.     |
+| `GET /llm/status`, `GET /llm/probe`           | Provider diagnostics.                              |
 
 Environment configuration (see `.env.sample` if present):
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL` | Primary LLM provider credentials & models. | `llama-3.3-70b-versatile`, fallback `openai/gpt-oss-120b` |
-| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `FORCE_OPENROUTER_ONLY` | Optional fallback provider. | `google/gemini-2.0-flash-exp:free` |
-| `LLM_MAX_TOKENS`, `GROQ_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS` | Output limits. | `15000` |
-| `LLM_TIMEOUT_SECS` | Request timeout seconds. | `75` |
-| `PREFETCH_DIR`, `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED` | Prefetch queue tuning. | reasonable defaults |
-| `ALLOW_OFFLINE_GENERATION` | Dev/test stub mode for `/generate`. | Disabled |
+| Variable                                                                           | Purpose                                    | Default                                                   |
+| ---------------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
+| `GROQ_API_KEY`, `GROQ_MODEL`, `GROQ_FALLBACK_MODEL`                                | Primary LLM provider credentials & models. | `llama-3.3-70b-versatile`, fallback `openai/gpt-oss-120b` |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `FORCE_OPENROUTER_ONLY`                  | Optional fallback provider.                | `google/gemini-2.0-flash-exp:free`                        |
+| `LLM_MAX_TOKENS`, `GROQ_MAX_TOKENS`, `OPENROUTER_MAX_TOKENS`                       | Output limits.                             | `15000`                                                   |
+| `LLM_TIMEOUT_SECS`                                                                 | Request timeout seconds.                   | `75`                                                      |
+| `PREFETCH_DIR`, `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_TOPUP_ENABLED` | Prefetch queue tuning.                     | reasonable defaults                                       |
+| `ALLOW_OFFLINE_GENERATION`                                                         | Dev/test stub mode for `/generate`.        | Disabled                                                  |
 
 ## Local Development
 
@@ -131,8 +132,8 @@ This repo ships with [`render.yaml`](render.yaml) so you can spin up a fully man
 1. Push the latest code to GitHub.
 2. In Render, click **New > Blueprint** and point it at your repo.
 3. Review the generated service (plan defaults to the Free tier). The blueprint:
-    - Installs Python deps, installs Node deps, and runs `npm run build` during the build step.
-    - Starts FastAPI via `uvicorn api.main:app --host 0.0.0.0 --port $PORT`.
+   - Installs Python deps, installs Node deps, and runs `npm run build` during the build step.
+   - Starts FastAPI via `uvicorn api.main:app --host 0.0.0.0 --port $PORT`.
 4. Add your secrets under **Environment** (at minimum `GROQ_API_KEY` and `OPENROUTER_API_KEY`).
 5. Deploy. Render will auto-redeploy on subsequent pushes to the tracked branch.
 
