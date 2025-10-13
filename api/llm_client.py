@@ -306,6 +306,7 @@ GENERAL RULES:
 - No external resources (scripts/fonts/images/fetch); inline all CSS/JS.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
+- Maintain strong contrast between text and backgrounds (e.g., no white-on-white or invisible content).
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
