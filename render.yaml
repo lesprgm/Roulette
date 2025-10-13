@@ -9,23 +9,41 @@ services:
       pip install -r requirements.txt
       npm install
       npm run build
-    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    startCommand: python -m uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: llama-3.3-70b-versatile
-      - key: GROQ_FALLBACK_MODEL
         value: openai/gpt-oss-120b
+      - key: GROQ_FALLBACK_MODEL
+        value: qwen/qwen3-32b
+      - key: GROQ_MAX_TOKENS
+        value: "8192"
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
         value: google/gemini-2.0-flash-exp:free
+      - key: OPENROUTER_FALLBACK_MODEL_1
+        value: x-ai/grok-4-fast
+      - key: OPENROUTER_FALLBACK_MODEL_2
+        value: deepseek/deepseek-chat-v3.1:free
+      - key: OPENROUTER_MAX_TOKENS
+        value: "15000"
       - key: FORCE_OPENROUTER_ONLY
         value: "0"
+      - key: TEMPERATURE
+        value: "1.2"
       - key: LLM_MAX_TOKENS
         value: "15000"
       - key: LLM_TIMEOUT_SECS
         value: "75"
+      - key: RATE_MAX_REQUESTS
+        value: "5"
+      - key: RATE_WINDOW_SECONDS
+        value: "60"
+      - key: ALLOW_OFFLINE_GENERATION
+        value: "1"
+      - key: REDIS_URL
+        sync: false
