@@ -8,40 +8,27 @@
   <link rel="stylesheet" href="/static/css/style.css" />
   <style>
     :root{
-      --ndw-pop1:#38bdf8; /* sky-400 */
-      --ndw-pop2:#60a5fa; /* blue-400 */
-      --ndw-pop3:#1e40af; /* blue-800 (accent reserve) */
-      --ndw-pop4:#22d3ee; /* cyan-400 */
+      --ndw-pop1:#facc15; /* amber-400 */
+      --ndw-pop2:#fb923c; /* orange-400 */
+      --ndw-pop3:#7c3aed; /* violet-600 */
+      --ndw-pop4:#0ea5e9; /* sky-500 */
       --ndw-bg:#0b1220;   /* deep blue */
     }
     html,body{height:100%}
-  body{ color:#0f172a; background-color:#f8fafc; }
+  body{ color:#0f172a; background: linear-gradient(150deg, #120827 0%, #1a1033 40%, #020617 100%); }
     /* Stage centers the hero without affecting other sections */
     .ndw-stage{ position:relative; min-height:48vh; display:grid; place-items:center; overflow:hidden; }
-    /* Animated background */
-    .ndw-bg{ position:absolute; inset:0; z-index:0; overflow:hidden; }
-    .ndw-bg::before{ content:""; position:absolute; inset:-22vmax; background:conic-gradient(from 0deg, var(--ndw-pop1), var(--ndw-pop2), var(--ndw-pop4), var(--ndw-pop1)); filter:blur(90px) saturate(130%); opacity:.55; animation:ndw-spin 18s linear infinite; }
-    /* Blue tint overlay so this section reads blue over the purple body */
-    .ndw-bg::after{ content:""; position:absolute; inset:0; background:
-      radial-gradient(60% 60% at 50% 40%, rgba(30, 64, 175, .35), rgba(2, 6, 23, 0) 70%),
-      linear-gradient(180deg, rgba(2, 8, 23, .25), rgba(2, 8, 23, 0));
-      pointer-events:none;
-    }
-    @keyframes ndw-spin{ to{ transform:rotate(1turn) } }
-    .ndw-blob{ position:absolute; width:48vmin; height:48vmin; border-radius:50%; filter:blur(60px) saturate(140%); opacity:.45; mix-blend-mode:screen; will-change:transform; }
-    .ndw-b1{ background:radial-gradient(circle at 30% 30%, var(--ndw-pop2), transparent 60%); animation:ndw-float1 22s ease-in-out infinite; }
-    .ndw-b2{ background:radial-gradient(circle at 70% 40%, var(--ndw-pop1), transparent 60%); animation:ndw-float2 26s ease-in-out infinite; }
-    .ndw-b3{ background:radial-gradient(circle at 40% 70%, var(--ndw-pop4), transparent 60%); animation:ndw-float3 28s ease-in-out infinite; }
-    @keyframes ndw-float1{ 0%{transform:translate(-20vmin,-10vmin) scale(1)} 50%{transform:translate(10vmin,10vmin) scale(1.15)} 100%{transform:translate(-20vmin,-10vmin) scale(1)} }
-    @keyframes ndw-float2{ 0%{transform:translate(30vmin,-15vmin) scale(1)} 50%{transform:translate(-5vmin,5vmin) scale(1.1)} 100%{transform:translate(30vmin,-15vmin) scale(1)} }
-    @keyframes ndw-float3{ 0%{transform:translate(-10vmin,25vmin) scale(1)} 50%{transform:translate(15vmin,0vmin) scale(1.2)} 100%{transform:translate(-10vmin,25vmin) scale(1)} }
-    /* Cursor-follow glow */
-    .ndw-glow{ position:absolute; width:36vmin; height:36vmin; border-radius:50%; pointer-events:none; z-index:1; background:radial-gradient(circle, rgba(255,255,255,.35), rgba(255,255,255,0) 60%); mix-blend-mode:overlay; filter:blur(18px); transform:translate(-50%,-50%); }
+    .ndw-stage::before{ content:""; position:absolute; inset:-25%; background:none; }
+    .ndw-stage::after{ content:""; position:absolute; inset:18%; border:1px solid rgba(148,163,184,0.08); border-radius:40px; opacity:0.25; }
+    /* Animated background removed for cleaner look */
+    .ndw-bg,
+    .ndw-glow,
+    .ndw-blob { display:none; }
     /* Minimal hero text */
-    .ndw-hero{ position:relative; z-index:2; text-align:center; padding:2rem 1.25rem; backdrop-filter:blur(6px); }
-    .ndw-title{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; font-size:clamp(2.2rem,7vw,4.6rem); line-height:.95; letter-spacing:.02em; text-shadow:0 6px 28px rgba(0,0,0,.35); }
-    .ndw-accent{ background:linear-gradient(120deg,var(--ndw-pop1),var(--ndw-pop2),var(--ndw-pop4)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    @media (prefers-reduced-motion: reduce){ .ndw-bg::before,.ndw-blob,.ndw-glow{ animation:none } }
+    .ndw-hero{ position:relative; z-index:2; text-align:center; padding:2rem 1.7rem; backdrop-filter:blur(10px); background:linear-gradient(155deg, rgba(250,250,255,0.88) 0%, rgba(234,236,255,0.82) 60%, rgba(213,219,248,0.88) 100%); border-radius:30px; box-shadow:0 50px 90px rgba(12,18,36,0.45); width:min(460px,92vw); margin:0 auto; border:1px solid rgba(148,163,184,0.25); color:#111827; }
+    .ndw-title{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; font-size:clamp(2.5rem,6vw,3.7rem); line-height:.9; letter-spacing:.04em; text-shadow:0 12px 24px rgba(148,163,184,0.35); color:#0f172a; }
+    .ndw-accent{ background:linear-gradient(130deg,var(--ndw-pop2),var(--ndw-pop3),var(--ndw-pop4)); -webkit-background-clip:text; background-clip:text; color:transparent; opacity:0.95; }
+    @media (prefers-reduced-motion: reduce){ }
     /* Fallback gradient if Tailwind fails to load */
     body.ndw-base{
       background: linear-gradient(135deg, #2e1065, #701a75 45%, #3b0764);
@@ -53,22 +40,16 @@
 <body class="min-h-screen bg-gradient-to-br from-purple-950 via-fuchsia-900 to-violet-900 ndw-base" data-api-key="">
   <main id="appMain" class="relative w-full min-h-screen px-6 md:px-10 py-16 md:py-20">
   <section class="relative text-center overflow-hidden flex flex-col items-center justify-center min-h-[70vh] text-white" data-role="hero">
-      <div class="ndw-stage w-full">
-        <div class="ndw-bg">
-          <div class="ndw-blob ndw-b1"></div>
-          <div class="ndw-blob ndw-b2"></div>
-          <div class="ndw-blob ndw-b3"></div>
-        </div>
-        <div id="ndw-glow" class="ndw-glow" aria-hidden="true"></div>
+        <div class="ndw-stage w-full">
         <div class="ndw-hero">
-          <h1 class="ndw-title">Non-Deterministic <span class="ndw-accent">Website</span></h1>
+          <h1 class="ndw-title"><span class="ndw-accent">Roulette</span></h1>
+          <p class="mt-3 text-base md:text-lg text-slate-600">Random websites with every click.</p>
         </div>
       </div>
 
     </section>
   </main>
 
-  <!-- Compiled TypeScript outputs (replacing legacy /static/js/*.js) -->
   <!-- Load compiled TypeScript as ES modules (required because output contains export markers) -->
   <script type="module" src="/static/ts-build/ndw.js"></script>
   <script type="module" src="/static/ts-build/app.js"></script>
