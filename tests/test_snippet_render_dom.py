@@ -26,7 +26,7 @@ def test_generate_returns_snippet_and_no_external_scripts(monkeypatch):
         "css": "#ndw-app{min-height:50vh}",
         "js": "window.__ran = (window.__ran||0)+1;",
     }
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
     monkeypatch.setattr(prefetch_mod, "dequeue", lambda: None)
     monkeypatch.setattr(prefetch_mod, "size", lambda: 0)
 

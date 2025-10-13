@@ -16,11 +16,11 @@ def test_prefers_openrouter_over_groq(monkeypatch):
 
     called = {"groq": False, "openrouter": False}
 
-    def openrouter_ok(brief, seed):
+    def openrouter_ok(brief, seed, category_note=None):
         called["openrouter"] = True
         return _normalized_page()
 
-    def groq_never(brief, seed):
+    def groq_never(brief, seed, category_note=None):
         called["groq"] = True
         raise AssertionError("Groq should not be called when OpenRouter succeeds")
 
@@ -40,11 +40,11 @@ def test_fallbacks_to_groq_when_openrouter_fails(monkeypatch):
 
     called = {"groq": False, "openrouter": False}
 
-    def openrouter_fail(brief, seed):
+    def openrouter_fail(brief, seed, category_note=None):
         called["openrouter"] = True
         return None
 
-    def groq_ok(brief, seed):
+    def groq_ok(brief, seed, category_note=None):
         called["groq"] = True
         return _normalized_page()
 
@@ -82,7 +82,7 @@ def test__call_groq_for_page_hits_groq_endpoint(monkeypatch):
 
     monkeypatch.setattr(llm_client, "requests", types.SimpleNamespace(post=fake_post))
 
-    out = llm_client._call_groq_for_page("brief", seed=7)
+    out = llm_client._call_groq_for_page("brief", seed=7, category_note="test")
     assert out and out.get("kind") == "full_page_html"
     assert captured["urls"], "No HTTP calls captured"
     assert captured["urls"][0] == llm_client.GROQ_ENDPOINT

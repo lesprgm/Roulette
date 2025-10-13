@@ -16,7 +16,7 @@ def test_llm_generate_normalizes_full_page_html(monkeypatch):
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     html = "<!doctype html><html><body><div id='app'>Hi</div><script>console.log('ok')</script></body></html>"
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: {"kind": "full_page_html", "html": html})
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": html})
 
     out = llm_client.generate_page("any brief", seed=123)
     assert isinstance(out, dict)
@@ -40,7 +40,7 @@ def test_llm_generate_normalizes_components_to_custom(monkeypatch):
         ]
     }
     # Mimic normalized doc via OpenRouter
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: llm_client._normalize_doc(comp_doc))
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: llm_client._normalize_doc(comp_doc))
 
     out = llm_client.generate_page("any", seed=1)
     assert "components" in out and isinstance(out["components"], list)
@@ -62,7 +62,7 @@ def test_llm_generate_picks_first_renderable_component(monkeypatch):
             {"id": "b", "type": "weird", "props": {"html": "<div>ok</div>", "height": 250}},
         ]
     }
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: llm_client._normalize_doc(doc))
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: llm_client._normalize_doc(doc))
 
     out = llm_client.generate_page("x", seed=5)
     comp = out["components"][0]
@@ -77,8 +77,8 @@ def test_llm_generate_returns_error_on_call_failure(monkeypatch):
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
     # Simulate failure path (returns None)
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: None)
-    monkeypatch.setattr(llm_client, "_call_groq_for_page", lambda brief, seed: None)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: None)
+    monkeypatch.setattr(llm_client, "_call_groq_for_page", lambda brief, seed, category_note=None: None)
 
     out = llm_client.generate_page("y", seed=7)
     assert isinstance(out, dict) and "error" in out
@@ -130,7 +130,7 @@ def test_llm_generate_accepts_ndw_snippet_v1(monkeypatch):
         "html": "<div id='ndw-app'><h1>Hi</h1></div>",
         "js": "console.log('ndw ok')",
     }
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
 
     out = llm_client.generate_page("any", seed=42)
     assert out.get("kind") == "ndw_snippet_v1"
@@ -143,7 +143,7 @@ def test_snippet_without_background_keeps_landing_styles(monkeypatch):
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     snippet = { "kind": "ndw_snippet_v1", "html": "<div id='ndw-app'><h2>OK</h2></div>" }
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
     out = llm_client.generate_page("", 1)
     assert out.get("kind") == "ndw_snippet_v1"
     assert out.get("background") is None or isinstance(out.get("background"), dict)
@@ -155,7 +155,7 @@ def test_snippet_minimum_content_is_preserved(monkeypatch):
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
 
     snippet = { "kind": "ndw_snippet_v1", "css": "#ndw-app{color:red}", "html": "<div id='ndw-app'></div>", "js": "console.log('hi')" }
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed: snippet)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
     out = llm_client.generate_page("", 2)
     assert out.get("css") and out.get("html")
 
@@ -167,10 +167,9 @@ def test_snippet_rejects_missing_all_content(monkeypatch):
 
     bad = { "kind": "ndw_snippet_v1" }
     def _call(_b,_s): return bad
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", _call)
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda b,s: bad)
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: _call(brief, seed))
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda b, s, category_note=None: bad)
     try:
         llm_client._normalize_doc(bad)
     except ValueError:
         pass
-
