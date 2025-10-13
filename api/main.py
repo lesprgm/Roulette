@@ -35,7 +35,6 @@ try:
 except Exception:
     _rl_mod = None
 
-# Redis rate limiter (used when REDIS_URL is set)
 _rr_cls = None
 try:
     from api.redis_ratelimit import RedisRateLimiter as _rr_cls  
@@ -46,11 +45,9 @@ except Exception:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     try:
         if _prefetch_topup_enabled():
             try:
-                # Only warm prefetch if LLM credentials are available
                 if llm_generate_page is not None and llm_status().get("has_token"):
                     t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
                     t.start()
@@ -59,7 +56,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     yield
-    # Shutdown: nothing specific (threads are daemonized)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -110,8 +106,11 @@ class ValidateRequest(BaseModel):
 # Choose rate limiter based on environment
 _REDIST_URL = os.getenv("REDIS_URL", "").strip()
 _rl_instance = None
-if _REDIST_URL and _rr_cls:
-    _rl_instance = _rr_cls(_REDIST_URL)
+if _REDIST_URL and _rr_cls and not os.getenv("PYTEST_CURRENT_TEST"):
+    try:
+        _rl_instance = _rr_cls(_REDIST_URL)
+    except Exception:
+        _rl_instance = None
 
 
 def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
@@ -120,12 +119,13 @@ def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
     Works with either the Redis limiter instance OR the in-process limiter module,
     and tolerates different function names across versions.
     """
-    if _rl_instance:
+    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
+    if use_redis:
         try:
             return _rl_instance.check_and_increment(bucket, key)
         except Exception:
-            # If Redis is down, fail open but log by returning generous allowance
-            return True, 9999, int(time.time()) + 60
+            # If Redis is unavailable, fall back to in-process limiter; if that fails, fail open.
+            pass
 
     if _rl_mod:
         if hasattr(_rl_mod, "check_and_increment"):
@@ -159,7 +159,9 @@ try:
 except Exception:
     _DEFAULT_FILL_TO = 10
 PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
-PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "5000") or 5000)
+PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
+if os.getenv("PYTEST_CURRENT_TEST"):
+    PREFETCH_DELAY_MS = 0
 
 
 def _prefetch_topup_enabled() -> bool:

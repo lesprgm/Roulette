@@ -4,7 +4,7 @@ import time
 from typing import Dict, Tuple
 
 WINDOW_SECONDS: int = int(os.getenv("RATE_WINDOW_SECONDS", "60"))
-MAX_REQUESTS: int = int(os.getenv("RATE_MAX_REQUESTS", "60"))
+MAX_REQUESTS: int = int(os.getenv("RATE_MAX_REQUESTS", "5"))
 
 _store: Dict[Tuple[str, str], Dict[str, int]] = {}
 

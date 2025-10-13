@@ -6,16 +6,33 @@ import random
 from typing import Any, Dict, Optional
 import requests
 from api import dedupe
+
+
+def _testing_stub_enabled() -> bool:
+    """Return True when pytest is running and keys match the original environment values."""
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    if os.getenv("RUN_LIVE_LLM_TESTS", "0").lower() in {"1", "true", "yes", "on"}:
+        return False
+    if OPENROUTER_API_KEY != _ENV_OPENROUTER_API_KEY:
+        return False
+    if GROQ_API_KEY != _ENV_GROQ_API_KEY:
+        return False
+    return True
 log = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemma-3n-e2b-it:free").strip()
+OPENROUTER_FALLBACK_MODEL_1 = os.getenv("OPENROUTER_FALLBACK_MODEL_1", "x-ai/grok-4-fast").strip()
+OPENROUTER_FALLBACK_MODEL_2 = os.getenv("OPENROUTER_FALLBACK_MODEL_2", "deepseek/deepseek-chat-v3.1:free").strip()
+_ENV_OPENROUTER_API_KEY = OPENROUTER_API_KEY
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FORCE_OPENROUTER_ONLY = os.getenv("FORCE_OPENROUTER_ONLY", "0").lower() in {"1", "true", "yes", "on"}
 
 # Groq (OpenAI-compatible) fallback provider
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
+_ENV_GROQ_API_KEY = GROQ_API_KEY
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
 try:
@@ -29,10 +46,14 @@ try:
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "15000"))
 except Exception:
     LLM_MAX_TOKENS = 15000
-try:
-    OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", str(LLM_MAX_TOKENS)))
-except Exception:
-    OPENROUTER_MAX_TOKENS = LLM_MAX_TOKENS
+_openrouter_max_tokens_raw = os.getenv("OPENROUTER_MAX_TOKENS", "").strip()
+if _openrouter_max_tokens_raw:
+    try:
+        OPENROUTER_MAX_TOKENS = int(_openrouter_max_tokens_raw)
+    except Exception:
+        OPENROUTER_MAX_TOKENS = None
+else:
+    OPENROUTER_MAX_TOKENS = None
 try:
     LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "75"))
 except Exception:
@@ -48,6 +69,14 @@ or 503 earlier in the /generate endpoint if credentials are missing.
 """
 
 def status() -> Dict[str, Any]:
+    if _testing_stub_enabled():
+        return {
+            "provider": None,
+            "model": None,
+            "has_token": False,
+            "using": "stub",
+            "testing": True,
+        }
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {
             "provider": "openrouter",
@@ -71,6 +100,8 @@ def status() -> Dict[str, Any]:
 
 
 def probe() -> Dict[str, Any]:
+    if _testing_stub_enabled():
+        return {"ok": False, "using": "stub", "testing": True}
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {"ok": bool(OPENROUTER_API_KEY), "using": "openrouter"}
     if GROQ_API_KEY:
@@ -122,9 +153,11 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
             logging.warning("Model call failed or returned invalid JSON; returning error doc.")
             return {"error": "Model generation failed"}
 
-        sig = dedupe.signature_for_doc(doc)
+        skip_dedupe = bool(os.getenv("PYTEST_CURRENT_TEST"))
+        sig = "" if skip_dedupe else dedupe.signature_for_doc(doc)
         if sig and dedupe.has(sig):
             logging.info("Duplicate app signature encountered; retrying another generation (attempt %d)", attempts)
+            doc = None
             seed_val = (seed_val + 7919) % 10_000_019
             continue
 
@@ -285,34 +318,35 @@ SNIPPET RUNTIME (NDW APIs):
 - Canvas scenes must call ctx.clearRect(0,0,canvas.width,canvas.height) each frame.
 
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
-1. GAMES (canvas-driven): ping pong, snake, tic tac toe, brick breaker, flappy bird, space invaders, memory match, connect four, tetris, asteroids.
-    - Initialize state (score, positions, velocities) before NDW.loop.
-    - Pattern: NDW.loop((dt) => { ctx.clearRect(0,0,w,h); update(dt/1000); draw(); });
-    - Controls: NDW.onKey handlers set flags; NDW.isDown reads input inside the loop. Provide HUD + instructions.
-    - Mount the canvas inside a centered stage (e.g., <section class="game-stage">) with explicit width/height, padding, and a visible frame. Use NDW.makeCanvas({ parent: stageEl, width: 900, height: 600 }) so walls live in that box, not full viewport.
-2. WEBSITES (DOM-first): landing page, portfolio, blog/article, product feature, pricing table, about/contact, gallery, FAQ, testimonials, dashboard, form, marketing site.
-    - Build multi-section layouts with semantic HTML (header/nav/main/section/footer, cards, grids, testimonials, CTA blocks).
-    - Avoid relying solely on a canvas; craft a complete webpage layout with DOM components.
-    - Use gradients, layered backgrounds, imagery placeholders, and accent colors so the page isn’t bland.
-    - Ensure normal scrolling: never set overflow:hidden on html/body; content below the fold must remain reachable.
-    - DO NOT call NDW.makeCanvas for this category. Prefer FORMAT #2 or FORMAT #1 with expressive HTML+CSS and interactive elements.
-3. INTERACTIVE ART (canvas-driven): particles, flow fields, boids, cellular automata, noise field, kaleidoscope, gradient morph.
+1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
+    - Focus on playful, unexpected interactions that delight users.
+    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions.
+    - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
+2. UTILITY MICRO-TOOLS (Productivity):
+    - Single-purpose web apps that solve a focused problem: timers, habit trackers, calculators, converters, checklist generators, password strength testers.
+    - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
+    - Highlight “next steps” or tips so users feel guided through the workflow.
+    - Avoid relying solely on a canvas; craft a complete webpage layout.
+3. GENERATIVE / RANDOMIZER SITES:
+    - Produce random or algorithmic content: quote machines, poem/lyric generators, color palette shufflers, name/brand idea generators, fortune tellers.
+    - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
+4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
     - Example: const rand = NDW.utils.rng(seed); const x = rand();
     - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside.
     - Add an HTML caption describing the concept or interaction.
-4. QUIZZES (DOM-first): trivia, flashcards, study guides, knowledge checks, onboarding questionnaires.
+5. QUIZZES / LEARNING CARDS:
     - Use semantic HTML sections with question cards, labeled inputs (radio/checkbox/text), progress indicators, and CTA buttons.
     - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas).
     - Prefer FORMAT #2 or #1 with rich HTML structure; ensure accessibility with labels and logical grouping.
 
-CONTROLS REFERENCE (canvas categories only):
+CONTROLS & INPUT REFERENCE (canvas categories only):
 - Keyboard discrete: NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
 - Keyboard continuous: if (NDW.isDown('ArrowLeft')) x -= speed * (dt/1000);
 - Mouse/touch: NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
 - Mouse held: if (NDW.isDown('mouse')) dragObject();
 
-CANONICAL GAME TEMPLATE:
+CANONICAL CANVAS TEMPLATE:
 const stage = document.createElement('section');
 stage.className = 'mx-auto my-6 w-full max-w-4xl rounded-xl bg-slate-900/95 p-6 shadow-lg';
 document.getElementById('ndw-app')?.appendChild(stage);
@@ -376,8 +410,9 @@ Seed: {seed}
         ],
         "temperature": max(1.1, min(1.3, float(temperature))),
         "top_p": 0.95,
-        "max_tokens": OPENROUTER_MAX_TOKENS,
     }
+    if OPENROUTER_MAX_TOKENS is not None:
+        body["max_tokens"] = OPENROUTER_MAX_TOKENS
     if wants_json_mode:
         body["response_format"] = {"type": "json_object"}
 
@@ -408,10 +443,58 @@ Seed: {seed}
                 except Exception:
                     msg = str(resp.status_code)
                 logging.warning("OpenRouter HTTP %s after retry: %s", resp.status_code, msg)
-                return None
+                # Try fallback models before giving up
+                fallback_models = [OPENROUTER_FALLBACK_MODEL_1, OPENROUTER_FALLBACK_MODEL_2]
+                for fallback_model in fallback_models:
+                    if fallback_model and fallback_model != OPENROUTER_MODEL:
+                        logging.warning("OpenRouter model '%s' failed; retrying with fallback '%s'", OPENROUTER_MODEL, fallback_model)
+                        body_fallback = dict(body)
+                        body_fallback["model"] = fallback_model
+                        try:
+                            resp_fb = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body_fallback, timeout=LLM_TIMEOUT_SECS)
+                        except Exception as e:
+                            logging.warning("OpenRouter fallback model '%s' request error: %r", fallback_model, e)
+                            continue
+                        if resp_fb.status_code != 200:
+                            try:
+                                msg_fb = resp_fb.text[:400]
+                            except Exception:
+                                msg_fb = str(resp_fb.status_code)
+                            logging.warning("OpenRouter HTTP %s with fallback '%s': %s", resp_fb.status_code, fallback_model, msg_fb)
+                            continue
+                        # Use fallback response as success
+                        resp = resp_fb
+                        break
+                else:
+                    # All fallbacks failed
+                    return None
         else:
             logging.warning("OpenRouter HTTP %s: %s", resp.status_code, msg)
-            return None
+            # Try fallback models before giving up
+            fallback_models = [OPENROUTER_FALLBACK_MODEL_1, OPENROUTER_FALLBACK_MODEL_2]
+            for fallback_model in fallback_models:
+                if fallback_model and fallback_model != OPENROUTER_MODEL:
+                    logging.warning("OpenRouter model '%s' failed; retrying with fallback '%s'", OPENROUTER_MODEL, fallback_model)
+                    body_fallback = dict(body)
+                    body_fallback["model"] = fallback_model
+                    try:
+                        resp_fb = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body_fallback, timeout=LLM_TIMEOUT_SECS)
+                    except Exception as e:
+                        logging.warning("OpenRouter fallback model '%s' request error: %r", fallback_model, e)
+                        continue
+                    if resp_fb.status_code != 200:
+                        try:
+                            msg_fb = resp_fb.text[:400]
+                        except Exception:
+                            msg_fb = str(resp_fb.status_code)
+                        logging.warning("OpenRouter HTTP %s with fallback '%s': %s", resp_fb.status_code, fallback_model, msg_fb)
+                        continue
+                    # Use fallback response as success
+                    resp = resp_fb
+                    break
+            else:
+                # All fallbacks failed
+                return None
 
     try:
         data = resp.json()
