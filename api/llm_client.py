@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import random
+import threading
 from typing import Any, Dict, Optional
 import requests
 from api import dedupe
@@ -125,6 +126,8 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
     if not seed_val:
         seed_val = random.randint(1, 10_000_000)
 
+    category_note = _next_category_note()
+
     attempts = 0
     max_attempts = 3
     while attempts < max_attempts:
@@ -139,9 +142,9 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
         for p in providers:
             logging.warning("llm attempting provider=%s", p)
             if p == "groq":
-                doc = _call_groq_for_page(brief_str, seed_val)
+                doc = _call_groq_for_page(brief_str, seed_val, category_note)
             elif p == "openrouter":
-                doc = _call_openrouter_for_page(brief_str, seed_val)
+                doc = _call_openrouter_for_page(brief_str, seed_val, category_note)
             if doc:
                 logging.warning("llm chosen provider=%s", p)
                 break
@@ -169,7 +172,7 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
     return doc or {"error": "Model generation failed"}
 
 
-def _call_groq_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
+def _call_groq_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call Groq (OpenAI-compatible) and parse a page dict; None on failure."""
     temperature = TEMPERATURE
 
@@ -179,6 +182,8 @@ Output valid JSON only. No backticks. No explanations.
 
 Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
+
+{category_note}
 
 {_PAGE_SHAPE_HINT}
 """
@@ -306,7 +311,7 @@ GENERAL RULES:
 - No external resources (scripts/fonts/images/fetch); inline all CSS/JS.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
-- Maintain strong contrast between text and backgrounds (e.g., no white-on-white or invisible content).
+- Maintain high contrast between foreground text and backgrounds (e.g., do not leave white text on white/pale backgrounds; always pair light backgrounds with dark text and vice versa).
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
@@ -321,15 +326,15 @@ SNIPPET RUNTIME (NDW APIs):
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions.
+    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, wiggly sliders, audio toy soundboards.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
-    - Single-purpose web apps that solve a focused problem: timers, habit trackers, calculators, converters, checklist generators, password strength testers.
+    - Single-purpose web apps that solve a focused problem: timers, habit trackers, calculators, converters, checklist generators, quick invoice builders, micro CRMs, focus timers, fatigue checklists, mood-to-color pickers, habit heatmaps.
     - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
     - Highlight “next steps” or tips so users feel guided through the workflow.
     - Avoid relying solely on a canvas; craft a complete webpage layout.
 3. GENERATIVE / RANDOMIZER SITES:
-    - Produce random or algorithmic content: quote machines, poem/lyric generators, color palette shufflers, name/brand idea generators, fortune tellers.
+    - Produce random or algorithmic content: quote machines, poem/lyric generators, name/brand idea generators, fortune tellers.
     - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
 4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
@@ -379,10 +384,35 @@ OUTPUT CHECKLIST:
 ✓ No undefined refs or missing elements
 """
 
+_CATEGORY_ROTATION_NOTES = [
+    ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
+     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Lean into playful, unexpected behaviors (dodging buttons, reactive elements, cursor trails, digital squishables). Keep it whimsical and lightweight; do not switch categories."),
+    ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
+     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool focused on one clear task (timer, checklist, converter, habit tracker, etc.). Provide intuitive inputs, results, and next-step hints. Stay on this utility concept only."),
+    ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
+     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer site that creates fresh content (quotes, names, palettes, fortunes) with controls for refreshing or customizing output. Remain in this generative theme."),
+    ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
+     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art using NDW canvas APIs. Create visually engaging motion within 1 second, respond to pointer/keyboard as needed, and include a descriptive caption. Do not switch categories."),
+    ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
+     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards with accessible question blocks, labeled inputs, progress indicators, and reveal/score mechanics. Stay in this learning/cards space."),
+]
+
+_category_lock = threading.Lock()
+_category_index = -1
+
+
+def _next_category_note() -> str:
+    global _category_index
+    with _category_lock:
+        _category_index = (_category_index + 1) % len(_CATEGORY_ROTATION_NOTES)
+        heading, note = _CATEGORY_ROTATION_NOTES[_category_index]
+    logging.info("llm category_assignment=%s index=%d", heading, _category_index + 1)
+    return note
+
 # Removed Gemini provider support completely
 
 
-def _call_openrouter_for_page(brief: str, seed: int) -> Optional[Dict[str, Any]]:
+def _call_openrouter_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call OpenRouter Chat Completions and parse a page dict; None on failure."""
     temperature = TEMPERATURE
 
@@ -392,6 +422,8 @@ Output valid JSON only. No backticks. No explanations.
 
 Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
+
+{category_note}
 
 {_PAGE_SHAPE_HINT}
 """

@@ -17,6 +17,47 @@ const _w = window as AppWindow;
 const bodyEl = document.body;
 const mainEl = document.getElementById('appMain');
 console.debug('[ndw] app script evaluated; readyState=', document.readyState);
+const SANDBOX_SCOPE = '#ndw-sandbox';
+
+function parseRgb(color: string): [number, number, number] {
+  const match = color.match(/rgba?\(([^)]+)\)/);
+  if (!match) return [255, 255, 255];
+  const parts = match[1].split(',').map(part => Number(part.trim()));
+  return [parts[0] ?? 255, parts[1] ?? 255, parts[2] ?? 255];
+}
+
+function relativeLuminance([r, g, b]: [number, number, number]) {
+  const srgb = [r, g, b].map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+
+function ensureReadableTheme(target?: HTMLElement){
+  try {
+    const el = target || document.body;
+    if (!el.isConnected) return;
+    const style = getComputedStyle(el);
+    const hasImage = style.backgroundImage && style.backgroundImage !== 'none';
+    const bgLum = relativeLuminance(parseRgb(style.backgroundColor || 'rgb(255,255,255)'));
+    if (!hasImage && bgLum > 0.85){
+      el.style.background = 'linear-gradient(135deg,#0b1220,#42526b)';
+    }
+    const colorLum = relativeLuminance(parseRgb(style.color || 'rgb(33,37,41)'));
+    if (colorLum > 0.8){
+      el.style.color = '#0f172a';
+    }
+    // If background still ends up very light, force a dark fallback
+    const finalBgLum = relativeLuminance(parseRgb(getComputedStyle(el).backgroundColor || 'rgb(255,255,255)'));
+    if (finalBgLum > 0.9){
+      el.style.backgroundColor = '#0b1220';
+      el.style.color = '#f8fafc';
+    }
+  } catch(err){
+    console.warn('ensureReadableTheme failed', err);
+  }
+}
 
 function ensureScrollableBody(){
   try {
@@ -54,6 +95,95 @@ function ensureJsonOverlay(){
   }
 }
 ensureJsonOverlay();
+ensureControlStyles();
+
+function ensureControlStyles(){
+  const id = 'ndw-control-style';
+  if (document.getElementById(id)) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = `
+#jsonOverlay{position:fixed;top:12px;right:12px;z-index:10000;display:flex;flex-direction:column;align-items:flex-end;gap:8px;}
+#jsonOverlay button{background:rgba(15,23,42,0.92);color:#f8fafc;padding:6px 10px;border-radius:6px;border:1px solid rgba(148,163,184,0.4);font:500 12px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 4px 12px rgba(15,23,42,0.35);cursor:pointer;}
+#jsonOverlay button:hover{background:rgba(30,41,59,0.95);}
+#jsonPanel{background:#ffffff;border:1px solid rgba(148,163,184,0.35);border-radius:10px;box-shadow:0 20px 40px rgba(15,23,42,0.2);}
+#floatingGenerateWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:9999;}
+`;
+  document.head.appendChild(style);
+}
+
+function scopeCssText(cssText:string, scope:string):string{
+  if (!cssText.trim()) return cssText;
+  let styleEl: HTMLStyleElement | null = null;
+  try {
+    styleEl = document.createElement('style');
+    styleEl.textContent = cssText;
+    document.head.appendChild(styleEl);
+    const sheet = styleEl.sheet;
+    if (!sheet) return cssText;
+    const scoped = processCssRules(Array.from(sheet.cssRules), scope);
+    return scoped.join('\n');
+  } catch(err){
+    console.warn('scopeCssText failed', err);
+    return cssText;
+  } finally {
+    styleEl?.remove();
+  }
+}
+
+function processCssRules(rules: CSSRule[], scope: string): string[] {
+  const output: string[] = [];
+  rules.forEach(rule => {
+    switch (rule.type) {
+      case CSSRule.STYLE_RULE: {
+        const styleRule = rule as CSSStyleRule;
+        const selectors = styleRule.selectorText.split(',').map(sel => {
+          let trimmed = sel.trim();
+          if (!trimmed) return '';
+          trimmed = trimmed.replace(/:root/gi, scope);
+          trimmed = trimmed.replace(/\bhtml\b/gi, scope);
+          trimmed = trimmed.replace(/\bbody\b/gi, scope);
+          if (!trimmed.startsWith(scope) && !trimmed.startsWith('@')) {
+            trimmed = `${scope} ${trimmed}`;
+          }
+          return trimmed;
+        }).filter(Boolean);
+        if (selectors.length) {
+          output.push(`${selectors.join(', ')} { ${styleRule.style.cssText} }`);
+        }
+        break;
+      }
+      case CSSRule.MEDIA_RULE: {
+        const mediaRule = rule as CSSMediaRule;
+        const inner = processCssRules(Array.from(mediaRule.cssRules), scope);
+        output.push(`@media ${mediaRule.conditionText} { ${inner.join(' ')} }`);
+        break;
+      }
+      case CSSRule.SUPPORTS_RULE: {
+        const supportsRule = rule as CSSSupportsRule;
+        const inner = processCssRules(Array.from(supportsRule.cssRules), scope);
+        output.push(`@supports ${supportsRule.conditionText} { ${inner.join(' ')} }`);
+        break;
+      }
+      case CSSRule.KEYFRAMES_RULE:
+      case CSSRule.FONT_FACE_RULE:
+      case CSSRule.PAGE_RULE:
+      default:
+        output.push(rule.cssText);
+        break;
+    }
+  });
+  return output;
+}
+
+function scopeInlineStyles(container: HTMLElement, scope: string){
+  const styles = Array.from(container.querySelectorAll('style')) as HTMLStyleElement[];
+  styles.forEach(styleEl => {
+    const scoped = scopeCssText(styleEl.textContent || '', scope);
+    styleEl.textContent = scoped;
+    styleEl.setAttribute('data-ndw-scoped', '1');
+  });
+}
 
 const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && String(bodyEl.dataset.apiKey)) || 'demo_123';
 
@@ -199,6 +329,7 @@ function renderFullPage(html:string){
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
+    ensureReadableTheme();
   } catch(e){ console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
@@ -221,47 +352,68 @@ function renderInline(html:string){
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
+    ensureReadableTheme();
   } catch(e){ console.error('Inline render error:', e); showError('Failed to render content.'); }
 }
 
 function renderNdwSnippet(snippet:NdwSnippet){
   try {
-  const bg = snippet.background || {};
-  const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
-  // Apply background first to avoid any white flash behind canvas
-  document.body.removeAttribute('style'); document.body.className='';
-  if (hasBg){ if (bg.style) document.body.setAttribute('style',bg.style); if (bg.class) document.body.setAttribute('class',bg.class); }
-    document.querySelectorAll('style[data-ndw-snippet="1"]').forEach(s=>s.remove());
-    if (snippet.css && snippet.css.trim()){ const st=document.createElement('style'); st.setAttribute('data-ndw-snippet','1'); st.textContent=snippet.css; document.head.appendChild(st); }
+    const bg = snippet.background || {};
+    const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
+    document.querySelectorAll('style[data-ndw-sandbox="1"]').forEach(s=>s.remove());
     if (mainEl){
       mainEl.innerHTML='';
-      const wrap=document.createElement('div'); wrap.id='ndw-app';
+      const sandbox=document.createElement('div');
+      sandbox.id='ndw-sandbox';
+      sandbox.className='ndw-sandbox';
+      sandbox.style.position='relative';
+      sandbox.style.minHeight='60vh';
+      sandbox.style.padding='24px';
+      sandbox.style.background='linear-gradient(135deg,#f1f5f9,#e2e8f0)';
+      sandbox.style.color='#0f172a';
+      if (hasBg){
+        if (bg.style){ sandbox.setAttribute('style', `${sandbox.getAttribute('style')||''}; ${bg.style}`.trim()); }
+        if (bg.class){ sandbox.className = `${sandbox.className} ${bg.class}`.trim(); }
+      }
+      const appRoot=document.createElement('div');
+      appRoot.id='ndw-app';
+      sandbox.appendChild(appRoot);
       const html = snippet.html || '';
       const safeHtml = stripExternalScripts(html);
       const hasCanvasCreation = /NDW\.makeCanvas/.test(snippet.js || '');
-      
       if (safeHtml.trim()) {
-        wrap.innerHTML = safeHtml;
+        appRoot.innerHTML = safeHtml;
+        const nested = appRoot.querySelector('#ndw-app');
+        if (nested && nested !== appRoot){
+          const cls = nested.getAttribute('class');
+          const sty = nested.getAttribute('style');
+          if (cls) appRoot.className = `${appRoot.className} ${cls}`.trim();
+          if (sty) appRoot.setAttribute('style', `${appRoot.getAttribute('style')||''}; ${sty}`.trim());
+          const kids = Array.from(nested.childNodes);
+          nested.remove();
+          kids.forEach(n=>appRoot.appendChild(n));
+        }
       } else if (!hasCanvasCreation) {
-        // Only create fallback canvas if snippet doesn't call NDW.makeCanvas
         const c = document.createElement('canvas');
         c.id = 'canvas';
         c.style.display = 'block';
-        c.style.width = '100vw';
-        c.style.height = '100vh';
-        wrap.appendChild(c);
+        c.style.width = '100%';
+        c.style.minHeight = '60vh';
+        appRoot.appendChild(c);
       }
-      // else: snippet has no HTML but calls makeCanvas; leave wrap empty, JS will populate
-      const innerApp = wrap.querySelector('#ndw-app');
-      if (innerApp && innerApp !== wrap){
-        const cls = innerApp.getAttribute('class'); const sty = innerApp.getAttribute('style');
-        if (cls) wrap.className = `${wrap.className} ${cls}`.trim();
-        if (sty) wrap.setAttribute('style', `${wrap.getAttribute('style')||''}; ${sty}`.trim());
-        const kids = Array.from(innerApp.childNodes); innerApp.remove(); kids.forEach(n=>wrap.appendChild(n));
-      }
-      mainEl.appendChild(wrap);
+      mainEl.appendChild(sandbox);
+      scopeInlineStyles(sandbox, SANDBOX_SCOPE);
+      ensureReadableTheme(sandbox);
     }
     upsertTitleOverlay(snippet.title);
+    ensureControlStyles();
+    if (snippet.css && snippet.css.trim()){
+      const scopedCss = scopeCssText(snippet.css, SANDBOX_SCOPE);
+      const st=document.createElement('style');
+      st.setAttribute('data-ndw-sandbox','1');
+      st.textContent=scopedCss;
+      document.head.appendChild(st);
+    }
     if (snippet.js && snippet.js.trim()){
       if (!_w.NDW) console.warn('NDW runtime not found; snippet JS may fail.');
       if (!_w.__NDW_showSnippetErrorOverlay){
@@ -269,13 +421,18 @@ function renderNdwSnippet(snippet:NdwSnippet){
           try { let el = document.getElementById('ndwSnippetError'); if (!el){ el=document.createElement('div'); el.id='ndwSnippetError'; Object.assign(el.style,{position:'fixed',top:'12px',left:'12px',zIndex:'1000',background:'rgba(220,38,38,0.95)',color:'#fff',padding:'10px 12px',borderRadius:'8px',font:'12px/1.4 system-ui, sans-serif',boxShadow:'0 6px 20px rgba(0,0,0,0.25)',maxWidth:'60vw'}); el.innerHTML='<strong>Snippet error</strong><div id="ndwSnippetErrorMsg" style="margin-top:6px;white-space:pre-wrap"></div>'; document.body.appendChild(el);} const msg = document.getElementById('ndwSnippetErrorMsg'); if(msg) msg.textContent = String(err && (err.message||err)).slice(0,500); } catch(e){ console.error('Snippet error overlay failure', e); }
         };
       }
-      const sc = document.createElement('script'); sc.type='text/javascript'; sc.textContent=`(function(){try\n{${snippet.js}\n}catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
+      const sc = document.createElement('script'); sc.type='text/javascript'; sc.textContent=`(function(){try
+{${snippet.js}
+}catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
       document.body.appendChild(sc);
     }
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
+    const sandboxEl = document.getElementById('ndw-sandbox');
+    if (sandboxEl instanceof HTMLElement) ensureReadableTheme(sandboxEl);
   } catch(e){ console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
+
 
 function showError(msg:string){ if (!mainEl) return; const wrap=document.createElement('div'); wrap.className='max-w-xl mx-auto mt-8 px-4'; wrap.innerHTML=`<div class="p-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-800">${escapeHtml(String(msg||'Error'))}</div>`; mainEl.innerHTML=''; mainEl.appendChild(wrap); }
 
