@@ -56,7 +56,7 @@ graph TD
 | **Frontend UI** | `templates/index.html`<br/>`static/ts-src/app.ts` | Landing page, generation controls, rendering engine |
 | **NDW Runtime** | `static/ts-src/ndw.ts` | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG |
 | **API Backend** | `api/main.py` | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints |
-| **LLM Client** | `api/llm_client.py` | Orchestrates Groq/OpenRouter APIs with retries, fallbacks, prompt engineering |
+| **LLM Client** | `api/llm_client.py` | Orchestrates OpenRouter-first with Groq fallback, retries, prompt engineering |
 | **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery |
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
@@ -154,9 +154,9 @@ Configure behavior via environment variables:
 | `GROQ_MODEL` | Primary Groq model | `llama-3.3-70b-versatile` |
 | `GROQ_FALLBACK_MODEL` | Backup model if primary fails | `openai/gpt-oss-120b` |
 | `GROQ_MAX_TOKENS` | Max output tokens for Groq | `15000` |
-| `OPENROUTER_API_KEY` | OpenRouter API key (fallback) | (optional) |
-| `OPENROUTER_MODEL` | OpenRouter model to use | `google/gemini-2.0-flash-exp:free` |
-| `FORCE_OPENROUTER_ONLY` | Use only OpenRouter, skip Groq | `false` |
+| `OPENROUTER_API_KEY` | OpenRouter API key (primary) | (required for production) |
+| `OPENROUTER_MODEL` | Primary OpenRouter model | `google/gemini-2.0-flash-exp:free` |
+| `FORCE_OPENROUTER_ONLY` | Force skipping Groq fallback | `false` |
 | `LLM_TIMEOUT_SECS` | Request timeout in seconds | `75` |
 
 ### Prefetch & Caching
