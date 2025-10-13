@@ -1,4 +1,3 @@
-# api/auth.py
 import os
 from typing import Optional, Set
 

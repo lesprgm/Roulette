@@ -9,52 +9,52 @@ def _normalized_page():
     return {"kind": "full_page_html", "html": "<!doctype html><html><body>OK</body></html>"}
 
 
-def test_prefers_groq_over_openrouter(monkeypatch):
+def test_prefers_openrouter_over_groq(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "also-present")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
 
     called = {"groq": False, "openrouter": False}
+
+    def openrouter_ok(brief, seed):
+        called["openrouter"] = True
+        return _normalized_page()
+
+    def groq_never(brief, seed):
+        called["groq"] = True
+        raise AssertionError("Groq should not be called when OpenRouter succeeds")
+
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", openrouter_ok)
+    monkeypatch.setattr(llm_client, "_call_groq_for_page", groq_never)
+
+    out = llm_client.generate_page("any", seed=42)
+    assert out.get("kind") == "full_page_html"
+    assert called["openrouter"] is True
+    assert called["groq"] is False
+
+
+def test_fallbacks_to_groq_when_openrouter_fails(monkeypatch):
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "also-present")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
+
+    called = {"groq": False, "openrouter": False}
+
+    def openrouter_fail(brief, seed):
+        called["openrouter"] = True
+        return None
 
     def groq_ok(brief, seed):
         called["groq"] = True
         return _normalized_page()
 
-    def or_never(brief, seed):
-        called["openrouter"] = True
-        raise AssertionError("OpenRouter should not be called when Groq succeeds")
-
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", openrouter_fail)
     monkeypatch.setattr(llm_client, "_call_groq_for_page", groq_ok)
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", or_never)
-
-    out = llm_client.generate_page("any", seed=42)
-    assert out.get("kind") == "full_page_html"
-    assert called["groq"] is True
-    assert called["openrouter"] is False
-
-
-def test_fallbacks_to_openrouter_when_groq_fails(monkeypatch):
-    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
-    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "also-present")
-    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
-
-    called = {"groq": False, "openrouter": False}
-
-    def groq_fail(brief, seed):
-        called["groq"] = True
-        return None
-
-    def or_ok(brief, seed):
-        called["openrouter"] = True
-        return _normalized_page()
-
-    monkeypatch.setattr(llm_client, "_call_groq_for_page", groq_fail)
-    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", or_ok)
 
     out = llm_client.generate_page("any", seed=123)
     assert out.get("kind") == "full_page_html"
-    assert called["groq"] is True
     assert called["openrouter"] is True
+    assert called["groq"] is True
 
 
 def test__call_groq_for_page_hits_groq_endpoint(monkeypatch):

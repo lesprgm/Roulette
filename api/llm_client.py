@@ -13,7 +13,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemma-3n-e2b-it:free").
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FORCE_OPENROUTER_ONLY = os.getenv("FORCE_OPENROUTER_ONLY", "0").lower() in {"1", "true", "yes", "on"}
 
-# Groq (OpenAI-compatible) primary provider
+# Groq (OpenAI-compatible) fallback provider
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -48,19 +48,19 @@ or 503 earlier in the /generate endpoint if credentials are missing.
 """
 
 def status() -> Dict[str, Any]:
-    if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-        return {
-            "provider": "groq",
-            "model": GROQ_MODEL,
-            "has_token": True,
-            "using": "groq",
-        }
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {
             "provider": "openrouter",
             "model": OPENROUTER_MODEL,
             "has_token": bool(OPENROUTER_API_KEY),
             "using": "openrouter",
+        }
+    if GROQ_API_KEY:
+        return {
+            "provider": "groq",
+            "model": GROQ_MODEL,
+            "has_token": True,
+            "using": "groq",
         }
     return {
         "provider": None,
@@ -71,10 +71,10 @@ def status() -> Dict[str, Any]:
 
 
 def probe() -> Dict[str, Any]:
-    if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-        return {"ok": True, "using": "groq"}
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {"ok": bool(OPENROUTER_API_KEY), "using": "openrouter"}
+    if GROQ_API_KEY:
+        return {"ok": True, "using": "groq"}
     return {"ok": False, "using": "stub"}
 
 
@@ -100,10 +100,10 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
         providers: list[str] = []
-        if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-            providers.append("groq")
         if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
             providers.append("openrouter")
+        if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
+            providers.append("groq")
         logging.warning("llm providers_order=%s force_openrouter_only=%s", providers, FORCE_OPENROUTER_ONLY)
         for p in providers:
             logging.warning("llm attempting provider=%s", p)
