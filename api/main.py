@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import time
 import uuid
@@ -29,6 +30,14 @@ except Exception:
         return {"ok": False, "error": "Model or token not configured", "using": "stub"}
 
 
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+log = logging.getLogger(__name__)
+
 _rl_mod = None
 try:
     import api.ratelimit as _rl_mod  
@@ -49,11 +58,16 @@ async def lifespan(app: FastAPI):
         if _prefetch_topup_enabled():
             try:
                 if llm_generate_page is not None and llm_status().get("has_token"):
+                    log.info("prefetch.lifespan: starting background top-up thread")
                     t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
                     t.start()
+                else:
+                    log.debug("prefetch.lifespan: skipping top-up (LLM unavailable)")
             except Exception:
+                log.exception("prefetch.lifespan: failed to start top-up thread")
                 pass
     except Exception:
+        log.exception("prefetch.lifespan: unexpected startup error")
         pass
     yield
 
@@ -178,19 +192,64 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
     """
     try:
         if llm_generate_page is None or not llm_status().get("has_token"):
+            log.debug("prefetch.top_up: LLM unavailable; aborting")
             return
         current = prefetch.size()
         if current > PREFETCH_LOW_WATER and current >= min_fill:
+            log.debug(
+                "prefetch.top_up: queue healthy (size=%d, low_water=%d, min_fill=%d)",
+                current,
+                PREFETCH_LOW_WATER,
+                min_fill,
+            )
             return
+        log.info(
+            "prefetch.top_up: refilling queue (current=%d, target=%d, brief=%s)",
+            current,
+            min_fill,
+            (brief or "")[:60],
+        )
         i = 0
-        while prefetch.size() < min_fill:
-            seed = (int(time.time() * 1000) + i) % 1_000_000_007
+        failures = 0
+        max_failures = max(5, min_fill * 3)
+        while prefetch.size() < min_fill and failures < max_failures:
+            seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
             page = llm_generate_page(brief or "", seed=seed)
             if isinstance(page, dict) and page.get("error"):
-                break
-            prefetch.enqueue(page)
-            i += 1
+                failures += 1
+                log.warning(
+                    "prefetch.top_up: generation returned error (attempt %d/%d): %s",
+                    failures,
+                    max_failures,
+                    page.get("error"),
+                )
+                try:
+                    time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
+                except Exception:
+                    pass
+                continue
+            if prefetch.enqueue(page):
+                i += 1
+                failures = 0
+            else:
+                failures += 1
+                log.debug(
+                    "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
+                    failures,
+                    max_failures,
+                    prefetch.size(),
+                )
+        if prefetch.size() >= min_fill:
+            log.info("prefetch.top_up: refill complete queue_size=%d", prefetch.size())
+        else:
+            log.warning(
+                "prefetch.top_up: stopped with queue_size=%d after %d attempts (target=%d)",
+                prefetch.size(),
+                i + failures,
+                min_fill,
+            )
     except Exception:
+        log.exception("prefetch.top_up: unexpected error")
         pass
 
 
@@ -351,6 +410,7 @@ def generate_endpoint(
     # Prefer serving from prefetch queue regardless of LLM availability
     page = prefetch.dequeue()
     if page:
+        log.info("prefetch.generate: served page from queue")
         try:
             if PREFETCH_DELAY_MS > 0:
                 time.sleep(PREFETCH_DELAY_MS / 1000.0)
@@ -362,9 +422,17 @@ def generate_endpoint(
             except Exception:
                 pass
         try:
-            if _prefetch_topup_enabled() and prefetch.size() <= PREFETCH_LOW_WATER:
-                background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
+            if _prefetch_topup_enabled():
+                queue_size = prefetch.size()
+                if queue_size <= PREFETCH_LOW_WATER:
+                    log.info(
+                        "prefetch.generate: queue size=%d <= low_water=%d, scheduling top-up",
+                        queue_size,
+                        PREFETCH_LOW_WATER,
+                    )
+                    background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
         except Exception:
+            log.exception("prefetch.generate: failed to schedule background top-up")
             pass
         return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
 
@@ -563,6 +631,7 @@ def prefetch_fill(
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
     allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key)
     if not allowed:
+        log.info("prefetch.fill: rate limited client=%s", client_key)
         return JSONResponse(
             status_code=429,
             content={"error": "rate limit exceeded", "reset": reset_ts},
@@ -576,6 +645,7 @@ def prefetch_fill(
     added = 0
     for i in range(n):
         if not llm_ok:
+            log.warning("prefetch.fill: LLM unavailable mid-fill client=%s", client_key)
             return JSONResponse(
                 status_code=503,
                 content={"error": "Missing LLM credentials"},
@@ -583,10 +653,18 @@ def prefetch_fill(
             )
         page = llm_generate_page(req.brief or "", seed=(int(time.time()*1000) + i) % 1_000_000_007)
         if isinstance(page, dict) and page.get("error"):
+            log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
             break
         if prefetch.enqueue(page):
             added += 1
 
+    log.info(
+        "prefetch.fill: client=%s requested=%d added=%d queue_size=%d",
+        client_key,
+        n,
+        added,
+        prefetch.size(),
+    )
     return JSONResponse(
         {"requested": n, "added": added, "queue_size": prefetch.size()},
         headers=_rate_limit_headers(remaining, reset_ts),
