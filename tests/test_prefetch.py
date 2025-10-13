@@ -131,6 +131,34 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
     assert r3.json() == sentinel
 
 
+def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
+    from api import main as main_mod
+
+    pf = isolated_prefetch
+    monkeypatch.setattr(main_mod, "prefetch", pf)
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+
+    responses = (
+        [{"error": "tempo"}, {"error": "429"}] +
+        [_make_custom_doc(f"<div>seed-{n}</div>") for n in range(5)]
+    )
+
+    call_iter = iter(responses)
+
+    def _llm(brief: str, seed: int):
+        try:
+            return next(call_iter)
+        except StopIteration:
+            return _make_custom_doc(f"<div>seed-final-{seed}</div>")
+
+    monkeypatch.setattr(main_mod, "llm_generate_page", _llm)
+    monkeypatch.setattr(main_mod.time, "sleep", lambda *_: None)
+
+    main_mod._top_up_prefetch("", min_fill=3)
+
+    assert pf.size() == 3
+
+
 def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod

@@ -108,8 +108,8 @@ def test_prompt_notes_event_registration_order():
 def test_prompt_includes_canonical_template():
     """Ensure prompt includes canonical code template block."""
     text = _PAGE_SHAPE_HINT
-    assert "CANONICAL GAME TEMPLATE" in text, \
-        "Prompt must include canonical template heading"
+    assert "CANONICAL CANVAS TEMPLATE" in text, \
+        "Prompt must include canonical canvas template heading"
     assert "NDW.loop((dt) =>" in text, \
         "Canonical template must demonstrate NDW.loop"
     assert "const rand = NDW.utils.rng" in text or "const rand=NDW.utils.rng" in text, \
@@ -130,8 +130,8 @@ def test_prompt_encourages_variety():
     lower = _PAGE_SHAPE_HINT.lower()
     assert "rotate" in lower and "categories" in lower, \
         "Prompt must mention rotating categories"
-    assert "space shooter" in lower or "asteroids" in lower, \
-        "Prompt should call out overused space shooters"
+    assert "web toys" in lower or "micro-tools" in lower or "randomizer" in lower, \
+        "Prompt should call out new variety categories"
 
 
 def test_prompt_requires_user_instructions():
