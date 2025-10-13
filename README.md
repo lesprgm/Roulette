@@ -30,9 +30,9 @@ graph TD
     C -->|Empty| E[Request New Generation]
     E --> F[FastAPI Backend]
     F --> G[LLM Orchestrator]
-    G --> H{Try Groq API}
+    G --> H{Try OpenRouter}
     H -->|Success| I[Receive JSON Response]
-    H -->|Fail| J[Fallback to OpenRouter]
+    H -->|Fail| J[Fallback to Groq API]
     J --> I
     I --> K[Normalize & Validate]
     K --> L{Check Deduplication}
