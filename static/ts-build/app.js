@@ -181,22 +181,15 @@ async function refreshSitesCounter() {
     catch { }
 }
 refreshSitesCounter();
-// Small UI helper to show or remove a snippet title overlay.
+// Update browser tab title without showing an on-page overlay.
 function upsertTitleOverlay(title) {
-    const id = 'ndw-title';
-    let el = document.getElementById(id);
-    if (!title) {
-        if (el && el.parentNode)
-            el.parentNode.removeChild(el);
-        return;
+    const existing = document.getElementById('ndw-title');
+    if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
     }
-    if (!el) {
-        el = document.createElement('div');
-        el.id = id;
-        el.style.cssText = 'position:fixed;z-index:9998;top:10px;left:10px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,.4);backdrop-filter:saturate(120%) blur(2px);color:#fff;font:600 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;pointer-events:none;max-width:60vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-        document.body.appendChild(el);
+    if (typeof title === 'string' && title.trim()) {
+        document.title = title.trim();
     }
-    el.textContent = String(title || '').trim();
 }
 function escapeHtml(s) { return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 function renderFullPage(html) {
