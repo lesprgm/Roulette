@@ -214,7 +214,7 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
         max_failures = max(5, min_fill * 3)
         while prefetch.size() < min_fill and failures < max_failures:
             seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
-            page = llm_generate_page(brief or "", seed=seed)
+            page = llm_generate_page(brief or "", seed=seed, user_key="prefetch")
             if isinstance(page, dict) and page.get("error"):
                 failures += 1
                 log.warning(
@@ -491,7 +491,7 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts),
         )
 
-    page = llm_generate_page(req.brief, seed=req.seed or 0)
+    page = llm_generate_page(req.brief, seed=req.seed or 0, user_key=client_key)
 
     if isinstance(page, dict) and not page.get("error"):
         try:
@@ -584,7 +584,7 @@ def generate_stream(
             except Exception:
                 pass
         else:
-            page = llm_generate_page(req.brief, seed=req.seed or 0)
+            page = llm_generate_page(req.brief, seed=req.seed or 0, user_key=client_key)
         if isinstance(page, dict) and not page.get("error"):
             try:
                 counter.increment(1)
@@ -651,7 +651,11 @@ def prefetch_fill(
                 content={"error": "Missing LLM credentials"},
                 headers=_rate_limit_headers(remaining, reset_ts),
             )
-        page = llm_generate_page(req.brief or "", seed=(int(time.time()*1000) + i) % 1_000_000_007)
+        page = llm_generate_page(
+            req.brief or "",
+            seed=(int(time.time() * 1000) + i) % 1_000_000_007,
+            user_key="prefetch",
+        )
         if isinstance(page, dict) and page.get("error"):
             log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
             break
@@ -714,7 +718,7 @@ def preview(
             "model_version": os.getenv("MODEL_NAME", "v0"),
         }
     else:
-        page = llm_generate_page(brief, seed=seed or 42)
+        page = llm_generate_page(brief, seed=seed or 42, user_key=client_key)
 
     title = subtitle = ""
     for c in page.get("components", []):

@@ -110,7 +110,7 @@ def probe() -> Dict[str, Any]:
     return {"ok": False, "using": "stub"}
 
 
-def generate_page(brief: str, seed: int) -> Dict[str, Any]:
+def generate_page(brief: str, seed: int, user_key: Optional[str] = None) -> Dict[str, Any]:
     """Return a doc in one of the two accepted shapes or {error}.
 
     Behaviors:
@@ -126,7 +126,7 @@ def generate_page(brief: str, seed: int) -> Dict[str, Any]:
     if not seed_val:
         seed_val = random.randint(1, 10_000_000)
 
-    category_note = _next_category_note()
+    category_note = _next_category_note(user_key)
 
     attempts = 0
     max_attempts = 3
@@ -326,7 +326,7 @@ SNIPPET RUNTIME (NDW APIs):
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, wiggl, "Don't Press the Button" pranks, pixel painters, click speed tests, reaction timers, Guess the Number challenges, Rock, Paper, Scissors battles, Whack-a-Mole Lite grids, Memory Card Flip matches, Avoid the Box chases.
+    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, "Don't Press the Button" pranks, pixel painters, click speed tests, reaction timers, Guess the Number challenges, Rock, Paper, Scissors battles, Whack-a-Mole Lite grids, Memory Card Flip matches, Avoid the Box chases.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
     - Single-purpose web apps that solve a focused problem: timers, converters, checklist generators, quick invoice builders, micro CRMs, focus timers, mood-to-color pickers, Click Counter helpers, Worth in Pizza salary converters, Pet Age Converter dashboards, "Is It Friday Yet?" checkers, How Long Would It Take to Walk to the Moon estimators.
@@ -398,15 +398,25 @@ _CATEGORY_ROTATION_NOTES = [
 ]
 
 _category_lock = threading.Lock()
-_category_index = -1
+_category_indices: Dict[str, int] = {}
 
 
-def _next_category_note() -> str:
-    global _category_index
+def _next_category_note(user_key: Optional[str] = None) -> str:
+    key = (user_key or "").strip() or "__global__"
     with _category_lock:
-        _category_index = (_category_index + 1) % len(_CATEGORY_ROTATION_NOTES)
-        heading, note = _CATEGORY_ROTATION_NOTES[_category_index]
-    logging.info("llm category_assignment=%s index=%d", heading, _category_index + 1)
+        idx = (_category_indices.get(key, -1) + 1) % len(_CATEGORY_ROTATION_NOTES)
+        _category_indices[key] = idx
+        # Avoid unbounded growth if many unique keys appear
+        if len(_category_indices) > 4096:
+            # Drop oldest half excluding the active key to keep footprint bounded
+            for stale in list(_category_indices.keys()):
+                if stale == key:
+                    continue
+                _category_indices.pop(stale, None)
+                if len(_category_indices) <= 2048:
+                    break
+        heading, note = _CATEGORY_ROTATION_NOTES[idx]
+    logging.info("llm category_assignment=%s index=%d key=%s", heading, idx + 1, key)
     return note
 
 # Removed Gemini provider support completely

@@ -67,7 +67,7 @@ def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int):
+    def _fake_llm(brief: str, seed: int, user_key=None):
         return _make_custom_doc(f"<div>seed-{seed}</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)
@@ -87,7 +87,7 @@ def test_prefetch_fill_skips_duplicates(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _same_doc(brief: str, seed: int):
+    def _same_doc(brief: str, seed: int, user_key=None):
         return _make_custom_doc("<div>same</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _same_doc)
@@ -113,7 +113,7 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
     sentinel = _make_custom_doc("<div>LLM-Fallback</div>")
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed: sentinel)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: sentinel)
     client = TestClient(app)
 
     r1 = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
@@ -145,7 +145,7 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
 
     call_iter = iter(responses)
 
-    def _llm(brief: str, seed: int):
+    def _llm(brief: str, seed: int, user_key=None):
         try:
             return next(call_iter)
         except StopIteration:
@@ -220,7 +220,7 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
     # Mock LLM as available and generate unique docs for top-up
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int):
+    def _fake_llm(brief: str, seed: int, user_key=None):
         return _make_custom_doc(f"<div>topup-{seed}</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)

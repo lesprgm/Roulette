@@ -89,8 +89,10 @@ def test_generate_endpoint_returns_llm_page_when_available(monkeypatch):
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda: None)
+    monkeypatch.setattr(main_mod.prefetch, "size", lambda: 0)
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>OK</body></html>"}
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed: page)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: page)
 
     r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200
@@ -101,12 +103,14 @@ def test_stream_endpoint_emits_page_event_with_llm(monkeypatch):
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda: None)
+    monkeypatch.setattr(main_mod.prefetch, "size", lambda: 0)
     page = {
         "components": [
             {"id": "c1", "type": "custom", "props": {"html": "<div>Stream OK</div>", "height": 200}}
         ]
     }
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed: page)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: page)
 
     r = client.post("/generate/stream", json={"brief": "z", "seed": 11}, headers=API_HEADERS)
     assert r.status_code == 200
