@@ -326,20 +326,20 @@ SNIPPET RUNTIME (NDW APIs):
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, wiggly sliders, audio toy soundboards.
+    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, wiggl, "Don't Press the Button" pranks, pixel painters, click speed tests, reaction timers, Guess the Number challenges, Rock, Paper, Scissors battles, Whack-a-Mole Lite grids, Memory Card Flip matches, Avoid the Box chases.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
-    - Single-purpose web apps that solve a focused problem: timers, habit trackers, calculators, converters, checklist generators, quick invoice builders, micro CRMs, focus timers, fatigue checklists, mood-to-color pickers, habit heatmaps.
+    - Single-purpose web apps that solve a focused problem: timers, converters, checklist generators, quick invoice builders, micro CRMs, focus timers, mood-to-color pickers, Click Counter helpers, Worth in Pizza salary converters, Pet Age Converter dashboards, "Is It Friday Yet?" checkers, How Long Would It Take to Walk to the Moon estimators.
     - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
     - Highlight “next steps” or tips so users feel guided through the workflow.
     - Avoid relying solely on a canvas; craft a complete webpage layout.
 3. GENERATIVE / RANDOMIZER SITES:
-    - Produce random or algorithmic content: quote machines, poem/lyric generators, name/brand idea generators, fortune tellers.
+    - Produce random or algorithmic content: quote machines, poem/lyric generators, name/brand idea generators, fortune tellers, Random Compliment Generator toys, Excuse Generator oracles.
     - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
 4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
     - Example: const rand = NDW.utils.rng(seed); const x = rand();
-    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside.
+    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think Color Party backgrounds or Emoji Rain cascades when planning motion.
     - Add an HTML caption describing the concept or interaction.
 5. QUIZZES / LEARNING CARDS:
     - Use semantic HTML sections with question cards, labeled inputs (radio/checkbox/text), progress indicators, and CTA buttons.
