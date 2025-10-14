@@ -151,11 +151,13 @@ Configure behavior via environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GROQ_API_KEY` | Groq API authentication key | (required) |
-| `GROQ_MODEL` | Primary Groq model | `llama-3.3-70b-versatile` |
-| `GROQ_FALLBACK_MODEL` | Backup model if primary fails | `openai/gpt-oss-120b` |
+| `GROQ_MODEL` | Primary Groq model | `meta-llama/llama-4-scout-17b-16e-instruct` |
+| `GROQ_FALLBACK_MODEL` | Backup model if primary fails | `llama-3.1-8b-instant` |
 | `GROQ_MAX_TOKENS` | Max output tokens for Groq | `15000` |
 | `OPENROUTER_API_KEY` | OpenRouter API key (primary) | (required for production) |
-| `OPENROUTER_MODEL` | Primary OpenRouter model | `google/gemini-2.0-flash-exp:free` |
+| `OPENROUTER_MODEL` | Primary OpenRouter model | `google/gemma-3n-e2b-it:free` |
+| `OPENROUTER_FALLBACK_MODEL_1` | First OpenRouter fallback | `x-ai/grok-4-fast` |
+| `OPENROUTER_FALLBACK_MODEL_2` | Second OpenRouter fallback | `deepseek/deepseek-chat-v3.1:free` |
 | `FORCE_OPENROUTER_ONLY` | Force skipping Groq fallback | `false` |
 | `LLM_TIMEOUT_SECS` | Request timeout in seconds | `75` |
 
