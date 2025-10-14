@@ -40,9 +40,9 @@ services:
       - key: LLM_TIMEOUT_SECS
         value: "75"
       - key: RATE_MAX_REQUESTS
-        value: "5"
+        value: "10"
       - key: RATE_WINDOW_SECONDS
-        value: "60"
+        value: "180"
       - key: ALLOW_OFFLINE_GENERATION
         value: "1"
       - key: REDIS_URL

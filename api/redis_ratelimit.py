@@ -8,8 +8,8 @@ except Exception:  # pragma: no cover - redis is an optional dependency in some 
     redis = None  # type: ignore
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "60"))
-MAX_REQUESTS = int(os.getenv("RATE_MAX_REQUESTS", "5"))
+WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10800"))
+MAX_REQUESTS = int(os.getenv("RATE_MAX_REQUESTS", "30"))
 
 
 class RedisRateLimiter:
