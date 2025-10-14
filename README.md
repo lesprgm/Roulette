@@ -60,6 +60,7 @@ graph TD
 | **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery |
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
+| **Node.js Tooling** | `package.json`, `static/ts-src/` | Tailwind + TypeScript build pipeline for frontend assets |
 
 ##  Quick Start
 
@@ -171,6 +172,11 @@ Configure behavior via environment variables:
 | `PREFETCH_FILL_TO` | Target queue size after refill | `5` |
 | `DEDUPE_ENABLED` | Enable duplicate detection | `true` |
 | `DEDUPE_RECENT_FILE` | Deduplication database file | `cache/seen_pages.json` |
+
+Prefetched experiences are saved as JSON files in `cache/prefetch`. Every `/generate`
+request—regardless of which user triggers it—consumes the oldest entry before calling the
+LLM again. That means each prefetched page only costs one model invocation, and whichever
+user arrives next gets the cached experience until the queue empties.
 
 ### Other Settings
 
@@ -342,6 +348,14 @@ npm run format
 # Lint TypeScript
 npm run lint
 ```
+
+### Node.js Build Pipeline
+
+Node.js powers the asset build workflow. The scripts in `package.json` run Tailwind’s CLI
+(`npm run build:css`) and the TypeScript compiler (`npm run build:ts`) to produce
+`static/tailwind.css` and the ES modules in `static/ts-build/`. During development you can
+run `npm run watch` to keep both pipelines hot. Once those assets exist, the FastAPI server
+serves them directly—no Node.js runtime is required in production.
 
 ##  Additional Resources
 
