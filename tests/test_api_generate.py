@@ -132,6 +132,8 @@ def test_rate_limit(monkeypatch):
         resp = client.post("/generate", json=payload, headers=headers)
         assert resp.status_code == 429
         j = resp.json()
-        assert ("retry_after" in j) or ("reset" in j)
+        assert "message" in j and "retry_after_seconds" in j
+        assert j["retry_after_seconds"] >= 0
+        assert "seconds" in j["message"].lower()
     finally:
         rl.MAX_REQUESTS = old_max

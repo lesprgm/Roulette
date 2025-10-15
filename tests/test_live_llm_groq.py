@@ -92,7 +92,13 @@ def test_generate_live_groq_integration():
     assert r.status_code == 200, r.text
     page = r.json()
     assert "error" not in page, page
-    if page.get("kind") == "full_page_html":
+    kind = page.get("kind")
+    if kind == "full_page_html":
         assert isinstance(page.get("html"), str) and page["html"].strip()
+    elif kind == "ndw_snippet_v1":
+        has_html = isinstance(page.get("html"), str) and page["html"].strip()
+        has_js = isinstance(page.get("js"), str) and page["js"].strip()
+        assert has_html or has_js
+        assert isinstance(page.get("css"), str) and page["css"].strip()
     else:
         assert "components" in page and isinstance(page["components"], list) and len(page["components"]) >= 1
