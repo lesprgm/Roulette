@@ -67,8 +67,11 @@ def test_generate_ok(monkeypatch):
     r = client.post("/generate", json=payload, headers=API_HEADERS)
     assert r.status_code == 200
     page = r.json()
-    assert "components" in page and isinstance(page["components"], list)
-    assert "layout" in page and "palette" in page
+    if page.get("kind") == "full_page_html":
+        assert isinstance(page.get("html"), str) and "<" in page["html"]
+    else:
+        assert "components" in page and isinstance(page["components"], list)
+        assert "layout" in page and "palette" in page
 
 
 def test_stream_returns_ndjson(monkeypatch):
@@ -101,7 +104,10 @@ def test_stream_returns_ndjson(monkeypatch):
         return
 
     if page_from_event is not None:
-        assert "components" in page_from_event and isinstance(page_from_event["components"], list) and len(page_from_event["components"]) >= 1
+        if page_from_event.get("kind") == "full_page_html":
+            assert isinstance(page_from_event.get("html"), str) and "<" in page_from_event["html"]
+        else:
+            assert "components" in page_from_event and isinstance(page_from_event["components"], list) and len(page_from_event["components"]) >= 1
         return
 
     stitched = "".join(raw_lines)
@@ -115,7 +121,10 @@ def test_stream_returns_ndjson(monkeypatch):
         page = json.loads(joined[first:last + 1])
 
     assert isinstance(page, dict)
-    assert "components" in page and isinstance(page["components"], list) and len(page["components"]) >= 1
+    if page.get("kind") == "full_page_html":
+        assert isinstance(page.get("html"), str) and "<" in page["html"]
+    else:
+        assert "components" in page and isinstance(page["components"], list) and len(page["components"]) >= 1
 
 
 def test_rate_limit(monkeypatch):

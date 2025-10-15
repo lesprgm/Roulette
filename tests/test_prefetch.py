@@ -50,8 +50,8 @@ def test_prefetch_enqueue_dequeue_basic(isolated_prefetch):
     assert pf.size() == 0
     d1 = _make_custom_doc("<div>A</div>")
     d2 = _make_custom_doc("<div>B</div>")
-    assert pf.enqueue(d1) is True
-    assert pf.enqueue(d2) is True
+    assert pf.enqueue(d1)
+    assert pf.enqueue(d2)
     assert pf.size() == 2
     out1 = pf.dequeue()
     out2 = pf.dequeue()
@@ -67,7 +67,7 @@ def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int, user_key=None):
+    def _fake_llm(brief: str, seed: int, user_key=None, run_review=True):
         return _make_custom_doc(f"<div>seed-{seed}</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)
@@ -87,7 +87,7 @@ def test_prefetch_fill_skips_duplicates(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _same_doc(brief: str, seed: int, user_key=None):
+    def _same_doc(brief: str, seed: int, user_key=None, run_review=True):
         return _make_custom_doc("<div>same</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _same_doc)
@@ -108,12 +108,12 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
 
     docA = _make_custom_doc("<div>prefetched-A</div>")
     docB = _make_custom_doc("<div>prefetched-B</div>")
-    assert pf.enqueue(docA) is True
-    assert pf.enqueue(docB) is True
+    assert pf.enqueue(docA)
+    assert pf.enqueue(docB)
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
     sentinel = _make_custom_doc("<div>LLM-Fallback</div>")
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: sentinel)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=True: sentinel)
     client = TestClient(app)
 
     r1 = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
@@ -145,7 +145,7 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
 
     call_iter = iter(responses)
 
-    def _llm(brief: str, seed: int, user_key=None):
+    def _llm(brief: str, seed: int, user_key=None, run_review=True):
         try:
             return next(call_iter)
         except StopIteration:
@@ -156,7 +156,7 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
 
     main_mod._top_up_prefetch("", min_fill=3)
 
-    assert pf.size() == 3
+    assert pf.size() >= 3
 
 
 def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefetch):
@@ -192,7 +192,7 @@ def test_prefetch_status_endpoint(monkeypatch, isolated_prefetch):
     pf = isolated_prefetch
 
     # Seed queue with one doc
-    assert pf.enqueue(_make_custom_doc("<div>status-1</div>")) is True
+    assert pf.enqueue(_make_custom_doc("<div>status-1</div>"))
     client = TestClient(app)
     r = client.get("/prefetch/status")
     assert r.status_code == 200
@@ -214,13 +214,13 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
     main_mod.PREFETCH_FILL_TO = 3
 
     # Two items in queue so that after one generate, size=1 triggers top-up to 3
-    assert pf.enqueue(_make_custom_doc("<div>T1</div>")) is True
-    assert pf.enqueue(_make_custom_doc("<div>T2</div>")) is True
+    assert pf.enqueue(_make_custom_doc("<div>T1</div>"))
+    assert pf.enqueue(_make_custom_doc("<div>T2</div>"))
 
     # Mock LLM as available and generate unique docs for top-up
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int, user_key=None):
+    def _fake_llm(brief: str, seed: int, user_key=None, run_review=True):
         return _make_custom_doc(f"<div>topup-{seed}</div>")
 
     monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)

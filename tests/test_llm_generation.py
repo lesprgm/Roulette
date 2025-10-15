@@ -92,7 +92,7 @@ def test_generate_endpoint_returns_llm_page_when_available(monkeypatch):
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda: None)
     monkeypatch.setattr(main_mod.prefetch, "size", lambda: 0)
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>OK</body></html>"}
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: page)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=True: page)
 
     r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200
@@ -110,7 +110,7 @@ def test_stream_endpoint_emits_page_event_with_llm(monkeypatch):
             {"id": "c1", "type": "custom", "props": {"html": "<div>Stream OK</div>", "height": 200}}
         ]
     }
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None: page)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=True: page)
 
     r = client.post("/generate/stream", json={"brief": "z", "seed": 11}, headers=API_HEADERS)
     assert r.status_code == 200
@@ -177,3 +177,42 @@ def test_snippet_rejects_missing_all_content(monkeypatch):
         llm_client._normalize_doc(bad)
     except ValueError:
         pass
+
+
+def test_generate_page_attaches_gemini_review(monkeypatch):
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "_gemini_review_active", lambda: True)
+
+    corrected_html = "<!doctype html><html><body><main id='ndw-shell'>Reviewed</main></body></html>"
+
+    def fake_review(doc, brief, category_note):
+        return {"ok": True, "issues": [{"severity": "info", "message": "minor tweak"}], "doc": {"kind": "full_page_html", "html": corrected_html}}
+
+    monkeypatch.setattr(llm_client, "_call_gemini_review", fake_review)
+    html = "<!doctype html><html><body><main id='ndw-shell'>OK</main></body></html>"
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": html})
+
+    out = llm_client.generate_page("any", seed=10)
+    assert out.get("kind") == "full_page_html"
+    assert isinstance(out.get("review"), dict)
+    assert out["review"].get("ok") is True
+    assert out.get("html") == corrected_html
+
+
+def test_generate_page_retries_when_review_blocks(monkeypatch):
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "_gemini_review_active", lambda: True)
+
+    def fake_review(doc, brief, category_note):
+        return {"ok": False, "issues": [{"message": "fail"}]}
+
+    monkeypatch.setattr(llm_client, "_call_gemini_review", fake_review)
+    html = "<!doctype html><html><body><main id='ndw-shell'>Blocked</main></body></html>"
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": html})
+
+    out = llm_client.generate_page("any", seed=11)
+    assert out.get("error"), "Expected compliance failure to surface as error"
