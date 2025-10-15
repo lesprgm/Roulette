@@ -156,12 +156,25 @@ def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
     return True, 9999, int(time.time()) + 60
 
 
-def _rate_limit_headers(remaining: int, reset_ts: int) -> Dict[str, str]:
+def _rate_limit_headers(remaining: int, reset_ts: int, *, limited: bool = False) -> Dict[str, str]:
     headers = {
         "X-RateLimit-Remaining": str(remaining),
         "X-RateLimit-Reset": str(reset_ts),
     }
+    if limited:
+        wait_seconds = max(0, reset_ts - int(time.time()))
+        headers["Retry-After"] = str(wait_seconds)
     return headers
+
+
+def _rate_limit_payload(reset_ts: int) -> Dict[str, Any]:
+    wait_seconds = max(0, reset_ts - int(time.time()))
+    return {
+        "error": "rate limit exceeded",
+        "reset": reset_ts,
+        "retry_after_seconds": wait_seconds,
+        "message": f"Rate limit exceeded. Try again in {wait_seconds} seconds.",
+    }
 
 
 # Prefetch tuning knobs
@@ -403,8 +416,8 @@ def generate_endpoint(
     if not allowed:
         return JSONResponse(
             status_code=429,
-            content={"error": "rate limit exceeded", "reset": reset_ts},
-            headers=_rate_limit_headers(remaining, reset_ts),
+            content=_rate_limit_payload(reset_ts),
+            headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
     # Prefer serving from prefetch queue regardless of LLM availability
@@ -517,8 +530,8 @@ def generate_stream(
     if not allowed:
         return JSONResponse(
             status_code=429,
-            content={"error": "rate limit exceeded", "reset": reset_ts},
-            headers=_rate_limit_headers(remaining, reset_ts),
+            content=_rate_limit_payload(reset_ts),
+            headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
     def _iter() -> Iterable[str]:
@@ -634,8 +647,8 @@ def prefetch_fill(
         log.info("prefetch.fill: rate limited client=%s", client_key)
         return JSONResponse(
             status_code=429,
-            content={"error": "rate limit exceeded", "reset": reset_ts},
-            headers=_rate_limit_headers(remaining, reset_ts),
+            content=_rate_limit_payload(reset_ts),
+            headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
     # Only allow prefetch when LLM is available (no offline injection here)
@@ -704,7 +717,12 @@ def preview(
     client_key = extract_client_key(api_key, request.client.host if request and request.client else "anon")
     allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
     if not allowed:
-        return PlainTextResponse("Rate limit exceeded", status_code=429, headers=_rate_limit_headers(remaining, reset_ts))
+        payload = _rate_limit_payload(reset_ts)
+        return PlainTextResponse(
+            payload["message"],
+            status_code=429,
+            headers=_rate_limit_headers(remaining, reset_ts, limited=True),
+        )
 
     if llm_generate_page is None:
         page = {
