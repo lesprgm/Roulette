@@ -14,7 +14,7 @@ log = logging.getLogger(__name__)
 
 PREFETCH_DIR = Path(os.getenv("PREFETCH_DIR", "cache/prefetch"))
 BATCH_MIN = int(os.getenv("PREFETCH_BATCH_MIN", "5"))
-BATCH_MAX = int(os.getenv("PREFETCH_BATCH_MAX", "10"))
+BATCH_MAX = int(os.getenv("PREFETCH_BATCH_MAX", "20"))
 
 
 def _ensure_dir() -> None:
@@ -30,18 +30,18 @@ def size() -> int:
     return len(_list_files())
 
 
-def enqueue(doc: Dict[str, Any]) -> bool:
-    """Persist a generated page to the prefetch queue; returns True if enqueued.
+def enqueue(doc: Dict[str, Any]) -> Optional[Path]:
+    """Persist a generated page to the prefetch queue; returns path if enqueued.
     Skips if duplicate by signature.
     """
     sig = dedupe.signature_for_doc(doc)
     if not sig:
         log.warning("prefetch.enqueue: skipping doc without signature")
-        return False
+        return None
     current_size = size()
     if dedupe.has(sig) and current_size > 0:
         log.debug("prefetch.enqueue: skipping duplicate doc sig=%s queue_size=%d", sig[:12], current_size)
-        return False
+        return None
     if dedupe.has(sig):
         log.debug("prefetch.enqueue: forcing enqueue for duplicate sig=%s because queue empty", sig[:12])
 
@@ -54,7 +54,7 @@ def enqueue(doc: Dict[str, Any]) -> bool:
     tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
     log.info("prefetch.enqueue: stored doc sig=%s file=%s queue_size=%d", sig[:12], path.name, current_size + 1)
-    return True
+    return path
 
 
 def dequeue() -> Optional[Dict[str, Any]]:

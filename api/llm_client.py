@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple, List
 import requests
 from api import dedupe
 
@@ -63,6 +63,15 @@ try:
     GROQ_MAX_TOKENS = int(os.getenv("GROQ_MAX_TOKENS", str(LLM_MAX_TOKENS)))
 except Exception:
     GROQ_MAX_TOKENS = LLM_MAX_TOKENS
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_REVIEW_MODEL = os.getenv("GEMINI_REVIEW_MODEL", "gemini-1.5-flash-latest").strip()
+GEMINI_REVIEW_ENABLED = os.getenv("GEMINI_REVIEW_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+GEMINI_REVIEW_ENDPOINT = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_REVIEW_MODEL}:generateContent"
+    if GEMINI_REVIEW_MODEL
+    else ""
+)
 """
 This module now only calls the LLM. No local library or stub fallbacks.
 If generation fails, we return {"error": "..."} and the API returns 200 with that body,
@@ -70,6 +79,7 @@ or 503 earlier in the /generate endpoint if credentials are missing.
 """
 
 def status() -> Dict[str, Any]:
+    reviewer = "gemini" if _gemini_review_active() else None
     if _testing_stub_enabled():
         return {
             "provider": None,
@@ -77,6 +87,7 @@ def status() -> Dict[str, Any]:
             "has_token": False,
             "using": "stub",
             "testing": True,
+            "reviewer": reviewer,
         }
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {
@@ -84,6 +95,7 @@ def status() -> Dict[str, Any]:
             "model": OPENROUTER_MODEL,
             "has_token": bool(OPENROUTER_API_KEY),
             "using": "openrouter",
+            "reviewer": reviewer,
         }
     if GROQ_API_KEY:
         return {
@@ -91,12 +103,14 @@ def status() -> Dict[str, Any]:
             "model": GROQ_MODEL,
             "has_token": True,
             "using": "groq",
+            "reviewer": reviewer,
         }
     return {
         "provider": None,
         "model": None,
         "has_token": False,
         "using": "stub",
+        "reviewer": reviewer,
     }
 
 
@@ -110,7 +124,7 @@ def probe() -> Dict[str, Any]:
     return {"ok": False, "using": "stub"}
 
 
-def generate_page(brief: str, seed: int, user_key: Optional[str] = None) -> Dict[str, Any]:
+def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_review: bool = True) -> Dict[str, Any]:
     """Return a doc in one of the two accepted shapes or {error}.
 
     Behaviors:
@@ -164,9 +178,45 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None) -> Dict
             seed_val = (seed_val + 7919) % 10_000_019
             continue
 
-        # Unique enough; record and return
-        if sig:
-            dedupe.add(sig)
+        if run_review:
+            review_data, corrected_doc, review_ok = _maybe_run_compliance_review(doc, brief_str, category_note)
+            if corrected_doc is not None:
+                doc = corrected_doc
+                logging.info("Compliance review applied corrections to doc (attempt %d)", attempts)
+            if review_data:
+                doc = dict(doc)
+                doc["review"] = review_data
+                logging.info(
+                    "Compliance review summary ok=%s issues=%s",
+                    review_data.get("ok"),
+                    len(review_data.get("issues", [])),
+                )
+            if not review_ok:
+                logging.info("Compliance review rejected doc; retrying another generation (attempt %d)", attempts)
+                doc = None
+                seed_val = (seed_val + 7919) % 10_000_019
+                continue
+            final_sig = ""
+            if not skip_dedupe:
+                final_sig = dedupe.signature_for_doc(doc)
+                if final_sig and dedupe.has(final_sig):
+                    logging.info("Compliance-adjusted doc duplicate; retrying another generation (attempt %d)", attempts)
+                    doc = None
+                    seed_val = (seed_val + 7919) % 10_000_019
+                    continue
+            if final_sig:
+                dedupe.add(final_sig)
+        else:
+            final_sig = ""
+            if not skip_dedupe:
+                final_sig = dedupe.signature_for_doc(doc)
+                if final_sig and dedupe.has(final_sig):
+                    logging.info("Unreviewed doc duplicate; retrying another generation (attempt %d)", attempts)
+                    doc = None
+                    seed_val = (seed_val + 7919) % 10_000_019
+                    continue
+            if final_sig:
+                dedupe.add(final_sig)
         return doc
 
     return doc or {"error": "Model generation failed"}
@@ -301,10 +351,10 @@ Seed: {seed}
 
 _PAGE_SHAPE_HINT = """
 
-FORMATS (prefer #1 or #2 for websites/quizzes):
-1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}
-2. {"kind":"full_page_html","html":"<!doctype html>..."}
-3. {"components":[{"id":"x","type":"custom","props":{"html":"...","height":360}}]}
+FORMATS (prefer #2 for websites/quizzes; only use snippets/components when absolutely necessary):
+1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}  ← only use when a self-contained widget fits within the host page.
+2. {"kind":"full_page_html","html":"<!doctype html>..."}  ← preferred shape; include complete <head>, <body>, semantic sections, and inline CSS/JS.
+3. {"components":[{"id":"hero","type":"custom","props":{"html":"...","height":360}}]}  ← only when multiple iframe-style embeds are unavoidable; ensure each component supplies props.html and props.height (px number).
 
 GENERAL RULES:
 - No external resources (scripts/fonts/images/fetch); inline all CSS/JS.
@@ -312,6 +362,26 @@ GENERAL RULES:
 - Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
 - Maintain high contrast between foreground text and backgrounds (e.g., do not leave white text on white/pale backgrounds; always pair light backgrounds with dark text and vice versa).
 - Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
+- Every interactive element referenced in JS must already exist in the DOM with matching IDs/classes before scripts run.
+
+BASE HTML BLUEPRINT (adapt, do not return empty sections):
+<main id="ndw-shell" class="min-h-screen bg-slate-950 text-slate-100">
+  <section class="mx-auto max-w-4xl px-6 py-12">
+    <div class="rounded-3xl bg-slate-900/80 p-8 shadow-xl">
+      <header class="mb-8 space-y-3 text-center">
+        <p class="text-xs uppercase tracking-[0.3em] text-cyan-400">[[category label here]]</p>
+        <h1 class="text-4xl font-bold text-slate-50">[[hero headline]]</h1>
+        <p class="text-slate-300">[[one-sentence instructions]]</p>
+      </header>
+      <div id="ndw-instructions" class="mb-6 rounded-2xl bg-slate-800/70 p-4 text-sm leading-relaxed text-slate-200">
+        [[step-by-step guidance or flavor text]]
+      </div>
+      <div id="ndw-content" class="space-y-6">
+        [[dynamic cards, tools, or canvas container live here]]
+      </div>
+    </div>
+  </section>
+</main>
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
@@ -322,14 +392,21 @@ SNIPPET RUNTIME (NDW APIs):
 - Initialize all state before NDW.loop; register handlers before NDW.loop; never declare them inside the loop.
 - Never chain NDW.* off other expressions (no `.NDW`). Call each NDW method as its own statement.
 - Canvas scenes must call ctx.clearRect(0,0,canvas.width,canvas.height) each frame.
+- Declare all state objects/arrays before NDW.loop; do not redeclare inside the loop.
+
+JS GUARDRAILS:
+- Wrap DOM queries inside DOMContentLoaded if scripts appear before the HTML (`document.addEventListener('DOMContentLoaded', () => { ... });`).
+- Declare every variable with `const`/`let`; no implicit globals. Initialize counters/arrays with sensible defaults before using them.
+- Avoid setInterval/setTimeout for animation; use NDW.loop and the provided `dt`.
+- Remove unused listeners on reset paths and ensure buttons update text without referencing undefined nodes.
 
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, bubble-wrap smash pads, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
+    - Examples: dodging buttons, mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
-    - Single-purpose web apps that solve a focused problem: hydration timekeepers, snack stash planners, weekend adventure schedulers, grocery budget trackers, pizza-slice salary converters, pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
+    - Single-purpose web apps that solve a focused problem: pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
     - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
     - Highlight “next steps” or tips so users feel guided through the workflow.
     - Avoid relying solely on a canvas; craft a complete webpage layout.
@@ -351,6 +428,17 @@ CONTROLS & INPUT REFERENCE (canvas categories only):
 - Keyboard continuous: if (NDW.isDown('ArrowLeft')) x -= speed * (dt/1000);
 - Mouse/touch: NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
 - Mouse held: if (NDW.isDown('mouse')) dragObject();
+
+DO NOT:
+- Do not use inline event handlers (`onclick=""`, etc.) or global window timers.
+- Do not reference external fonts, CDNs, or fetch remote data.
+- Do not leave empty containers (e.g., an `#ndw-app` with no children) or placeholder text like “TODO”.
+- Do not create duplicate IDs or register multiple identical NDW.onPointer/onKey handlers inside loops.
+
+SELF QA BEFORE RETURNING:
+1. Pretend to click every button/toggle and ensure the described behaviour occurs; fix mismatched selectors.
+2. Verify headings, instructions, and controls are visible on first paint (no hidden `display:none` wrappers).
+3. For quizzes/tools, ensure result text updates and reset flows always set meaningful copy (never `undefined`).
 
 CANONICAL CANVAS TEMPLATE:
 const stage = document.createElement('section');
@@ -386,15 +474,15 @@ OUTPUT CHECKLIST:
 
 _CATEGORY_ROTATION_NOTES = [
     ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
-     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Lean into playful, unexpected behaviors (dodging buttons, reactive elements, cursor trails, digital squishables). Keep it whimsical and lightweight; do not switch categories."),
+     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (dodging buttons, mischievous cat disco pads, haunted hallway dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades). Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
     ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
-     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool focused on one clear task (timer, checklist, converter, habit tracker, etc.). Provide intuitive inputs, results, and next-step hints. Stay on this utility concept only."),
+     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task (pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals). Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips—avoid canvas-only layouts and keep it practical."),
     ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
-     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer site that creates fresh content (quotes, names, palettes, fortunes) with controls for refreshing or customizing output. Remain in this generative theme."),
+     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience that produces fresh content (story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers). Include controls to refresh or customize output and keep the generative theme central."),
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
-     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art using NDW canvas APIs. Create visually engaging motion within 1 second, respond to pointer/keyboard as needed, and include a descriptive caption. Do not switch categories."),
+     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Take inspiration from aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds—and include an HTML caption describing the piece."),
     ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
-     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards with accessible question blocks, labeled inputs, progress indicators, and reveal/score mechanics. Stay in this learning/cards space."),
+     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns). Prefer rich HTML layouts—no canvas—and keep everything accessible."),
 ]
 
 _category_lock = threading.Lock()
@@ -577,6 +665,247 @@ Seed: {seed}
     return None
 
 
+def _gemini_review_active() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    return bool(GEMINI_REVIEW_ENABLED and GEMINI_API_KEY and GEMINI_REVIEW_ENDPOINT)
+
+
+def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> Optional[Dict[str, Any]]:
+    if not _gemini_review_active():
+        return None
+    try:
+        serialized = json.dumps(doc, ensure_ascii=False, indent=2)
+    except Exception:
+        serialized = str(doc)
+    instructions = (
+        "You are a compliance reviewer and fixer for interactive web apps. "
+        "Inspect the provided JSON payload for safety, policy violations, markup/runtime bugs, or accessibility issues. "
+        "If problems are minor, repair them directly and return the corrected payload. "
+        "If the experience is unsafe or too broken to repair confidently, reject it. "
+        "Respond with compact JSON using this schema:\n"
+        '{"ok": true|false, "issues":[{"severity":"info|warn|block","field":"...","message":"..."}],'
+        '"notes":"optional summary","doc":{...optional corrected payload...}}\n'
+        "Only set ok=true if the final payload (original or corrected) is safe, functional, and accessible."
+    )
+    prompt = (
+        f"{instructions}\n\n"
+        f"Brief: {brief or '(auto generated)'}\n"
+        f"Category Instruction: {category_note}\n\n"
+        "App JSON:\n"
+        f"{serialized}\n"
+    )
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 250000,
+        },
+    }
+    try:
+        resp = requests.post(
+            GEMINI_REVIEW_ENDPOINT,
+            params={"key": GEMINI_API_KEY},
+            json=body,
+            timeout=min(LLM_TIMEOUT_SECS, 45),
+        )
+    except Exception as exc:
+        logging.warning("Gemini review request error: %r", exc)
+        return None
+    if resp.status_code != 200:
+        try:
+            msg = resp.text[:400]
+        except Exception:
+            msg = str(resp.status_code)
+        logging.warning("Gemini review HTTP %s: %s", resp.status_code, msg)
+        return None
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        logging.warning("Gemini review non-JSON body: %r", exc)
+        return None
+    text = _extract_gemini_text(payload)
+    if not text or not isinstance(text, str):
+        try:
+            raw = resp.text[:400]
+        except Exception:
+            raw = "<unavailable>"
+        logging.warning("Gemini review empty content; raw response snippet=%s", raw)
+        return None
+    text = text.strip()
+    try:
+        review = json.loads(text)
+    except Exception:
+        try:
+            any_json = _json_from_text(text)
+            review = any_json if isinstance(any_json, dict) else None
+        except Exception:
+            review = None
+    if not isinstance(review, dict):
+        logging.warning("Gemini review response unparsable: %s", text[:200])
+        return None
+    return review
+
+
+def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
+    try:
+        candidates = payload.get("candidates") or []
+        for cand in candidates:
+            content = cand.get("content") or {}
+            parts = content.get("parts") or []
+            for part in parts:
+                txt = part.get("text")
+                if isinstance(txt, str) and txt.strip():
+                    return txt
+                function_call = part.get("functionCall")
+                if isinstance(function_call, dict):
+                    args = function_call.get("arguments")
+                    if isinstance(args, str) and args.strip():
+                        return args
+                    try:
+                        return json.dumps(function_call, ensure_ascii=False)
+                    except Exception:
+                        pass
+                data_blob = part.get("data") or part.get("json") or part.get("structValue")
+                if data_blob:
+                    try:
+                        return json.dumps(data_blob, ensure_ascii=False)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return None
+
+
+def _maybe_run_compliance_review(
+    doc: Dict[str, Any], brief: str, category_note: str
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], bool]:
+    if not isinstance(doc, dict):
+        return None, None, True
+    if not _gemini_review_active():
+        return None, None, True
+    logging.info("Compliance review: submitting doc for Gemini evaluation")
+    review = _call_gemini_review(doc, brief, category_note)
+    if not isinstance(review, dict):
+        logging.info("Compliance review: Gemini response missing or unusable; skipping")
+        return None, None, True
+    corrected_doc = None
+    for key in ("doc", "fixed_doc", "corrected_doc", "patched_doc"):
+        maybe_doc = review.get(key)
+        if isinstance(maybe_doc, dict):
+            corrected_doc = maybe_doc
+            break
+    ok_value = review.get("ok")
+    if ok_value is False:
+        logging.info("Compliance review: Gemini blocked doc with %d issues", len(review.get("issues", [])))
+        return review, None, False
+    if corrected_doc is not None:
+        logging.info("Compliance review: Gemini returned corrected payload")
+        return review, corrected_doc, True
+    logging.info("Compliance review: Gemini approved without changes")
+    return review, None, True
+
+
+def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents:
+        return None
+    if not _gemini_review_active():
+        return None
+    try:
+        return _call_gemini_review_batch(documents)
+    except Exception as exc:
+        logging.warning("Gemini batch review error: %r", exc)
+        return None
+
+
+def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents:
+        return None
+    prompt_sections = []
+    for idx, doc in enumerate(documents):
+        try:
+            serialized = json.dumps(doc, ensure_ascii=False, indent=2)
+        except Exception:
+            serialized = str(doc)
+        prompt_sections.append(
+            f"APP_INDEX: {idx}\nJSON:\n{serialized}\n"
+        )
+    instructions = (
+        "You are a compliance reviewer and fixer for interactive web apps. "
+        "Evaluate each document below. Return a JSON array where each element is:\n"
+        '{"index": <matching APP_INDEX>, "ok": true|false, '
+        '"issues":[{"severity":"info|warn|block","field":"...","message":"..."}], '
+        '"notes":"optional summary", "doc":{...optional corrected payload...}}\n'
+        "Only set ok=true if the payload (original or corrected) is safe, functional, and accessible. "
+        "If a document is irreparable, set ok=false and omit the doc field."
+    )
+    prompt = instructions + "\n\n---\n" + "\n---\n".join(prompt_sections)
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": min(8192, 2048 * len(documents)),
+        },
+    }
+    try:
+        resp = requests.post(
+            GEMINI_REVIEW_ENDPOINT,
+            params={"key": GEMINI_API_KEY},
+            json=body,
+            timeout=max(LLM_TIMEOUT_SECS, 120),
+        )
+    except Exception as exc:
+        logging.warning("Gemini batch review request error: %r", exc)
+        return None
+    if resp.status_code != 200:
+        try:
+            msg = resp.text[:400]
+        except Exception:
+            msg = str(resp.status_code)
+        logging.warning("Gemini batch review HTTP %s: %s", resp.status_code, msg)
+        return None
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        logging.warning("Gemini batch review non-JSON body: %r", exc)
+        return None
+    text = _extract_gemini_text(payload)
+    if not text or not isinstance(text, str):
+        try:
+            raw = resp.text[:400]
+        except Exception:
+            raw = "<unavailable>"
+        logging.warning("Gemini batch review empty content; raw response snippet=%s", raw)
+        return None
+    text = text.strip()
+    try:
+        data = json.loads(text)
+    except Exception:
+        try:
+            data = _json_from_text(text)
+        except Exception:
+            logging.warning("Gemini batch review response unparsable: %s", text[:200])
+            return None
+    if isinstance(data, dict):
+        data = data.get("results") or data.get("reviews")
+    if not isinstance(data, list):
+        logging.warning("Gemini batch review invalid payload type: %s", type(data))
+        return None
+    return data
+
+
 def _json_from_text(text: str) -> Any:
     """Extract JSON object or HTML from text with robust fallbacks; raise on failure.
 
@@ -642,7 +971,7 @@ def _json_from_text(text: str) -> Any:
                 pass
 
     # Last resort: if any HTML-like tag appears anywhere, wrap as full_page_html
-    if re.search(r"<\s*(?:!doctype|html|body|div|section|canvas|main)\b", t, re.IGNORECASE):
+    if re.search(r"<\s*(?:!doctype|html|body|main|header|section|footer)\b", t, re.IGNORECASE):
         return {"kind": "full_page_html", "html": t}
     raise ValueError("No JSON or HTML content found")
 

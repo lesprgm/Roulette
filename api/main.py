@@ -15,11 +15,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
 from api.auth import require_api_key, extract_client_key, keys_required
-from api import counter
+from api import counter, dedupe
 from api import prefetch
 
 try:
-    from api.llm_client import generate_page as llm_generate_page, status as llm_status, probe as llm_probe
+    from api.llm_client import (
+        generate_page as llm_generate_page,
+        status as llm_status,
+        probe as llm_probe,
+        run_compliance_batch,
+    )
 except Exception:
     llm_generate_page = None
 
@@ -28,6 +33,9 @@ except Exception:
 
     def llm_probe() -> Dict[str, Any]:
         return {"ok": False, "error": "Model or token not configured", "using": "stub"}
+
+    def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+        return None
 
 
 if not logging.getLogger().handlers:
@@ -55,6 +63,8 @@ except Exception:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        if llm_generate_page is not None and llm_status().get("has_token"):
+            _prefill_prefetch_queue()
         if _prefetch_topup_enabled():
             try:
                 if llm_generate_page is not None and llm_status().get("has_token"):
@@ -178,17 +188,18 @@ def _rate_limit_payload(reset_ts: int) -> Dict[str, Any]:
 
 
 # Prefetch tuning knobs
-PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "2") or 2)
+PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "15") or 15)
 try:
     # Prefer the batch max if available for a fill-to target
     from api.prefetch import BATCH_MAX as _PF_BATCH_MAX
-    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 10)
+    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 20)
 except Exception:
-    _DEFAULT_FILL_TO = 10
+    _DEFAULT_FILL_TO = 20
 PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
 PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
 if os.getenv("PYTEST_CURRENT_TEST"):
     PREFETCH_DELAY_MS = 0
+PREFETCH_REVIEW_BATCH = int(os.getenv("PREFETCH_REVIEW_BATCH", "3") or 3)
 
 
 def _prefetch_topup_enabled() -> bool:
@@ -199,6 +210,56 @@ def _prefetch_topup_enabled() -> bool:
     return v in {"1", "true", "yes", "on"}
 
 
+def _prefill_prefetch_queue() -> None:
+    target = int(os.getenv("PREFETCH_PREWARM_COUNT", "0") or 0)
+    if target <= 0:
+        return
+    try:
+        current = prefetch.size()
+    except Exception:
+        current = 0
+    desired = max(0, target - current)
+    if desired <= 0:
+        return
+    if llm_generate_page is None or not llm_status().get("has_token"):
+        log.debug("prefetch.prewarm: LLM unavailable; skipping")
+        return
+    log.info("prefetch.prewarm: generating %d documents before startup", desired)
+    paths: List[Path] = []
+    failures = 0
+    max_failures = max(5, desired * 3)
+    i = 0
+    while len(paths) < desired and failures < max_failures:
+        seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
+        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=False)
+        if isinstance(page, dict) and page.get("error"):
+            failures += 1
+            log.warning("prefetch.prewarm: generation error '%s'", page.get("error"))
+            try:
+                time.sleep(0.2)
+            except Exception:
+                pass
+            continue
+        path = prefetch.enqueue(page)
+        if path:
+            paths.append(path)
+            failures = 0
+            i += 1
+        else:
+            failures += 1
+    if paths:
+        _review_prefetched_docs(paths)
+    log.info("prefetch.prewarm: completed with %d documents (failures=%d)", len(paths), failures)
+
+
+def _prefetch_target_size(current: int) -> int:
+    if current <= 0:
+        return PREFETCH_FILL_TO
+    if current <= PREFETCH_LOW_WATER:
+        return min(PREFETCH_FILL_TO, current + PREFETCH_REVIEW_BATCH)
+    return PREFETCH_FILL_TO
+
+
 def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
     """Background job: if queue is at/below low water, generate until it reaches min_fill.
     Uses the configured LLM only; no offline prefetch here.
@@ -207,63 +268,154 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
         if llm_generate_page is None or not llm_status().get("has_token"):
             log.debug("prefetch.top_up: LLM unavailable; aborting")
             return
-        current = prefetch.size()
-        if current > PREFETCH_LOW_WATER and current >= min_fill:
-            log.debug(
-                "prefetch.top_up: queue healthy (size=%d, low_water=%d, min_fill=%d)",
-                current,
-                PREFETCH_LOW_WATER,
-                min_fill,
-            )
-            return
-        log.info(
-            "prefetch.top_up: refilling queue (current=%d, target=%d, brief=%s)",
-            current,
-            min_fill,
-            (brief or "")[:60],
-        )
-        i = 0
-        failures = 0
-        max_failures = max(5, min_fill * 3)
-        while prefetch.size() < min_fill and failures < max_failures:
-            seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
-            page = llm_generate_page(brief or "", seed=seed, user_key="prefetch")
-            if isinstance(page, dict) and page.get("error"):
-                failures += 1
-                log.warning(
-                    "prefetch.top_up: generation returned error (attempt %d/%d): %s",
-                    failures,
-                    max_failures,
-                    page.get("error"),
-                )
-                try:
-                    time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
-                except Exception:
-                    pass
-                continue
-            if prefetch.enqueue(page):
-                i += 1
-                failures = 0
-            else:
-                failures += 1
+        while True:
+            current = prefetch.size()
+            target = max(min_fill, _prefetch_target_size(current))
+            if current > PREFETCH_LOW_WATER and current >= target:
                 log.debug(
-                    "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
-                    failures,
-                    max_failures,
-                    prefetch.size(),
+                    "prefetch.top_up: queue healthy (size=%d, low_water=%d, target=%d)",
+                    current,
+                    PREFETCH_LOW_WATER,
+                    target,
                 )
-        if prefetch.size() >= min_fill:
-            log.info("prefetch.top_up: refill complete queue_size=%d", prefetch.size())
-        else:
-            log.warning(
-                "prefetch.top_up: stopped with queue_size=%d after %d attempts (target=%d)",
-                prefetch.size(),
-                i + failures,
-                min_fill,
+                return
+            log.info(
+                "prefetch.top_up: refilling queue (current=%d, target=%d, brief=%s)",
+                current,
+                target,
+                (brief or "")[:60],
+            )
+            pending_paths: List[Path] = []
+            generated = 0
+            failures = 0
+            max_failures = max(5, target * 3)
+            while prefetch.size() < target and failures < max_failures:
+                seed = (int(time.time() * 1000) + generated + failures) % 1_000_000_007
+                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
+                if isinstance(page, dict) and page.get("error"):
+                    failures += 1
+                    log.warning(
+                        "prefetch.top_up: generation returned error (attempt %d/%d): %s",
+                        failures,
+                        max_failures,
+                        page.get("error"),
+                    )
+                    try:
+                        time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
+                    except Exception:
+                        pass
+                    continue
+                path = prefetch.enqueue(page)
+                if path:
+                    generated += 1
+                    failures = 0
+                    pending_paths.append(path)
+                else:
+                    failures += 1
+                    log.debug(
+                        "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
+                        failures,
+                        max_failures,
+                        prefetch.size(),
+                    )
+                if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
+                    _review_prefetched_docs(pending_paths)
+                    pending_paths.clear()
+            if pending_paths:
+                _review_prefetched_docs(pending_paths)
+                pending_paths.clear()
+            updated_size = prefetch.size()
+            if updated_size >= target:
+                log.info("prefetch.top_up: refill complete queue_size=%d", updated_size)
+                return
+            if failures >= max_failures:
+                log.warning(
+                    "prefetch.top_up: stopped with queue_size=%d after %d attempts (target=%d)",
+                    updated_size,
+                    generated + failures,
+                    target,
+                )
+                return
+            log.info(
+                "prefetch.top_up: continuing refill (queue_size=%d target=%d)",
+                updated_size,
+                target,
             )
     except Exception:
         log.exception("prefetch.top_up: unexpected error")
         pass
+
+
+def _review_prefetched_docs(paths: List[Path]) -> None:
+    if not paths:
+        return
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return
+    try:
+        for chunk in _chunked(existing, PREFETCH_REVIEW_BATCH):
+            docs: List[Dict[str, Any]] = []
+            valid_paths: List[Path] = []
+            for path in chunk:
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    log.warning("prefetch.review: failed to load %s", path.name, exc_info=True)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+                docs.append(data)
+                valid_paths.append(path)
+            if not docs:
+                continue
+            reviews = run_compliance_batch(docs)
+            if not isinstance(reviews, list):
+                continue
+            review_map: Dict[int, Dict[str, Any]] = {}
+            for idx, item in enumerate(reviews):
+                if not isinstance(item, dict):
+                    continue
+                key = item.get("index")
+                if isinstance(key, int):
+                    review_map[key] = item
+                else:
+                    review_map[idx] = item
+            for idx, path in enumerate(valid_paths):
+                review = review_map.get(idx)
+                if not review:
+                    continue
+                if review.get("ok") is False:
+                    log.info("prefetch.review: removing rejected doc file=%s", path.name)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+                doc = docs[idx]
+                corrected = review.get("doc")
+                if isinstance(corrected, dict):
+                    doc = corrected
+                docs[idx] = doc
+                doc["review"] = review
+                try:
+                    path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                except Exception:
+                    log.exception("prefetch.review: failed to persist corrected doc file=%s", path.name)
+                    continue
+                sig = dedupe.signature_for_doc(doc)
+                if sig:
+                    dedupe.add(sig)
+    except Exception:
+        log.exception("prefetch.review: unexpected error")
+
+
+def _chunked(seq: List[Path], size: int) -> Iterable[List[Path]]:
+    if size <= 0:
+        size = 1
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
 def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]]]:
@@ -412,7 +564,74 @@ def generate_endpoint(
     api_key: str = Depends(require_api_key),
 ):
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
+    llm_info = llm_status()
+    llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
+    offline_allowed = os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1", "true", "yes", "on"}
+
+    if not llm_available:
+        if offline_allowed:
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+            log.info("rate_limit (offline) allowed=%s remaining=%s", allowed, remaining)
+            if not allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content=_rate_limit_payload(reset_ts),
+                    headers=_rate_limit_headers(remaining, reset_ts, limited=True),
+                )
+            page = {
+                "components": [
+                    {
+                        "id": "offline-1",
+                        "type": "custom",
+                        "props": {
+                            "html": """<div class="p-6 rounded-xl border border-slate-200 bg-white"><h3 class="text-xl font-semibold">Offline Sandbox App</h3><p class="mt-2 text-sm text-slate-700">This was rendered without an API key.</p><button id="btn" class="mt-3 px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700">Click</button><div id="out" class="mt-2 text-slate-700"></div><script>let n=0; const o=document.getElementById('out');document.getElementById('btn').onclick=()=>{n++;o.textContent='Clicks: '+n;};</script></div>""",
+                            "height": 260,
+                        },
+                    }
+                ],
+                "layout": {"flow": "stack"},
+                "palette": {"primary": "slate", "accent": "indigo"},
+                "links": ["/about"],
+                "seed": req.seed or 0,
+                "model_version": "offline",
+                "review": {"ok": True, "issues": [], "notes": "Offline fallback page served because ALLOW_OFFLINE_GENERATION is enabled."},
+            }
+            return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+            log.info("rate_limit (pytest stub) allowed=%s remaining=%s", allowed, remaining)
+            if not allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content=_rate_limit_payload(reset_ts),
+                    headers=_rate_limit_headers(remaining, reset_ts, limited=True),
+                )
+            page = {
+                "components": [
+                    {
+                        "id": "custom-1",
+                        "type": "custom",
+                        "props": {
+                            "html": """<div class="p-4 rounded-xl border border-slate-200 bg-white"><h3 class="text-xl font-semibold">Test App</h3><div id="t" class="mt-2 text-sm text-slate-700">OK</div><script>document.getElementById('t').textContent='Rendered';</script></div>""",
+                            "height": 240,
+                        },
+                    }
+                ],
+                "layout": {"flow": "stack"},
+                "palette": {"primary": "slate", "accent": "indigo"},
+                "links": ["/about"],
+                "seed": req.seed or 0,
+                "model_version": "test-stub",
+            }
+            return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Missing LLM credentials"},
+            headers=_rate_limit_headers(9999, int(time.time())),
+        )
+
     allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+    log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
             status_code=429,
@@ -420,7 +639,6 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
-    # Prefer serving from prefetch queue regardless of LLM availability
     page = prefetch.dequeue()
     if page:
         log.info("prefetch.generate: served page from queue")
@@ -443,66 +661,11 @@ def generate_endpoint(
                         queue_size,
                         PREFETCH_LOW_WATER,
                     )
-                    background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
+                    target = _prefetch_target_size(prefetch.size())
+                    background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
         except Exception:
             log.exception("prefetch.generate: failed to schedule background top-up")
-            pass
         return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
-
-    if llm_generate_page is None or not llm_status().get("has_token"):
-        # escape hatch
-        if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
-            page = {
-                "components": [
-                    {
-                        "id": "custom-offline",
-                        "type": "custom",
-                        "props": {
-                            "html": (
-                                "<div class=\"p-6 rounded-xl border border-slate-200 bg-white\">"
-                                "<h3 class=\"text-xl font-semibold\">Offline Sandbox App</h3>"
-                                "<div class=\"mt-2 text-sm text-slate-700\">This was rendered without an API key.</div>"
-                                "<button id=\"btn\" class=\"mt-3 px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700\">Click</button>"
-                                "<div id=\"out\" class=\"mt-2 text-slate-700\"></div>"
-                                "<script>let n=0; const o=document.getElementById('out');document.getElementById('btn').onclick=()=>{n++;o.textContent='Clicks: '+n; if(window.host&&window.host.log){window.host.log('click',n)}};</script>"
-                                "</div>"
-                            ),
-                            "height": 260,
-                        },
-                    }
-                ],
-                "layout": {"flow": "stack"},
-                "palette": {"primary": "slate", "accent": "indigo"},
-                "links": ["/about"],
-                "seed": req.seed or 0,
-                "model_version": "offline",
-            }
-            return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
-        # During tests, provide a minimal custom app so test suite can pass
-        if os.getenv("PYTEST_CURRENT_TEST"):
-            page = {
-                "components": [
-                    {
-                        "id": "custom-1",
-                        "type": "custom",
-                        "props": {
-                            "html": "<div class=\"p-4 rounded-xl border border-slate-200 bg-white\"><h3 class=\"text-xl font-semibold\">Test App</h3><div id=\"t\" class=\"mt-2 text-sm text-slate-700\">OK</div><script>document.getElementById('t').textContent='Rendered';</script></div>",
-                            "height": 240,
-                        },
-                    }
-                ],
-                "layout": {"flow": "stack"},
-                "palette": {"primary": "slate", "accent": "indigo"},
-                "links": ["/about"],
-                "seed": req.seed or 0,
-                "model_version": "test-stub",
-            }
-            return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Missing LLM credentials"},
-            headers=_rate_limit_headers(remaining, reset_ts),
-        )
 
     page = llm_generate_page(req.brief, seed=req.seed or 0, user_key=client_key)
 
@@ -513,6 +676,7 @@ def generate_endpoint(
             pass
 
     return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
+
 
 
 @app.post("/generate/stream")
@@ -526,7 +690,23 @@ def generate_stream(
     NDJSON streaming endpoint: emits a couple of JSON lines.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
+    llm_info = llm_status()
+    llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
+
+    if not llm_available and os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() not in {"1", "true", "yes", "on"} and not os.getenv("PYTEST_CURRENT_TEST"):
+        def _iter_error() -> Iterable[str]:
+            meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
+            yield json.dumps(meta) + "\n"
+            yield json.dumps({"event": "error", "data": {"error": "Missing LLM credentials"}}) + "\n"
+
+        return StreamingResponse(
+            _iter_error(),
+            media_type="application/x-ndjson",
+            headers=_rate_limit_headers(9999, int(time.time())),
+        )
+
     allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+    log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
             status_code=429,
@@ -538,27 +718,45 @@ def generate_stream(
         meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
         yield json.dumps(meta) + "\n"
 
-        if llm_generate_page is None or not llm_status().get("has_token"):
+        if not llm_available:
             if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
                 # Try prefetch first; if empty, return a simple offline doc
                 page = prefetch.dequeue()
                 if not page:
                     page = {
-                        "components": [
-                            {
-                                "id": "custom-offline",
-                                "type": "custom",
-                                "props": {
-                                    "html": "<div class=\"p-4 rounded-xl border border-slate-200 bg-white\">Offline Stream App</div>",
-                                    "height": 220,
-                                },
-                            }
-                        ],
-                        "layout": {"flow": "stack"},
-                        "palette": {"primary": "slate", "accent": "indigo"},
-                        "links": ["/about"],
-                        "seed": req.seed or 0,
-                        "model_version": "offline",
+                        "kind": "full_page_html",
+                        "html": """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Offline Sandbox App</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+      .card{max-width:420px;background:#1e293b;border-radius:18px;padding:32px;box-shadow:0 20px 50px rgba(15,23,42,0.4)}
+      .card h1{margin:0 0 12px;font-size:1.5rem}
+      .card p{margin:0 0 16px;line-height:1.5}
+      .card button{padding:10px 16px;border-radius:10px;background:#38bdf8;border:none;color:#0f172a;font-weight:600;cursor:pointer}
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Offline Preview</h1>
+      <p>This sandbox response is served when real LLM providers are unavailable.</p>
+      <button id="btn">Click me</button>
+      <p id="out" aria-live="polite"></p>
+      <script>
+        const out=document.getElementById("out");
+        document.getElementById("btn").addEventListener("click",()=>{out.textContent="Still offline, but responsive!";});
+      </script>
+    </main>
+  </body>
+</html>""".strip(),
+                        "review": {
+                            "ok": True,
+                            "issues": [],
+                            "notes": "Offline fallback page served because ALLOW_OFFLINE_GENERATION is enabled.",
+                        },
                     }
                 yield json.dumps({"event": "page", "data": page}) + "\n"
                 return
@@ -605,7 +803,8 @@ def generate_stream(
                 pass
         try:
             if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
-                background_tasks.add_task(_top_up_prefetch, req.brief or "", PREFETCH_FILL_TO)
+                target = _prefetch_target_size(prefetch.size())
+                background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
         except Exception:
             pass
         yield json.dumps({"event": "page", "data": page}) + "\n"
@@ -629,7 +828,7 @@ def prefetch_status() -> Dict[str, Any]:
 
 class PrefetchRequest(BaseModel):
     brief: str = Field("", description="Optional brief to bias generation; may be empty")
-    count: int = Field(5, description="How many pages to prefetch (clamped to 5-10)")
+    count: int = Field(5, description="How many pages to prefetch (clamped to 5-20)")
 
 
 @app.post("/prefetch/fill")
@@ -655,7 +854,8 @@ def prefetch_fill(
     llm_ok = not (llm_generate_page is None or not llm_status().get("has_token"))
 
     n = prefetch.clamp_batch(int(req.count or 0))
-    added = 0
+    initial_size = prefetch.size()
+    new_paths: List[Path] = []
     for i in range(n):
         if not llm_ok:
             log.warning("prefetch.fill: LLM unavailable mid-fill client=%s", client_key)
@@ -668,22 +868,28 @@ def prefetch_fill(
             req.brief or "",
             seed=(int(time.time() * 1000) + i) % 1_000_000_007,
             user_key="prefetch",
+            run_review=False,
         )
         if isinstance(page, dict) and page.get("error"):
             log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
             break
-        if prefetch.enqueue(page):
-            added += 1
+        path = prefetch.enqueue(page)
+        if path:
+            new_paths.append(path)
+    if new_paths:
+        _review_prefetched_docs(new_paths)
+    queue_size = prefetch.size()
+    added = max(queue_size - initial_size, 0)
 
     log.info(
         "prefetch.fill: client=%s requested=%d added=%d queue_size=%d",
         client_key,
         n,
         added,
-        prefetch.size(),
+        queue_size,
     )
     return JSONResponse(
-        {"requested": n, "added": added, "queue_size": prefetch.size()},
+        {"requested": n, "added": added, "queue_size": queue_size},
         headers=_rate_limit_headers(remaining, reset_ts),
     )
 

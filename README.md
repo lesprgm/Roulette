@@ -60,6 +60,7 @@ graph TD
 | **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery |
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
+| **Compliance Reviewer (optional)** | `api/llm_client.py` | Calls Gemini to audit or auto-fix generations before serving and caches reviewer notes |
 | **Node.js Tooling** | `package.json`, `static/ts-src/` | Tailwind + TypeScript build pipeline for frontend assets |
 
 ##  Quick Start
@@ -161,6 +162,9 @@ Configure behavior via environment variables:
 | `OPENROUTER_FALLBACK_MODEL_2` | Second OpenRouter fallback | `deepseek/deepseek-chat-v3.1:free` |
 | `FORCE_OPENROUTER_ONLY` | Force skipping Groq fallback | `false` |
 | `LLM_TIMEOUT_SECS` | Request timeout in seconds | `75` |
+| `GEMINI_REVIEW_ENABLED` | Enable Gemini-based compliance review | `false` |
+| `GEMINI_API_KEY` | Google AI Studio API key for Gemini reviewer | (optional) |
+| `GEMINI_REVIEW_MODEL` | Gemini reviewer model slug | `gemini-1.5-flash-latest` |
 
 ### Prefetch & Caching
 
@@ -168,10 +172,12 @@ Configure behavior via environment variables:
 |----------|-------------|---------|
 | `PREFETCH_ENABLED` | Enable background prefetch | `true` |
 | `PREFETCH_DIR` | Directory for cached generations | `cache/prefetch` |
-| `PREFETCH_LOW_WATER` | Queue size to trigger refill | `3` |
-| `PREFETCH_FILL_TO` | Target queue size after refill | `5` |
+| `PREFETCH_LOW_WATER` | Queue size to trigger refill | `15` |
+| `PREFETCH_FILL_TO` | Target queue size after refill | `20` |
 | `DEDUPE_ENABLED` | Enable duplicate detection | `true` |
 | `DEDUPE_RECENT_FILE` | Deduplication database file | `cache/seen_pages.json` |
+| `PREFETCH_REVIEW_BATCH` | Number of items generated per restock batch | `3` |
+| `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup | `0` |
 
 Prefetched experiences are saved as JSON files in `cache/prefetch`. Every `/generate`
 request—regardless of which user triggers it—consumes the oldest entry before calling the
@@ -217,6 +223,7 @@ The test suite includes **70+ tests** covering:
 -  Prefetch queue management
 -  API endpoint behavior
 -  Frontend rendering (full HTML and NDW snippets)
+-  Gemini compliance reviewer integration (when enabled)
 
 ##  Deployment
 
