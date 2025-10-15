@@ -31,6 +31,7 @@ export interface NdwRuntime {
     _keyHandlers: [] as ((e:KeyboardEvent)=>void)[],
     _ptrHandlers: [] as ((p:NdwPointer)=>void)[],
     _resizeHandlers: [] as (()=>void)[],
+    _canvases: new Set<HTMLCanvasElement>(),
     pointer: { x:0, y:0, down:false } as NdwPointer,
     time: { start:0, now:0, elapsed:0 } as NdwTime,
     utils: {
@@ -114,6 +115,7 @@ export interface NdwRuntime {
         _applySize(opts.width||800, opts.height||600);
       }
       parent && parent.appendChild(c);
+      NDW._canvases.add(c);
       // LLM compatibility aliases to prevent undefined errors
       (c as any).element = c;  // some snippets expect canvas.element
       (c as any).canvas = c;   // some snippets expect result.canvas
@@ -155,12 +157,38 @@ export interface NdwRuntime {
         doc.addEventListener('keyup', e=>{ NDW._keys.delete(e.key); for(const f of NDW._keyHandlers) f(e); });
       }
       const ptr = (type:string) => (e:PointerEvent)=>{
-        // Map to canvas if present, else use viewport coordinates
-        const targetCanvas = document.querySelector('#ndw-app canvas') as HTMLCanvasElement | null;
-        let px = e.clientX, py = e.clientY;
+        let targetCanvas: HTMLCanvasElement | null = null;
+        if (NDW._canvases && NDW._canvases.size){
+          const canvases = Array.from(NDW._canvases.values()) as HTMLCanvasElement[];
+          for (const canvas of canvases){
+            if (!canvas.isConnected){
+              NDW._canvases.delete(canvas);
+              continue;
+            }
+            const rect = canvas.getBoundingClientRect?.();
+            if (rect && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom){
+              targetCanvas = canvas;
+              break;
+            }
+          }
+          if (!targetCanvas){
+            for (const canvas of canvases){
+              if (canvas.isConnected){
+                targetCanvas = canvas;
+                break;
+              }
+            }
+          }
+        }
+        if (!targetCanvas){
+          targetCanvas = document.querySelector('#ndw-app canvas') as HTMLCanvasElement | null;
+        }
+        let px = e.clientX;
+        let py = e.clientY;
         if (targetCanvas && targetCanvas.getBoundingClientRect){
           const r = targetCanvas.getBoundingClientRect();
-          px = e.clientX - r.left; py = e.clientY - r.top;
+          px = e.clientX - r.left;
+          py = e.clientY - r.top;
         }
         const p:NdwPointer={type, x:px, y:py, raw:e, down:NDW.pointer.down};
         NDW.pointer.x=p.x; NDW.pointer.y=p.y; const wasDown = NDW.pointer.down; NDW.pointer.down = (type==='down'? true : (type==='up'? false : NDW.pointer.down));

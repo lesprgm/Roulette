@@ -9,6 +9,7 @@
         _keyHandlers: [],
         _ptrHandlers: [],
         _resizeHandlers: [],
+        _canvases: new Set(),
         pointer: { x: 0, y: 0, down: false },
         time: { start: 0, now: 0, elapsed: 0 },
         utils: {
@@ -102,6 +103,7 @@
                 _applySize(opts.width || 800, opts.height || 600);
             }
             parent && parent.appendChild(c);
+            NDW._canvases.add(c);
             // LLM compatibility aliases to prevent undefined errors
             c.element = c; // some snippets expect canvas.element
             c.canvas = c; // some snippets expect result.canvas
@@ -166,9 +168,34 @@
                     f(e); });
             }
             const ptr = (type) => (e) => {
-                // Map to canvas if present, else use viewport coordinates
-                const targetCanvas = document.querySelector('#ndw-app canvas');
-                let px = e.clientX, py = e.clientY;
+                let targetCanvas = null;
+                if (NDW._canvases && NDW._canvases.size) {
+                    const canvases = Array.from(NDW._canvases.values());
+                    for (const canvas of canvases) {
+                        if (!canvas.isConnected) {
+                            NDW._canvases.delete(canvas);
+                            continue;
+                        }
+                        const rect = canvas.getBoundingClientRect?.();
+                        if (rect && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+                            targetCanvas = canvas;
+                            break;
+                        }
+                    }
+                    if (!targetCanvas) {
+                        for (const canvas of canvases) {
+                            if (canvas.isConnected) {
+                                targetCanvas = canvas;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!targetCanvas) {
+                    targetCanvas = document.querySelector('#ndw-app canvas');
+                }
+                let px = e.clientX;
+                let py = e.clientY;
                 if (targetCanvas && targetCanvas.getBoundingClientRect) {
                     const r = targetCanvas.getBoundingClientRect();
                     px = e.clientX - r.left;

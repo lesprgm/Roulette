@@ -179,6 +179,59 @@ const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && 
 function stripExternalScripts(html) {
     return String(html).replace(/<script[^>]*\bsrc\s*=\s*['"][^'"]+['"][^>]*>\s*<\/script>/gi, '');
 }
+function containsDomReadyHook(code) {
+    return /DOMContentLoaded/i.test(code);
+}
+function invokeDomReadyListener(listener) {
+    try {
+        const evt = new Event('DOMContentLoaded');
+        Object.defineProperty(evt, 'target', { value: document, configurable: true });
+        Object.defineProperty(evt, 'currentTarget', { value: document, configurable: true });
+        if (typeof listener === 'function') {
+            listener.call(document, evt);
+        }
+        else if (listener && typeof listener.handleEvent === 'function') {
+            listener.handleEvent.call(listener, evt);
+        }
+    }
+    catch (err) {
+        console.warn('ndw dom-ready handler error', err);
+    }
+}
+function runWithPatchedDomReady(exec) {
+    if (document.readyState === 'loading') {
+        exec();
+        return;
+    }
+    const originalAdd = document.addEventListener.bind(document);
+    const originalRemove = document.removeEventListener.bind(document);
+    const intercepted = new Set();
+    function patchedAdd(type, listener, options) {
+        if (type === 'DOMContentLoaded' && listener) {
+            intercepted.add(listener);
+            invokeDomReadyListener(listener);
+            return;
+        }
+        originalAdd(type, listener, options);
+    }
+    function patchedRemove(type, listener, options) {
+        if (type === 'DOMContentLoaded' && listener) {
+            intercepted.delete(listener);
+            return;
+        }
+        originalRemove(type, listener, options);
+    }
+    document.addEventListener = patchedAdd;
+    document.removeEventListener = patchedRemove;
+    try {
+        exec();
+    }
+    finally {
+        document.addEventListener = originalAdd;
+        document.removeEventListener = originalRemove;
+        intercepted.clear();
+    }
+}
 function enterSite(doc) {
     const anyDoc = doc;
     if (anyDoc && typeof anyDoc.error === 'string')
@@ -352,9 +405,24 @@ function renderFullPage(html) {
             scripts.push(...Array.from(doc.head.querySelectorAll('script')));
         if (doc.body)
             scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-        scripts.forEach(old => { if (old.src)
-            return; const sc = document.createElement('script'); if (old.type)
-            sc.type = old.type; sc.textContent = old.textContent || ''; mainEl?.appendChild(sc); });
+        scripts.forEach(old => {
+            if (old.src)
+                return;
+            const code = old.textContent || '';
+            const exec = () => {
+                const sc = document.createElement('script');
+                if (old.type)
+                    sc.type = old.type;
+                sc.textContent = code;
+                mainEl?.appendChild(sc);
+            };
+            if (containsDomReadyHook(code)) {
+                runWithPatchedDomReady(exec);
+            }
+            else {
+                exec();
+            }
+        });
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
@@ -384,9 +452,24 @@ function renderInline(html) {
             scripts.push(...Array.from(doc.head.querySelectorAll('script')));
         if (doc.body)
             scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-        scripts.forEach(old => { if (old.src)
-            return; const sc = document.createElement('script'); if (old.type)
-            sc.type = old.type; sc.textContent = old.textContent || ''; mainEl?.appendChild(sc); });
+        scripts.forEach(old => {
+            if (old.src)
+                return;
+            const code = old.textContent || '';
+            const exec = () => {
+                const sc = document.createElement('script');
+                if (old.type)
+                    sc.type = old.type;
+                sc.textContent = code;
+                mainEl?.appendChild(sc);
+            };
+            if (containsDomReadyHook(code)) {
+                runWithPatchedDomReady(exec);
+            }
+            else {
+                exec();
+            }
+        });
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
@@ -487,12 +570,21 @@ function renderNdwSnippet(snippet) {
                     }
                 };
             }
-            const sc = document.createElement('script');
-            sc.type = 'text/javascript';
-            sc.textContent = `(function(){try
-{${snippet.js}
+            const rawJs = snippet.js;
+            const execSnippet = () => {
+                const sc = document.createElement('script');
+                sc.type = 'text/javascript';
+                sc.textContent = `(function(){try
+{${rawJs}
 }catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
-            document.body.appendChild(sc);
+                document.body.appendChild(sc);
+            };
+            if (rawJs && containsDomReadyHook(rawJs)) {
+                runWithPatchedDomReady(execSnippet);
+            }
+            else {
+                execSnippet();
+            }
         }
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();

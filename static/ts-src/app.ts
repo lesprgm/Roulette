@@ -11,7 +11,10 @@ interface ErrorDoc { error:string }
 interface ComponentDoc { components: any[] }
 type AppNormalizedDoc = NdwSnippet | FullPageDoc | ErrorDoc | ComponentDoc | any;
 
-type AppWindow = Window & { __NDW_showSnippetErrorOverlay?: (err:any)=>void; API_KEY?:string };
+type AppWindow = Window & {
+  __NDW_showSnippetErrorOverlay?: (err: any) => void;
+  API_KEY?: string;
+};
 const _w = window as AppWindow;
 
 const bodyEl = document.body;
@@ -191,6 +194,67 @@ function stripExternalScripts(html:string){
   return String(html).replace(/<script[^>]*\bsrc\s*=\s*['"][^'"]+['"][^>]*>\s*<\/script>/gi, '');
 }
 
+function containsDomReadyHook(code: string): boolean {
+  return /DOMContentLoaded/i.test(code);
+}
+
+function invokeDomReadyListener(listener: EventListenerOrEventListenerObject): void {
+  try {
+    const evt = new Event('DOMContentLoaded');
+    Object.defineProperty(evt, 'target', { value: document, configurable: true });
+    Object.defineProperty(evt, 'currentTarget', { value: document, configurable: true });
+    if (typeof listener === 'function') {
+      listener.call(document, evt);
+    } else if (listener && typeof (listener as any).handleEvent === 'function') {
+      (listener as any).handleEvent.call(listener, evt);
+    }
+  } catch (err) {
+    console.warn('ndw dom-ready handler error', err);
+  }
+}
+
+function runWithPatchedDomReady(exec: () => void): void {
+  if (document.readyState === 'loading') {
+    exec();
+    return;
+  }
+  const originalAdd = document.addEventListener.bind(document);
+  const originalRemove = document.removeEventListener.bind(document);
+  const intercepted = new Set<EventListenerOrEventListenerObject>();
+  function patchedAdd(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    if (type === 'DOMContentLoaded' && listener) {
+      intercepted.add(listener);
+      invokeDomReadyListener(listener);
+      return;
+    }
+    originalAdd(type, listener as EventListenerOrEventListenerObject, options as any);
+  }
+  function patchedRemove(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions,
+  ): void {
+    if (type === 'DOMContentLoaded' && listener) {
+      intercepted.delete(listener);
+      return;
+    }
+    originalRemove(type, listener as EventListenerOrEventListenerObject, options as any);
+  }
+  document.addEventListener = patchedAdd as typeof document.addEventListener;
+  document.removeEventListener = patchedRemove as typeof document.removeEventListener;
+  try {
+    exec();
+  } finally {
+    document.addEventListener = originalAdd;
+  	document.removeEventListener = originalRemove;
+  	intercepted.clear();
+  }
+}
+
 function enterSite(doc: AppNormalizedDoc){
   const anyDoc:any = doc;
   if (anyDoc && typeof anyDoc.error === 'string') return showError(anyDoc.error);
@@ -325,7 +389,21 @@ function renderFullPage(html:string){
     const scripts: HTMLScriptElement[] = [];
     if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
     if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-    scripts.forEach(old=>{ if(old.src) return; const sc=document.createElement('script'); if (old.type) sc.type=old.type; sc.textContent=old.textContent||''; mainEl?.appendChild(sc); });
+    scripts.forEach(old=>{
+      if(old.src) return;
+      const code = old.textContent || '';
+      const exec = () => {
+        const sc=document.createElement('script');
+        if (old.type) sc.type=old.type;
+        sc.textContent=code;
+        mainEl?.appendChild(sc);
+      };
+      if (containsDomReadyHook(code)) {
+        runWithPatchedDomReady(exec);
+      } else {
+        exec();
+      }
+    });
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
@@ -346,9 +424,23 @@ function renderInline(html:string){
       mainEl.appendChild(frag);
     }
     const scripts:HTMLScriptElement[]=[];
-    if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
-    if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-    scripts.forEach(old=>{ if(old.src) return; const sc=document.createElement('script'); if(old.type) sc.type=old.type; sc.textContent=old.textContent||''; mainEl?.appendChild(sc); });
+  	if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
+  	if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
+    scripts.forEach(old=>{
+      if(old.src) return;
+      const code = old.textContent || '';
+      const exec = () => {
+        const sc=document.createElement('script');
+        if(old.type) sc.type=old.type;
+        sc.textContent=code;
+        mainEl?.appendChild(sc);
+      };
+      if (containsDomReadyHook(code)) {
+        runWithPatchedDomReady(exec);
+      } else {
+        exec();
+      }
+    });
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
@@ -421,10 +513,19 @@ function renderNdwSnippet(snippet:NdwSnippet){
           try { let el = document.getElementById('ndwSnippetError'); if (!el){ el=document.createElement('div'); el.id='ndwSnippetError'; Object.assign(el.style,{position:'fixed',top:'12px',left:'12px',zIndex:'1000',background:'rgba(220,38,38,0.95)',color:'#fff',padding:'10px 12px',borderRadius:'8px',font:'12px/1.4 system-ui, sans-serif',boxShadow:'0 6px 20px rgba(0,0,0,0.25)',maxWidth:'60vw'}); el.innerHTML='<strong>Snippet error</strong><div id="ndwSnippetErrorMsg" style="margin-top:6px;white-space:pre-wrap"></div>'; document.body.appendChild(el);} const msg = document.getElementById('ndwSnippetErrorMsg'); if(msg) msg.textContent = String(err && (err.message||err)).slice(0,500); } catch(e){ console.error('Snippet error overlay failure', e); }
         };
       }
-      const sc = document.createElement('script'); sc.type='text/javascript'; sc.textContent=`(function(){try
-{${snippet.js}
+      const rawJs = snippet.js;
+      const execSnippet = () => {
+        const sc = document.createElement('script'); sc.type='text/javascript';
+        sc.textContent=`(function(){try
+{${rawJs}
 }catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
-      document.body.appendChild(sc);
+        document.body.appendChild(sc);
+      };
+      if (rawJs && containsDomReadyHook(rawJs)) {
+        runWithPatchedDomReady(execSnippet);
+      } else {
+        execSnippet();
+      }
     }
     ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
     ensureScrollableBody();
