@@ -300,7 +300,6 @@ Seed: {seed}
 
 
 _PAGE_SHAPE_HINT = """
-Output valid JSON only. No markdown fences.
 
 FORMATS (prefer #1 or #2 for websites/quizzes):
 1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}
@@ -312,6 +311,7 @@ GENERAL RULES:
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
 - Maintain high contrast between foreground text and backgrounds (e.g., do not leave white text on white/pale backgrounds; always pair light backgrounds with dark text and vice versa).
+- Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
@@ -326,24 +326,24 @@ SNIPPET RUNTIME (NDW APIs):
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: buttons that dodge the cursor, mood rings that react to input, digital squishables, cursor trails, secret-reveal interactions, bubble-wrap poppers, pixel pets, mischievous notification toasters, "Don't Press the Button" pranks, pixel painters, click speed tests, reaction timers, Guess the Number challenges, Rock, Paper, Scissors battles, Whack-a-Mole Lite grids, Memory Card Flip matches, Avoid the Box chases.
+    - Examples: mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, bubble-wrap smash pads, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
-    - Single-purpose web apps that solve a focused problem: timers, converters, checklist generators, quick invoice builders, micro CRMs, focus timers, mood-to-color pickers, Click Counter helpers, Worth in Pizza salary converters, Pet Age Converter dashboards, "Is It Friday Yet?" checkers, How Long Would It Take to Walk to the Moon estimators.
+    - Single-purpose web apps that solve a focused problem: hydration timekeepers, snack stash planners, weekend adventure schedulers, grocery budget trackers, pizza-slice salary converters, pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
     - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
     - Highlight “next steps” or tips so users feel guided through the workflow.
     - Avoid relying solely on a canvas; craft a complete webpage layout.
 3. GENERATIVE / RANDOMIZER SITES:
-    - Produce random or algorithmic content: quote machines, poem/lyric generators, name/brand idea generators, fortune tellers, Random Compliment Generator toys, Excuse Generator oracles.
+    - Produce random or algorithmic content: story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers.
     - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
 4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
     - Example: const rand = NDW.utils.rng(seed); const x = rand();
-    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think Color Party backgrounds or Emoji Rain cascades when planning motion.
+    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds for motion inspiration.
     - Add an HTML caption describing the concept or interaction.
 5. QUIZZES / LEARNING CARDS:
     - Use semantic HTML sections with question cards, labeled inputs (radio/checkbox/text), progress indicators, and CTA buttons.
-    - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas).
+    - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas). Consider movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns.
     - Prefer FORMAT #2 or #1 with rich HTML structure; ensure accessibility with labels and logical grouping.
 
 CONTROLS & INPUT REFERENCE (canvas categories only):
@@ -735,30 +735,35 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(comps, dict):
         comps = [comps]
     if isinstance(comps, list):
-        for c in comps:
+        normalized_components: list[Dict[str, Any]] = []
+        for idx, c in enumerate(comps):
             if not isinstance(c, dict):
                 continue
-            props = c.get("props") or {}
-            html = props.get("html") if isinstance(props, dict) else None
+            raw_props = c.get("props")
+            props = dict(raw_props) if isinstance(raw_props, dict) else {}
+            html = props.get("html")
             if not (isinstance(html, str) and html.strip()):
                 html = c.get("html") if isinstance(c.get("html"), str) else None
-            if isinstance(html, str) and html.strip():
-                height = props.get("height") if isinstance(props, dict) else c.get("height")
-                # Attempt to coerce string heights like "100vh" to a reasonable pixel default
-                try:
-                    h = int(height) if height is not None else 360
-                except Exception:
-                    # If string like "100vh", fall back to a tall default
-                    h = 720
-                return {
-                    "components": [
-                        {
-                            "id": str(c.get("id") or "custom-1"),
-                            "type": "custom",
-                            "props": {"html": html, "height": h},
-                        }
-                    ]
+            if not (isinstance(html, str) and html.strip()):
+                continue
+            height_val = props.get("height") if isinstance(props, dict) else c.get("height")
+            try:
+                height = int(height_val) if height_val is not None else 360
+            except Exception:
+                # If height is a string like "100vh", fall back to a generous default
+                height = 720
+            # Ensure html/height are present and sanitized
+            props["html"] = html.strip()
+            props["height"] = height
+            normalized_components.append(
+                {
+                    "id": str(c.get("id") or f"custom-{idx + 1}"),
+                    "type": "custom",
+                    "props": props,
                 }
+            )
+        if normalized_components:
+            return {"components": normalized_components}
     def _find_html(obj: Any, depth: int = 0) -> Optional[str]:
         if depth > 2:
             return None
