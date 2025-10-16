@@ -40,10 +40,23 @@ services:
       - key: LLM_TIMEOUT_SECS
         value: "75"
       - key: RATE_MAX_REQUESTS
-        value: "10"
+        value: "30"
       - key: RATE_WINDOW_SECONDS
-        value: "180"
+        value: "10800"
       - key: ALLOW_OFFLINE_GENERATION
         value: "1"
       - key: REDIS_URL
         sync: false
+      - key: GEMINI_REVIEW_ENABLED
+        value: "1"
+      - key: GEMINI_REVIEW_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PREFETCH_PREWARM_COUNT
+        value: 15
+      - key: PREFETCH_FILL_TO
+        value: 40
+      - key: PREFETCH_LOW_WATER
+        value: 30
+
