@@ -14,7 +14,7 @@ The system ensures variety through intelligent deduplication, category rotation,
 
 ##  Screenshots
 
-### Generated Page
+### Generated Page *Removed Game Category
 ![Landing Page](screenshots/demo1.png)
 
 ### Generated Experience
