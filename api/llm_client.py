@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import threading
+import time
 from typing import Any, Dict, Optional, Tuple, List
 import requests
 from api import dedupe
@@ -35,6 +36,58 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
 _ENV_GROQ_API_KEY = GROQ_API_KEY
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+
+_OPENROUTER_BACKOFF_LOCK = threading.Lock()
+_OPENROUTER_BACKOFF_UNTIL = 0.0
+_OPENROUTER_BACKOFF_DELAY = 0.0
+try:
+    _OPENROUTER_BACKOFF_INITIAL = float(os.getenv("OPENROUTER_BACKOFF_INITIAL", "3.0") or 3.0)
+except Exception:
+    _OPENROUTER_BACKOFF_INITIAL = 3.0
+try:
+    _OPENROUTER_BACKOFF_MAX = float(os.getenv("OPENROUTER_BACKOFF_MAX", "45.0") or 45.0)
+except Exception:
+    _OPENROUTER_BACKOFF_MAX = 45.0
+_OPENROUTER_BACKOFF_FACTOR = 1.5
+
+
+def _openrouter_sleep_if_needed() -> None:
+    now = time.time()
+    wait_for = 0.0
+    with _OPENROUTER_BACKOFF_LOCK:
+        if _OPENROUTER_BACKOFF_UNTIL > now:
+            wait_for = _OPENROUTER_BACKOFF_UNTIL - now
+    if wait_for > 0:
+        logging.info("OpenRouter backoff active; waiting %.2fs before next request", wait_for)
+        try:
+            time.sleep(min(wait_for, _OPENROUTER_BACKOFF_MAX))
+        except Exception:
+            pass
+
+
+def _openrouter_register_rate_limit(retry_after: Optional[str]) -> None:
+    delay = None
+    if retry_after:
+        try:
+            delay = float(retry_after)
+        except Exception:
+            delay = None
+    global _OPENROUTER_BACKOFF_DELAY, _OPENROUTER_BACKOFF_UNTIL
+    with _OPENROUTER_BACKOFF_LOCK:
+        base = _OPENROUTER_BACKOFF_DELAY or _OPENROUTER_BACKOFF_INITIAL
+        if delay is None:
+            delay = base * _OPENROUTER_BACKOFF_FACTOR
+        delay = max(_OPENROUTER_BACKOFF_INITIAL, min(delay, _OPENROUTER_BACKOFF_MAX))
+        _OPENROUTER_BACKOFF_DELAY = delay
+        _OPENROUTER_BACKOFF_UNTIL = time.time() + delay
+        logging.warning("OpenRouter rate limited; backing off for %.2fs", delay)
+
+
+def _openrouter_reset_backoff() -> None:
+    global _OPENROUTER_BACKOFF_DELAY, _OPENROUTER_BACKOFF_UNTIL
+    with _OPENROUTER_BACKOFF_LOCK:
+        _OPENROUTER_BACKOFF_DELAY = 0.0
+        _OPENROUTER_BACKOFF_UNTIL = 0.0
 
 try:
     TEMPERATURE = float(os.getenv("TEMPERATURE", "1.35"))
@@ -547,10 +600,21 @@ Seed: {seed}
     if wants_json_mode:
         body["response_format"] = {"type": "json_object"}
 
-    try:
-        resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body, timeout=LLM_TIMEOUT_SECS)
-    except Exception as e:
-        logging.warning("OpenRouter request error: %r", e)
+    def _send_openrouter(payload: Dict[str, Any]):
+        _openrouter_sleep_if_needed()
+        try:
+            response = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=payload, timeout=LLM_TIMEOUT_SECS)
+        except Exception as exc:
+            logging.warning("OpenRouter request error: %r", exc)
+            return None
+        if response.status_code == 429:
+            _openrouter_register_rate_limit(response.headers.get("Retry-After"))
+        elif response.status_code == 200:
+            _openrouter_reset_backoff()
+        return response
+
+    resp = _send_openrouter(body)
+    if resp is None:
         return None
 
     if resp.status_code != 200:
@@ -562,11 +626,9 @@ Seed: {seed}
             txt = None
         msg = (txt or "")[:400]
         if wants_json_mode and ("JSON mode is not enabled" in (txt or "") or "response_format" in (txt or "")):
-            try:
-                body.pop("response_format", None)
-                resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body, timeout=LLM_TIMEOUT_SECS)
-            except Exception as e:
-                logging.warning("OpenRouter retry (no json mode) error: %r", e)
+            body.pop("response_format", None)
+            resp = _send_openrouter(body)
+            if resp is None:
                 return None
             if resp.status_code != 200:
                 try:
@@ -581,10 +643,8 @@ Seed: {seed}
                         logging.warning("OpenRouter model '%s' failed; retrying with fallback '%s'", OPENROUTER_MODEL, fallback_model)
                         body_fallback = dict(body)
                         body_fallback["model"] = fallback_model
-                        try:
-                            resp_fb = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body_fallback, timeout=LLM_TIMEOUT_SECS)
-                        except Exception as e:
-                            logging.warning("OpenRouter fallback model '%s' request error: %r", fallback_model, e)
+                        resp_fb = _send_openrouter(body_fallback)
+                        if resp_fb is None:
                             continue
                         if resp_fb.status_code != 200:
                             try:
@@ -608,10 +668,8 @@ Seed: {seed}
                     logging.warning("OpenRouter model '%s' failed; retrying with fallback '%s'", OPENROUTER_MODEL, fallback_model)
                     body_fallback = dict(body)
                     body_fallback["model"] = fallback_model
-                    try:
-                        resp_fb = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body_fallback, timeout=LLM_TIMEOUT_SECS)
-                    except Exception as e:
-                        logging.warning("OpenRouter fallback model '%s' request error: %r", fallback_model, e)
+                    resp_fb = _send_openrouter(body_fallback)
+                    if resp_fb is None:
                         continue
                     if resp_fb.status_code != 200:
                         try:
