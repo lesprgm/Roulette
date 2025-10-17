@@ -482,37 +482,41 @@ GENERAL RULES:
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
 - Maintain high contrast between foreground text and backgrounds (e.g., do not leave white text on white/pale backgrounds; always pair light backgrounds with dark text and vice versa).
+- Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon). Do not reuse the same navy blueprint; treat the sample layout as structure only.
+- Use the provided examples as inspiration and feel free to remix their spirit, but avoid repeating the exact same names or layouts verbatim run after run.
 - Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
 - Every interactive element referenced in JS must already exist in the DOM with matching IDs/classes before scripts run.
 
 BASE HTML BLUEPRINT (adapt, do not return empty sections):
-<main id="ndw-shell" class="min-h-screen bg-slate-950 text-slate-100">
+<main id="ndw-shell" class="min-h-screen text-slate-900" style="--bg-100:#f8fafc;--bg-300:#e0f2fe;--accent-500:#2563eb;--text-900:#0f172a;background:linear-gradient(135deg,var(--bg-100),var(--bg-300));">
   <section class="mx-auto max-w-4xl px-6 py-12">
-    <div class="rounded-3xl bg-slate-900/80 p-8 shadow-xl">
-      <header class="mb-8 space-y-3 text-center">
-        <p class="text-xs uppercase tracking-[0.3em] text-cyan-400">[[category label here]]</p>
-        <h1 class="text-4xl font-bold text-slate-50">[[hero headline]]</h1>
-        <p class="text-slate-300">[[one-sentence instructions]]</p>
+    <div class="rounded-3xl bg-white/85 backdrop-blur shadow-xl ring-1 ring-slate-200/70 p-8">
+      <header class="mb-8 space-y-3 text-center text-slate-900">
+        <p class="text-xs uppercase tracking-[0.3em] text-[color:var(--accent-500)]">[[category label here]]</p>
+        <h1 class="text-4xl font-bold">[[hero headline]]</h1>
+        <p class="text-slate-600">[[one-sentence instructions]]</p>
       </header>
-      <div id="ndw-instructions" class="mb-6 rounded-2xl bg-slate-800/70 p-4 text-sm leading-relaxed text-slate-200">
+      <div id="ndw-instructions" class="mb-6 rounded-2xl bg-slate-100/90 p-4 text-sm leading-relaxed text-slate-600">
         [[step-by-step guidance or flavor text]]
       </div>
-      <div id="ndw-content" class="space-y-6">
+      <div id="ndw-content" class="space-y-6 text-slate-700">
         [[dynamic cards, tools, or canvas container live here]]
       </div>
     </div>
   </section>
 </main>
+NOTE: Replace the CSS variables in the style attribute above to match the chosen palette; the light gradient shown is just an example.
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
 - Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000).
 - NDW.makeCanvas({fullScreen,width,height,parent,dpr}) returns canvas with .ctx, .dpr (NOT canvas.canvas.width).
+- Use canvas.ctx.width/height (or canvas.width / canvas.dpr) for layout math; NDW scales the backing buffer for HiDPI so raw canvas.width is larger than the visible area.
 - NDW.onKey((e) => ...) / NDW.onPointer((e) => ...) register once outside NDW.loop; use NDW.isDown inside the loop for continuous input.
 - NDW.isDown('ArrowLeft' | 'mouse' | ...), NDW.onResize, NDW.utils (clamp, lerp, rng(seed), hash(seed)), NDW.pointer {x,y,down}.
 - Initialize all state before NDW.loop; register handlers before NDW.loop; never declare them inside the loop.
 - Never chain NDW.* off other expressions (no `.NDW`). Call each NDW method as its own statement.
-- Canvas scenes must call ctx.clearRect(0,0,canvas.width,canvas.height) each frame.
+- Canvas scenes must call ctx.clearRect(0, 0, ctx.width, ctx.height) each frame.
 - Declare all state objects/arrays before NDW.loop; do not redeclare inside the loop.
 
 JS GUARDRAILS:
@@ -524,7 +528,7 @@ JS GUARDRAILS:
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Examples: dodging buttons, mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
+    - Example inspirations (remix as you like): dodging buttons, mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
     - Single-purpose web apps that solve a focused problem: pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
@@ -532,7 +536,7 @@ CATEGORY ROTATION — choose exactly one (avoid repeating the same category twic
     - Highlight “next steps” or tips so users feel guided through the workflow.
     - Avoid relying solely on a canvas; craft a complete webpage layout.
 3. GENERATIVE / RANDOMIZER SITES:
-    - Produce random or algorithmic content: story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers.
+    - Produce random or algorithmic content (feel free to riff on these examples): story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers.
     - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
 4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
@@ -563,13 +567,13 @@ SELF QA BEFORE RETURNING:
 
 CANONICAL CANVAS TEMPLATE:
 const stage = document.createElement('section');
-stage.className = 'mx-auto my-6 w-full max-w-4xl rounded-xl bg-slate-900/95 p-6 shadow-lg';
+stage.className = 'mx-auto my-6 w-full max-w-4xl rounded-xl bg-white/85 backdrop-blur p-6 shadow-lg ring-1 ring-slate-200/70';
 document.getElementById('ndw-app')?.appendChild(stage);
 
 const canvas = NDW.makeCanvas({ parent: stage, width: 960, height: 560 });
 const ctx = canvas.ctx;
 const rand = NDW.utils.rng(seed);
-let state = { x: canvas.width / 2, vx: 0 };
+let state = { x: ctx.width / 2, vx: 0 };
 
 NDW.onKey((e) => {
      if (e.key === 'ArrowLeft') state.vx = -1;
@@ -578,10 +582,12 @@ NDW.onKey((e) => {
 
 NDW.loop((dt) => {
      const seconds = dt / 1000;
-     state.x += state.vx * seconds * 200;
-     ctx.clearRect(0, 0, canvas.width, canvas.height);
+     const width = ctx.width;
+     const height = ctx.height;
+     state.x = Math.max(20, Math.min(width - 20, state.x + state.vx * seconds * 200));
+     ctx.clearRect(0, 0, width, height);
      ctx.fillStyle = '#10b981';
-     ctx.fillRect(state.x - 20, canvas.height - 60, 40, 40);
+     ctx.fillRect(state.x - 20, height - 60, 40, 40);
 });
 
 OUTPUT CHECKLIST:
@@ -595,15 +601,15 @@ OUTPUT CHECKLIST:
 
 _CATEGORY_ROTATION_NOTES = [
     ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
-     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (dodging buttons, mischievous cat disco pads, haunted hallway dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades). Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
+     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (dodging buttons, mischievous cat disco pads, haunted hallway dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades). Use these ideas as flavor prompts—remix or combine them, but avoid carbon-copying the exact name/layout back to back. Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
     ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
-     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task (pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals). Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips—avoid canvas-only layouts and keep it practical."),
+     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task (pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals). You can revisit similar problem spaces, but vary the branding, copy, and UI details so repeated runs feel distinct. Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips—avoid canvas-only layouts and keep it practical."),
     ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
-     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience that produces fresh content (story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers). Include controls to refresh or customize output and keep the generative theme central."),
+     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience that produces fresh content (story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers). Feel free to riff on these examples, but rotate the theme, framing, and output tone so consecutive apps don’t feel identical. Include controls to refresh or customize output and keep the generative theme central."),
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
-     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Take inspiration from aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds—and include an HTML caption describing the piece."),
+     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Draw inspiration from aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds—remix palettes and motion patterns so repeat generations stay varied. Include an HTML caption describing the piece."),
     ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
-     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns). Prefer rich HTML layouts—no canvas—and keep everything accessible."),
+     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns). You can revisit similar trivia genres, but change the scenario, question text, and styling so each iteration feels new. Prefer rich HTML layouts—no canvas—and keep everything accessible."),
 ]
 
 _category_lock = threading.Lock()

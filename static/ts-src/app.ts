@@ -45,17 +45,17 @@ function ensureReadableTheme(target?: HTMLElement){
     const hasImage = style.backgroundImage && style.backgroundImage !== 'none';
     const bgLum = relativeLuminance(parseRgb(style.backgroundColor || 'rgb(255,255,255)'));
     if (!hasImage && bgLum > 0.85){
-      el.style.background = 'linear-gradient(135deg,#0b1220,#42526b)';
+      el.style.background = 'linear-gradient(140deg,#ffffff,#f1f5f9)';
     }
-    const colorLum = relativeLuminance(parseRgb(style.color || 'rgb(33,37,41)'));
+    const colorLum = relativeLuminance(parseRgb(style.color || 'rgb(51,65,85)'));
     if (colorLum > 0.8){
-      el.style.color = '#0f172a';
+      el.style.color = '#1f2937';
     }
-    // If background still ends up very light, force a dark fallback
+    // If background still ends up too light, switch to a soft neutral palette
     const finalBgLum = relativeLuminance(parseRgb(getComputedStyle(el).backgroundColor || 'rgb(255,255,255)'));
-    if (finalBgLum > 0.9){
-      el.style.backgroundColor = '#0b1220';
-      el.style.color = '#f8fafc';
+    if (finalBgLum > 0.92){
+      el.style.background = 'linear-gradient(135deg,#f8fafc,#e5edff)';
+      el.style.color = '#1f2937';
     }
   } catch(err){
     console.warn('ensureReadableTheme failed', err);
@@ -541,12 +541,23 @@ let __genBtnSeq = 0;
 function buildUiverseButton(id?:string){ const wrap=document.createElement('div'); wrap.className='inline-block align-middle'; wrap.innerHTML=`<div class="ndw-button button" aria-label="Generate"><button ${id?`id="${id}"`:''} data-gen-button="1" name="checkbox" type="button" aria-label="Generate"></button><span></span><span></span><span></span><span></span></div>`; return wrap; }
 
 function looksLikeGenerate(el:HTMLElement){
-  const label = (el.getAttribute('aria-label') || el.textContent || '').trim().toLowerCase();
-  const id = (el.id || '').toLowerCase();
+  const datasetTrigger = (el.dataset?.ndwTrigger || '').toLowerCase();
+  if (datasetTrigger === 'new-site' || datasetTrigger === 'generate') return true;
+  if (el.dataset?.ndwNoHijack === '1') return false;
+  const label = (el.getAttribute('aria-label') || el.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  const id = (el.id || '').trim().toLowerCase();
   const cls = (el.className || '').toLowerCase();
   if (id === 'landinggenerate' || id === 'floatinggenerate') return false;
   if (el.closest('.button')) return false;
-  return label === 'generate' || /\bgenerate\b/.test(label) || /\bgenerate\b/.test(id) || /\bgenerate\b/.test(cls);
+  const explicitLabels = new Set(['generate', 'generate website', 'generate a website', 'new site', 'new website']);
+  if (explicitLabels.has(label)) return true;
+  const explicitIds = new Set(['generate', 'generate-website', 'generatewebsite', 'ndw-generate', 'new-site']);
+  if (explicitIds.has(id)) return true;
+  if (/\bndw-(?:global-)?generate\b/.test(cls)) return true;
+  return false;
 }
 
 function adaptGenerateButtons(){
