@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import random
+import re
+import subprocess
 import threading
 import time
 from typing import Any, Dict, Optional, Tuple, List
@@ -51,6 +53,10 @@ except Exception:
 _OPENROUTER_BACKOFF_FACTOR = 1.5
 
 
+_SCRIPT_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+
+
+
 def _openrouter_sleep_if_needed() -> None:
     now = time.time()
     wait_for = 0.0
@@ -88,6 +94,72 @@ def _openrouter_reset_backoff() -> None:
     with _OPENROUTER_BACKOFF_LOCK:
         _OPENROUTER_BACKOFF_DELAY = 0.0
         _OPENROUTER_BACKOFF_UNTIL = 0.0
+
+
+def _extract_inline_scripts(html: str) -> List[str]:
+    blocks: List[str] = []
+    if not isinstance(html, str) or not html:
+        return blocks
+    for match in _SCRIPT_RE.findall(html):
+        attrs, body = match
+        attrs = attrs or ""
+        if "src=" in attrs.lower():
+            continue
+        if body and body.strip():
+            blocks.append(body)
+    return blocks
+
+
+def _collect_js_blocks(doc: Dict[str, Any]) -> List[str]:
+    blocks: List[str] = []
+    if not isinstance(doc, dict):
+        return blocks
+    kind = doc.get("kind")
+    if kind == "ndw_snippet_v1":
+        js = doc.get("js")
+        if isinstance(js, str) and js.strip():
+            blocks.append(js)
+        html = doc.get("html")
+        if isinstance(html, str):
+            blocks.extend(_extract_inline_scripts(html))
+    elif kind == "full_page_html":
+        html = doc.get("html")
+        if isinstance(html, str):
+            blocks.extend(_extract_inline_scripts(html))
+    if isinstance(doc.get("components"), list):
+        for comp in doc["components"]:
+            if not isinstance(comp, dict):
+                continue
+            props = comp.get("props")
+            if isinstance(props, dict):
+                html = props.get("html")
+                if isinstance(html, str):
+                    blocks.extend(_extract_inline_scripts(html))
+    return [b for b in blocks if b.strip()]
+
+
+def _first_js_syntax_error(doc: Dict[str, Any]) -> Optional[str]:
+    blocks = _collect_js_blocks(doc)
+    if not blocks:
+        return None
+    for block in blocks:
+        script = f"new Function({json.dumps(block)});"
+        try:
+            result = subprocess.run(
+                ["node", "-e", script],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            logging.debug("JS syntax check unexpected error: %r", exc)
+            return None
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "JS syntax error").strip()
+            return err.splitlines()[0]
+    return None
 
 try:
     TEMPERATURE = float(os.getenv("TEMPERATURE", "1.35"))
@@ -249,27 +321,23 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
                 doc = None
                 seed_val = (seed_val + 7919) % 10_000_019
                 continue
-            final_sig = ""
-            if not skip_dedupe:
-                final_sig = dedupe.signature_for_doc(doc)
-                if final_sig and dedupe.has(final_sig):
-                    logging.info("Compliance-adjusted doc duplicate; retrying another generation (attempt %d)", attempts)
-                    doc = None
-                    seed_val = (seed_val + 7919) % 10_000_019
-                    continue
-            if final_sig:
-                dedupe.add(final_sig)
-        else:
-            final_sig = ""
-            if not skip_dedupe:
-                final_sig = dedupe.signature_for_doc(doc)
-                if final_sig and dedupe.has(final_sig):
-                    logging.info("Unreviewed doc duplicate; retrying another generation (attempt %d)", attempts)
-                    doc = None
-                    seed_val = (seed_val + 7919) % 10_000_019
-                    continue
-            if final_sig:
-                dedupe.add(final_sig)
+        js_error = _first_js_syntax_error(doc)
+        if js_error:
+            logging.warning("JS syntax validation failed (attempt %d): %s", attempts, js_error)
+            doc = None
+            seed_val = (seed_val + 7919) % 10_000_019
+            continue
+        final_sig = ""
+        if not skip_dedupe:
+            final_sig = dedupe.signature_for_doc(doc)
+            if final_sig and dedupe.has(final_sig):
+                duplicate_msg = "Compliance-adjusted doc duplicate" if run_review else "Unreviewed doc duplicate"
+                logging.info("%s; retrying another generation (attempt %d)", duplicate_msg, attempts)
+                doc = None
+                seed_val = (seed_val + 7919) % 10_000_019
+                continue
+        if final_sig:
+            dedupe.add(final_sig)
         return doc
 
     return doc or {"error": "Model generation failed"}

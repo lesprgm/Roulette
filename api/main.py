@@ -188,13 +188,13 @@ def _rate_limit_payload(reset_ts: int) -> Dict[str, Any]:
 
 
 # Prefetch tuning knobs
-PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "15") or 15)
+PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "55") or 55)
 try:
     # Prefer the batch max if available for a fill-to target
     from api.prefetch import BATCH_MAX as _PF_BATCH_MAX
-    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 20)
+    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 75)
 except Exception:
-    _DEFAULT_FILL_TO = 20
+    _DEFAULT_FILL_TO = 75
 PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
 PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
 if os.getenv("PYTEST_CURRENT_TEST"):

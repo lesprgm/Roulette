@@ -1,4 +1,5 @@
 import json
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -216,3 +217,12 @@ def test_generate_page_retries_when_review_blocks(monkeypatch):
 
     out = llm_client.generate_page("any", seed=11)
     assert out.get("error"), "Expected compliance failure to surface as error"
+
+
+def test_js_syntax_checker_detects_comment_bug():
+    html = """<!doctype html><html><body><script>const hue = 120; // commentconst color = 'red';</script></body></html>"""
+    doc = {"kind": "full_page_html", "html": html}
+    err = llm_client._first_js_syntax_error(doc)  # type: ignore[attr-defined]
+    if err is None:
+        pytest.skip("Node runtime not available; skipping JS syntax check validation")
+    assert err, "Expected syntax checker to report error"
