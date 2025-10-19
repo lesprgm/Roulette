@@ -231,7 +231,7 @@ def _prefill_prefetch_queue() -> None:
     i = 0
     while len(paths) < desired and failures < max_failures:
         seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
-        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=False)
+        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=True)
         if isinstance(page, dict) and page.get("error"):
             failures += 1
             log.warning("prefetch.prewarm: generation error '%s'", page.get("error"))
@@ -291,7 +291,7 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
             max_failures = max(5, target * 3)
             while prefetch.size() < target and failures < max_failures:
                 seed = (int(time.time() * 1000) + generated + failures) % 1_000_000_007
-                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
+                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=True)
                 if isinstance(page, dict) and page.get("error"):
                     failures += 1
                     log.warning(
@@ -868,7 +868,7 @@ def prefetch_fill(
             req.brief or "",
             seed=(int(time.time() * 1000) + i) % 1_000_000_007,
             user_key="prefetch",
-            run_review=False,
+            run_review=True,
         )
         if isinstance(page, dict) and page.get("error"):
             log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
