@@ -528,7 +528,7 @@ JS GUARDRAILS:
 CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
 1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
     - Focus on playful, unexpected interactions that delight users.
-    - Example inspirations (remix as you like): dodging buttons, mischievous cat disco pads, haunted hallway door dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades.
+    - Example inspirations (remix as you like): gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers, mirror maze click escapes, bubble pop orchestras, neon vine twisters, marshmallow catapults, echo button choirs, kaleidoscope cursor trails.
     - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
 2. UTILITY MICRO-TOOLS (Productivity):
     - Single-purpose web apps that solve a focused problem: pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
@@ -541,11 +541,11 @@ CATEGORY ROTATION — choose exactly one (avoid repeating the same category twic
 4. INTERACTIVE ART (canvas-driven):
     - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
     - Example: const rand = NDW.utils.rng(seed); const x = rand();
-    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds for motion inspiration.
+    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think prism cascade skylines, nebula ink tides, starlit bloom ribbons, chroma wind tunnels, velvet glitch tapestries, lumen ripple seas for motion inspiration.
     - Add an HTML caption describing the concept or interaction.
 5. QUIZZES / LEARNING CARDS:
     - Use semantic HTML sections with question cards, labeled inputs (radio/checkbox/text), progress indicators, and CTA buttons.
-    - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas). Consider movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns.
+    - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas). Consider campus lore lightning rounds, mythic creature deducers, constellation spotters, onboarding checklists, cozy tea trivia duels, museum mystery matchups.
     - Prefer FORMAT #2 or #1 with rich HTML structure; ensure accessibility with labels and logical grouping.
 
 CONTROLS & INPUT REFERENCE (canvas categories only):
@@ -601,15 +601,15 @@ OUTPUT CHECKLIST:
 
 _CATEGORY_ROTATION_NOTES = [
     ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
-     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (dodging buttons, mischievous cat disco pads, haunted hallway dodgers, emoji slingshot carnivals, digital lava lamps, confetti cannons that dodge the cursor, wiggly slider playgrounds, mini rhythm mashers, pixel pet playgrounds, memory firefly cascades). Use these ideas as flavor prompts—remix or combine them, but avoid carbon-copying the exact name/layout back to back. Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
+     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers, mirror maze click escapes, bubble pop orchestras, neon vine twisters, marshmallow catapults, echo button choirs, kaleidoscope cursor trails). Use these ideas as flavor prompts—remix or combine them, but avoid carbon-copying the exact name/layout back to back. Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
     ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
      "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task (pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals). You can revisit similar problem spaces, but vary the branding, copy, and UI details so repeated runs feel distinct. Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips—avoid canvas-only layouts and keep it practical."),
     ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
      "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience that produces fresh content (story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers). Feel free to riff on these examples, but rotate the theme, framing, and output tone so consecutive apps don’t feel identical. Include controls to refresh or customize output and keep the generative theme central."),
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
-     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Draw inspiration from aurora ribbon fields, neon lattice tunnels, ripple ink pools, lantern glow swarms, mosaic bloom clouds—remix palettes and motion patterns so repeat generations stay varied. Include an HTML caption describing the piece."),
+     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Draw inspiration from prism cascade skylines, nebula ink tides, starlit bloom ribbons, chroma wind tunnels, velvet glitch tapestries, lumen ripple seas—remix palettes and motion patterns so repeat generations stay varied. Include an HTML caption describing the piece."),
     ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
-     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (movie-night matchup quizzes, mythology flashcards, constellation spotters, onboarding checklists, tiny science trivia showdowns). You can revisit similar trivia genres, but change the scenario, question text, and styling so each iteration feels new. Prefer rich HTML layouts—no canvas—and keep everything accessible."),
+     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (campus lore lightning rounds, mythic creature deducers, constellation spotters, onboarding checklists, cozy tea trivia duels, museum mystery matchups). You can revisit similar trivia genres, but change the scenario, question text, and styling so each iteration feels new. Prefer rich HTML layouts—no canvas—and keep everything accessible."),
 ]
 
 _category_lock = threading.Lock()
