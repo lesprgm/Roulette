@@ -14,11 +14,38 @@ The system ensures variety through intelligent deduplication, category rotation,
 
 ##  Screenshots
 
-### Generated Page *Removed Game Category
-![Landing Page](screenshots/demo1.png)
+<div align="center">
 
-### Generated Experience
-![Generated Interactive Experience](screenshots/demo2.png)
+### Example Generated Experiences
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/demo1.png" alt="Generated Page Example 1" width="100%"/>
+      <br/>
+      <em>Generated Page - Removed Game Category</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/demo2.png" alt="Generated Interactive Experience 2" width="100%"/>
+      <br/>
+      <em>Generated Interactive Experience</em>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/demo3.png" alt="Generated Experience 3" width="100%"/>
+      <br/>
+      <em>Generated Experience</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/demo4.png" alt="Generated Experience 4" width="100%"/>
+      <br/>
+      <em>Generated Experience</em>
+    </td>
+  </tr>
+</table>
+
+</div>
 
 ##  How It Works
 
