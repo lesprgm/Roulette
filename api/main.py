@@ -192,9 +192,9 @@ PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "55") or 55)
 try:
     # Prefer the batch max if available for a fill-to target
     from api.prefetch import BATCH_MAX as _PF_BATCH_MAX
-    _DEFAULT_FILL_TO = int(_PF_BATCH_MAX or 75)
+    _DEFAULT_FILL_TO = max(int(_PF_BATCH_MAX or 75), PREFETCH_LOW_WATER)
 except Exception:
-    _DEFAULT_FILL_TO = 75
+    _DEFAULT_FILL_TO = max(75, PREFETCH_LOW_WATER)
 PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
 PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
 if os.getenv("PYTEST_CURRENT_TEST"):
@@ -253,11 +253,13 @@ def _prefill_prefetch_queue() -> None:
 
 
 def _prefetch_target_size(current: int) -> int:
+    cap = max(PREFETCH_FILL_TO, PREFETCH_LOW_WATER)
     if current <= 0:
-        return PREFETCH_FILL_TO
+        return cap
     if current <= PREFETCH_LOW_WATER:
-        return min(PREFETCH_FILL_TO, current + PREFETCH_REVIEW_BATCH)
-    return PREFETCH_FILL_TO
+        target = min(cap, current + PREFETCH_REVIEW_BATCH)
+        return max(target, PREFETCH_LOW_WATER)
+    return cap
 
 
 def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:

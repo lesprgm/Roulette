@@ -518,6 +518,7 @@ SNIPPET RUNTIME (NDW APIs):
 - Never chain NDW.* off other expressions (no `.NDW`). Call each NDW method as its own statement.
 - Canvas scenes must call ctx.clearRect(0, 0, ctx.width, ctx.height) each frame.
 - Declare all state objects/arrays before NDW.loop; do not redeclare inside the loop.
+- When you manually manage buffers, reference `canvas.width` and `canvas.height` directly for clearRect or resizing (e.g., `ctx.clearRect(0, 0, canvas.width, canvas.height);`).
 
 JS GUARDRAILS:
 - Wrap DOM queries inside DOMContentLoaded if scripts appear before the HTML (`document.addEventListener('DOMContentLoaded', () => { ... });`).
