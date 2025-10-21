@@ -4,8 +4,9 @@ import os
 import time
 import uuid
 import threading
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from contextlib import asynccontextmanager
@@ -17,6 +18,11 @@ from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 from api.auth import require_api_key, extract_client_key, keys_required
 from api import counter, dedupe
 from api import prefetch
+
+_REVIEW_QUEUE_LOCK = threading.Lock()
+_PREFETCH_REVIEW_QUEUE: Deque[Tuple[List[Path], int]] = deque()
+_REVIEW_WORKER: Optional[threading.Thread] = None
+_REVIEW_MAX_ATTEMPTS = 3
 
 try:
     from api.llm_client import (
@@ -231,7 +237,7 @@ def _prefill_prefetch_queue() -> None:
     i = 0
     while len(paths) < desired and failures < max_failures:
         seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
-        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=True)
+        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=False)
         if isinstance(page, dict) and page.get("error"):
             failures += 1
             log.warning("prefetch.prewarm: generation error '%s'", page.get("error"))
@@ -248,7 +254,7 @@ def _prefill_prefetch_queue() -> None:
         else:
             failures += 1
     if paths:
-        _review_prefetched_docs(paths)
+        _schedule_prefetch_review(list(paths))
     log.info("prefetch.prewarm: completed with %d documents (failures=%d)", len(paths), failures)
 
 
@@ -293,7 +299,7 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
             max_failures = max(5, target * 3)
             while prefetch.size() < target and failures < max_failures:
                 seed = (int(time.time() * 1000) + generated + failures) % 1_000_000_007
-                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=True)
+                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
                 if isinstance(page, dict) and page.get("error"):
                     failures += 1
                     log.warning(
@@ -321,10 +327,10 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                         prefetch.size(),
                     )
                 if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
-                    _review_prefetched_docs(pending_paths)
+                    _schedule_prefetch_review(list(pending_paths))
                     pending_paths.clear()
             if pending_paths:
-                _review_prefetched_docs(pending_paths)
+                _schedule_prefetch_review(list(pending_paths))
                 pending_paths.clear()
             updated_size = prefetch.size()
             if updated_size >= target:
@@ -348,12 +354,13 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
         pass
 
 
-def _review_prefetched_docs(paths: List[Path]) -> None:
+def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
+    retry: List[Path] = []
     if not paths:
-        return
+        return retry
     existing = [p for p in paths if p.exists()]
     if not existing:
-        return
+        return retry
     try:
         for chunk in _chunked(existing, PREFETCH_REVIEW_BATCH):
             docs: List[Dict[str, Any]] = []
@@ -374,6 +381,7 @@ def _review_prefetched_docs(paths: List[Path]) -> None:
                 continue
             reviews = run_compliance_batch(docs)
             if not isinstance(reviews, list):
+                retry.extend(valid_paths)
                 continue
             review_map: Dict[int, Dict[str, Any]] = {}
             for idx, item in enumerate(reviews):
@@ -387,6 +395,7 @@ def _review_prefetched_docs(paths: List[Path]) -> None:
             for idx, path in enumerate(valid_paths):
                 review = review_map.get(idx)
                 if not review:
+                    retry.append(path)
                     continue
                 if review.get("ok") is False:
                     log.info("prefetch.review: removing rejected doc file=%s", path.name)
@@ -405,12 +414,61 @@ def _review_prefetched_docs(paths: List[Path]) -> None:
                     path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
                 except Exception:
                     log.exception("prefetch.review: failed to persist corrected doc file=%s", path.name)
+                    retry.append(path)
                     continue
                 sig = dedupe.signature_for_doc(doc)
                 if sig:
                     dedupe.add(sig)
     except Exception:
         log.exception("prefetch.review: unexpected error")
+        retry.extend(existing)
+    return retry
+
+
+def _process_prefetch_review_queue() -> None:
+    global _REVIEW_WORKER
+    while True:
+        with _REVIEW_QUEUE_LOCK:
+            if not _PREFETCH_REVIEW_QUEUE:
+                _REVIEW_WORKER = None
+                return
+            batch_paths, attempt = _PREFETCH_REVIEW_QUEUE.popleft()
+        retry_paths: List[Path] = []
+        try:
+            retry_paths = _review_prefetched_docs(batch_paths)
+        except Exception:
+            log.exception("prefetch.review: worker failed on batch", exc_info=True)
+            retry_paths = batch_paths
+        if retry_paths and attempt + 1 < _REVIEW_MAX_ATTEMPTS:
+            try:
+                time.sleep(5)
+            except Exception:
+                pass
+            with _REVIEW_QUEUE_LOCK:
+                _PREFETCH_REVIEW_QUEUE.append((retry_paths, attempt + 1))
+        elif retry_paths:
+            log.warning(
+                "prefetch.review: giving up after %d attempts on %d docs",
+                attempt + 1,
+                len(retry_paths),
+            )
+
+
+def _schedule_prefetch_review(paths: List[Path]) -> None:
+    existing = [p for p in paths if p.exists()]
+    if not existing:
+        return
+    start_worker = False
+    worker: Optional[threading.Thread]
+    with _REVIEW_QUEUE_LOCK:
+        _PREFETCH_REVIEW_QUEUE.append((existing, 0))
+        worker = _REVIEW_WORKER
+        if not (worker and worker.is_alive()):
+            _REVIEW_WORKER = threading.Thread(target=_process_prefetch_review_queue, daemon=True)
+            worker = _REVIEW_WORKER
+            start_worker = True
+    if start_worker and worker:
+        worker.start()
 
 
 def _chunked(seq: List[Path], size: int) -> Iterable[List[Path]]:
@@ -870,7 +928,7 @@ def prefetch_fill(
             req.brief or "",
             seed=(int(time.time() * 1000) + i) % 1_000_000_007,
             user_key="prefetch",
-            run_review=True,
+            run_review=False,
         )
         if isinstance(page, dict) and page.get("error"):
             log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
@@ -879,7 +937,7 @@ def prefetch_fill(
         if path:
             new_paths.append(path)
     if new_paths:
-        _review_prefetched_docs(new_paths)
+        _schedule_prefetch_review(list(new_paths))
     queue_size = prefetch.size()
     added = max(queue_size - initial_size, 0)
 

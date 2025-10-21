@@ -296,21 +296,29 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
             return {"error": "Model generation failed"}
 
         skip_dedupe = bool(os.getenv("PYTEST_CURRENT_TEST"))
-        sig = "" if skip_dedupe else dedupe.signature_for_doc(doc)
-        if sig and dedupe.has(sig):
-            logging.info("Duplicate app signature encountered; retrying another generation (attempt %d)", attempts)
+        initial_sig = ""
+        if not skip_dedupe:
+            initial_sig = dedupe.signature_for_doc(doc)
+            if initial_sig and dedupe.has(initial_sig):
+                logging.info("Duplicate app signature encountered; retrying another generation (attempt %d)", attempts)
+                doc = None
+                seed_val = (seed_val + 7919) % 10_000_019
+                continue
+
+        js_error = _first_js_syntax_error(doc)
+        if js_error:
+            logging.warning("JS syntax validation failed before review (attempt %d): %s", attempts, js_error)
             doc = None
             seed_val = (seed_val + 7919) % 10_000_019
             continue
 
+        review_data: Optional[Dict[str, Any]] = None
         if run_review:
             review_data, corrected_doc, review_ok = _maybe_run_compliance_review(doc, brief_str, category_note)
             if corrected_doc is not None:
                 doc = corrected_doc
                 logging.info("Compliance review applied corrections to doc (attempt %d)", attempts)
             if review_data:
-                doc = dict(doc)
-                doc["review"] = review_data
                 logging.info(
                     "Compliance review summary ok=%s issues=%s",
                     review_data.get("ok"),
@@ -321,12 +329,15 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
                 doc = None
                 seed_val = (seed_val + 7919) % 10_000_019
                 continue
-        js_error = _first_js_syntax_error(doc)
-        if js_error:
-            logging.warning("JS syntax validation failed (attempt %d): %s", attempts, js_error)
-            doc = None
-            seed_val = (seed_val + 7919) % 10_000_019
-            continue
+            js_error = _first_js_syntax_error(doc)
+            if js_error:
+                logging.warning("JS syntax validation failed after review (attempt %d): %s", attempts, js_error)
+                doc = None
+                seed_val = (seed_val + 7919) % 10_000_019
+                continue
+            if review_data:
+                doc = dict(doc)
+                doc["review"] = review_data
         final_sig = ""
         if not skip_dedupe:
             final_sig = dedupe.signature_for_doc(doc)
@@ -846,7 +857,7 @@ def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> 
             GEMINI_REVIEW_ENDPOINT,
             params={"key": GEMINI_API_KEY},
             json=body,
-            timeout=min(LLM_TIMEOUT_SECS, 45),
+            timeout=max(LLM_TIMEOUT_SECS, 120),
         )
     except Exception as exc:
         logging.warning("Gemini review request error: %r", exc)
