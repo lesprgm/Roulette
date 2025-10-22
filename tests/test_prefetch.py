@@ -2,6 +2,8 @@ import json
 import os
 import time
 import importlib
+import threading
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -157,6 +159,52 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
     main_mod._top_up_prefetch("", min_fill=3)
 
     assert pf.size() >= 3
+
+
+def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
+    from api import main as main_mod
+
+    pf = isolated_prefetch
+    monkeypatch.setattr(main_mod, "prefetch", pf)
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+
+    main_mod.PREFETCH_DELAY_MS = 0
+    main_mod.PREFETCH_LOW_WATER = 0
+    main_mod.PREFETCH_FILL_TO = 4
+    main_mod.PREFETCH_REVIEW_BATCH = 2
+    main_mod.PREFETCH_MAX_WORKERS = 3
+
+    review_batches = []
+
+    def _capture_review(paths):
+        if paths:
+            review_batches.append(list(paths))
+
+    monkeypatch.setattr(main_mod, "_schedule_prefetch_review", _capture_review)
+
+    active = {"count": 0, "max": 0}
+    lock = threading.Lock()
+
+    def _llm(brief: str, seed: int, user_key=None, run_review=True):
+        with lock:
+            active["count"] += 1
+            if active["count"] > active["max"]:
+                active["max"] = active["count"]
+        time.sleep(0.01)
+        html = f"<div>parallel-{seed}-{uuid.uuid4().hex}</div>"
+        doc = _make_custom_doc(html)
+        with lock:
+            active["count"] -= 1
+        return doc
+
+    monkeypatch.setattr(main_mod, "llm_generate_page", _llm)
+
+    main_mod._top_up_prefetch("", min_fill=4)
+
+    assert pf.size() == 4
+    assert active["max"] > 1  # Parallelism observed
+    reviewed = sum(len(batch) for batch in review_batches)
+    assert reviewed == 4
 
 
 def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefetch):

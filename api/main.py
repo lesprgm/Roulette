@@ -4,9 +4,10 @@ import os
 import time
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Set, Tuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from contextlib import asynccontextmanager
@@ -109,6 +110,7 @@ async def add_request_id(request: Request, call_next):
     rid = str(uuid.uuid4())
     start = time.time()
     request.state.request_id = rid
+    response = None
     try:
         response = await call_next(request)
         return response
@@ -206,6 +208,12 @@ PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
 if os.getenv("PYTEST_CURRENT_TEST"):
     PREFETCH_DELAY_MS = 0
 PREFETCH_REVIEW_BATCH = int(os.getenv("PREFETCH_REVIEW_BATCH", "3") or 3)
+try:
+    PREFETCH_MAX_WORKERS = int(os.getenv("PREFETCH_MAX_WORKERS", "2") or 2)
+except Exception:
+    PREFETCH_MAX_WORKERS = 2
+if PREFETCH_MAX_WORKERS < 1:
+    PREFETCH_MAX_WORKERS = 1
 
 
 def _prefetch_topup_enabled() -> bool:
@@ -276,6 +284,11 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
         if llm_generate_page is None or not llm_status().get("has_token"):
             log.debug("prefetch.top_up: LLM unavailable; aborting")
             return
+        worker_limit = max(1, PREFETCH_MAX_WORKERS)
+
+        def _generate_once(seed: int) -> Dict[str, Any]:
+            return llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
+
         while True:
             current = prefetch.size()
             target = max(min_fill, _prefetch_target_size(current))
@@ -297,38 +310,98 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
             generated = 0
             failures = 0
             max_failures = max(5, target * 3)
-            while prefetch.size() < target and failures < max_failures:
-                seed = (int(time.time() * 1000) + generated + failures) % 1_000_000_007
-                page = llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
-                if isinstance(page, dict) and page.get("error"):
-                    failures += 1
-                    log.warning(
-                        "prefetch.top_up: generation returned error (attempt %d/%d): %s",
-                        failures,
-                        max_failures,
-                        page.get("error"),
-                    )
-                    try:
-                        time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
-                    except Exception:
-                        pass
-                    continue
-                path = prefetch.enqueue(page)
-                if path:
-                    generated += 1
-                    failures = 0
-                    pending_paths.append(path)
-                else:
-                    failures += 1
-                    log.debug(
-                        "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
-                        failures,
-                        max_failures,
-                        prefetch.size(),
-                    )
-                if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
-                    _schedule_prefetch_review(list(pending_paths))
-                    pending_paths.clear()
+            seed_offset = 0
+            with ThreadPoolExecutor(max_workers=worker_limit) as executor:
+                futures: Set[Any] = set()
+
+                def _submit_available_jobs() -> None:
+                    nonlocal seed_offset
+                    while (
+                        len(futures) < worker_limit
+                        and prefetch.size() + len(futures) < target
+                        and failures < max_failures
+                    ):
+                        seed = (int(time.time() * 1000) + generated + failures + seed_offset) % 1_000_000_007
+                        seed_offset += 1
+                        futures.add(executor.submit(_generate_once, seed))
+
+                _submit_available_jobs()
+                while (prefetch.size() < target and failures < max_failures) or futures:
+                    if not futures:
+                        _submit_available_jobs()
+                        if not futures:
+                            break
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        futures.discard(fut)
+                        try:
+                            page = fut.result()
+                        except Exception as exc:
+                            failures += 1
+                            log.warning(
+                                "prefetch.top_up: generation worker error (attempt %d/%d): %r",
+                                failures,
+                                max_failures,
+                                exc,
+                            )
+                            try:
+                                time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
+                            except Exception:
+                                pass
+                            continue
+                        if not isinstance(page, dict):
+                            failures += 1
+                            log.warning(
+                                "prefetch.top_up: generation returned non-dict payload (attempt %d/%d)",
+                                failures,
+                                max_failures,
+                            )
+                            continue
+                        if page.get("error"):
+                            failures += 1
+                            log.warning(
+                                "prefetch.top_up: generation returned error (attempt %d/%d): %s",
+                                failures,
+                                max_failures,
+                                page.get("error"),
+                            )
+                            try:
+                                time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
+                            except Exception:
+                                pass
+                            continue
+                        if prefetch.size() >= target:
+                            log.debug(
+                                "prefetch.top_up: discarding generated doc because target already met (queue_size=%d target=%d)",
+                                prefetch.size(),
+                                target,
+                            )
+                            continue
+                        path = prefetch.enqueue(page)
+                        if path:
+                            generated += 1
+                            failures = 0
+                            pending_paths.append(path)
+                            if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
+                                _schedule_prefetch_review(list(pending_paths))
+                                pending_paths.clear()
+                        else:
+                            failures += 1
+                            log.debug(
+                                "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
+                                failures,
+                                max_failures,
+                                prefetch.size(),
+                            )
+                        if prefetch.size() >= target and failures < max_failures:
+                            # Allow outstanding workers to finish but do not enqueue more jobs
+                            continue
+                    if failures >= max_failures:
+                        for fut in futures:
+                            fut.cancel()
+                        futures.clear()
+                        break
+                    _submit_available_jobs()
             if pending_paths:
                 _schedule_prefetch_review(list(pending_paths))
                 pending_paths.clear()
@@ -455,6 +528,7 @@ def _process_prefetch_review_queue() -> None:
 
 
 def _schedule_prefetch_review(paths: List[Path]) -> None:
+    global _REVIEW_WORKER
     existing = [p for p in paths if p.exists()]
     if not existing:
         return
