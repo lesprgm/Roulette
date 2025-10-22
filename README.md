@@ -10,7 +10,7 @@ Non-Deterministic Website is an experimental platform that leverages large langu
 -  **Complete web pages** with layouts, styling, and interactive elements  
 -  **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
-The system ensures variety through intelligent deduplication, category rotation, and prompt engineering—so you'll never see the same experience twice.
+The system ensures variety through intelligent deduplication, category rotation, and prompt engineering—so you'll never see the same experience twice. Optional compliance review ensures generated content meets safety and accessibility standards.
 
 ##  Screenshots
 
@@ -339,6 +339,7 @@ Traditional websites show the same content every time. This project explores the
 
 5. **Quality Guardrails**
    - Schema validation catches malformed responses
+   - Optional compliance review via Gemini API for safety and accessibility checks
    - Runtime safety checks (canvas creation, error overlays)
    - Comprehensive test coverage
 
