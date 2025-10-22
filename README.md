@@ -62,17 +62,20 @@ graph TD
     H -->|Fail| J[Fallback to Groq API]
     J --> I
     I --> K[Normalize & Validate]
-    K --> L{Check Deduplication}
-    L -->|Unique| M[Render in Browser]
-    L -->|Duplicate| E
-    M --> N[Show Generated Experience]
-    N --> O[Prefetch Refills Queue]
-    O --> C
-    D --> M
+    K --> L{Compliance Review}
+    L -->|Pass/Corrected| M{Check Deduplication}
+    L -->|Rejected| E
+    M -->|Unique| N[Render in Browser]
+    M -->|Duplicate| E
+    N --> O[Show Generated Experience]
+    O --> P[Prefetch Refills Queue]
+    P --> C
+    D --> N
     
     style A fill:#e1f5ff
-    style N fill:#d4edda
-    style L fill:#fff3cd
+    style O fill:#d4edda
+    style L fill:#ffeaa7
+    style M fill:#fff3cd
     style H fill:#f8d7da
 ```
 
