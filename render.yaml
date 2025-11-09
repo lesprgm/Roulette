@@ -54,7 +54,9 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: PREFETCH_PREWARM_COUNT
-        value: 30
+        value: 0
+      - key: PREFETCH_TOPUP_ENABLED
+        value: "0"
       - key: PREFETCH_FILL_TO
         value: 75
       - key: PREFETCH_LOW_WATER
