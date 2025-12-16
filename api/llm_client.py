@@ -162,9 +162,9 @@ def _first_js_syntax_error(doc: Dict[str, Any]) -> Optional[str]:
     return None
 
 try:
-    TEMPERATURE = float(os.getenv("TEMPERATURE", "1.35"))
+    TEMPERATURE = float(os.getenv("TEMPERATURE", "1.5"))
 except Exception:
-    TEMPERATURE = 1.35
+    TEMPERATURE = 1.5
 
 # Token and timeout configuration
 # Defaults favor longer generations; adjust via .env if provider rejects
@@ -359,13 +359,16 @@ def _call_groq_for_page(brief: str, seed: int, category_note: str = "") -> Optio
     temperature = TEMPERATURE
 
     prompt = f"""
+=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
+{category_note}
+You MUST build ONLY the category specified above. Do NOT build any other category.
+=======================================================
+
 You generate exactly one self-contained interactive web app per request.
 Output valid JSON only. No backticks. No explanations.
 
 Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
-
-{category_note}
 
 {_PAGE_SHAPE_HINT}
 """
@@ -488,11 +491,19 @@ FORMATS (prefer #2 for websites/quizzes; only use snippets/components when absol
 2. {"kind":"full_page_html","html":"<!doctype html>..."}  ← preferred shape; include complete <head>, <body>, semantic sections, and inline CSS/JS.
 3. {"components":[{"id":"hero","type":"custom","props":{"html":"...","height":360}}]}  ← only when multiple iframe-style embeds are unavoidable; ensure each component supplies props.html and props.height (px number).
 
+DESIGN QUALITY (MANDATORY — every output must feel premium):
+- Use a cohesive color palette (3-5 colors max, harmonious). Avoid default browser grays.
+- Apply modern CSS: border-radius: 12px+ on cards/buttons, subtle box-shadows, gradient backgrounds.
+- Use generous whitespace (padding: 24px+, margin between sections, breathing room).
+- Add micro-animations: hover effects (scale, color shift), smooth transitions (0.2s ease), subtle motion.
+- Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
+- Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
+- Color contrast: always pair dark text with light backgrounds (or vice versa). Test readability.
+
 GENERAL RULES:
 - No external resources (scripts/fonts/images/fetch); inline all CSS/JS.
 - Output HTML without stray prefixes; host injects it directly.
-- Provide clear instructions in the HTML (outside canvas) and rotate categories so each run feels different.
-- Maintain high contrast between foreground text and backgrounds (e.g., do not leave white text on white/pale backgrounds; always pair light backgrounds with dark text and vice versa).
+- Provide clear instructions in the HTML (outside canvas).
 - Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon). Do not reuse the same navy blueprint; treat the sample layout as structure only.
 - Use the provided examples as inspiration and feel free to remix their spirit, but avoid repeating the exact same names or layouts verbatim run after run.
 - Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
@@ -537,29 +548,6 @@ JS GUARDRAILS:
 - Avoid setInterval/setTimeout for animation; use NDW.loop and the provided `dt`.
 - Remove unused listeners on reset paths and ensure buttons update text without referencing undefined nodes.
 
-CATEGORY ROTATION — choose exactly one (avoid repeating the same category twice):
-1. INTERACTIVE ENTERTAINMENT / WEB TOYS (Novelty/Experimental):
-    - Focus on playful, unexpected interactions that delight users.
-    - Example inspirations (remix as you like): gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers, mirror maze click escapes, bubble pop orchestras, neon vine twisters, marshmallow catapults, echo button choirs, kaleidoscope cursor trails.
-    - Use expressive HTML/CSS and light JS—no physics engines. Think whimsy, surprise, and visual flair over utility.
-2. UTILITY MICRO-TOOLS (Productivity):
-    - Single-purpose web apps that solve a focused problem: pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals.
-    - Build clear layouts with input fields, results panels, and helpful microcopy; ensure accessibility for forms and buttons.
-    - Highlight “next steps” or tips so users feel guided through the workflow.
-    - Avoid relying solely on a canvas; craft a complete webpage layout.
-3. GENERATIVE / RANDOMIZER SITES:
-    - Produce random or algorithmic content (feel free to riff on these examples): story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers.
-    - Provide controls for refreshing or customizing the output (buttons, toggles) and showcase the generated content prominently.
-4. INTERACTIVE ART (canvas-driven):
-    - Use NDW.makeCanvas({fullScreen:true}); initialize particle arrays before the loop with NDW.utils.rng(seed).
-    - Example: const rand = NDW.utils.rng(seed); const x = rand();
-    - Ensure visible motion within 1 second. Pointer handlers live outside NDW.loop; read NDW.pointer inside. Think prism cascade skylines, nebula ink tides, starlit bloom ribbons, chroma wind tunnels, velvet glitch tapestries, lumen ripple seas for motion inspiration.
-    - Add an HTML caption describing the concept or interaction.
-5. QUIZZES / LEARNING CARDS:
-    - Use semantic HTML sections with question cards, labeled inputs (radio/checkbox/text), progress indicators, and CTA buttons.
-    - Provide clear instructions and a scoring/reveal mechanic using plain JS DOM updates (no canvas, no NDW.makeCanvas). Consider campus lore lightning rounds, mythic creature deducers, constellation spotters, onboarding checklists, cozy tea trivia duels, museum mystery matchups.
-    - Prefer FORMAT #2 or #1 with rich HTML structure; ensure accessibility with labels and logical grouping.
-
 CONTROLS & INPUT REFERENCE (canvas categories only):
 - Keyboard discrete: NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
 - Keyboard continuous: if (NDW.isDown('ArrowLeft')) x -= speed * (dt/1000);
@@ -569,13 +557,15 @@ CONTROLS & INPUT REFERENCE (canvas categories only):
 DO NOT:
 - Do not use inline event handlers (`onclick=""`, etc.) or global window timers.
 - Do not reference external fonts, CDNs, or fetch remote data.
-- Do not leave empty containers (e.g., an `#ndw-app` with no children) or placeholder text like “TODO”.
+- Do not leave empty containers (e.g., an `#ndw-app` with no children) or placeholder text like "TODO".
 - Do not create duplicate IDs or register multiple identical NDW.onPointer/onKey handlers inside loops.
+- Do not build a different category than the one explicitly assigned above. Follow the CATEGORY ASSIGNMENT exactly.
 
 SELF QA BEFORE RETURNING:
 1. Pretend to click every button/toggle and ensure the described behaviour occurs; fix mismatched selectors.
 2. Verify headings, instructions, and controls are visible on first paint (no hidden `display:none` wrappers).
 3. For quizzes/tools, ensure result text updates and reset flows always set meaningful copy (never `undefined`).
+4. Check that colors are harmonious and contrast is readable. No white-on-white or black-on-black.
 
 CANONICAL CANVAS TEMPLATE:
 const stage = document.createElement('section');
@@ -606,22 +596,98 @@ OUTPUT CHECKLIST:
 ✓ Valid JSON in format #1, #2, or #3
 ✓ Title present (if snippet) and used; or omit cleanly
 ✓ All vars initialized; listeners bound before use
-✓ Canvas flows (categories 1 & 3 only): clearRect each frame, use dt parameter, no manual timers
+✓ Canvas flows: clearRect each frame, use dt parameter, no manual timers
 ✓ Websites/Quizzes: multi-section DOM layout, accessible labels, no canvas usage
 ✓ No undefined refs or missing elements
+✓ Premium design: rounded corners, shadows, gradients, micro-animations
 """
 
 _CATEGORY_ROTATION_NOTES = [
     ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
-     "CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy. Focus on playful, unexpected interactions (gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers, mirror maze click escapes, bubble pop orchestras, neon vine twisters, marshmallow catapults, echo button choirs, kaleidoscope cursor trails). Use these ideas as flavor prompts—remix or combine them, but avoid carbon-copying the exact name/layout back to back. Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."),
+     """CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy.
+     
+Focus on playful, unexpected interactions that delight users. Example inspirations (remix freely):
+- gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers
+- mirror maze click escapes, bubble pop orchestras, neon vine twisters
+- marshmallow catapults, echo button choirs, kaleidoscope cursor trails
+- confetti explosion buttons, rainbow trail painters, mood ring simulators
+- click-to-bloom flower gardens, bouncing ball physics toys, pixel pet companions
+- sound board mixers, emoji rain makers, firework launchers
+- color palette spinners, particle fountain creators, hypnotic spiral generators
+- fidget spinner simulators, satisfying click counters, zen sand gardens
+- bubble wrap poppers, domino chain reactions, magnetic poetry boards
+
+Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."""),
+    
     ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
-     "CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task (pet age dashboards, is-it-Friday checkers, commute mood logs, meeting note distillers, micro gratitude journals). You can revisit similar problem spaces, but vary the branding, copy, and UI details so repeated runs feel distinct. Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips—avoid canvas-only layouts and keep it practical."),
+     """CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task.
+     
+Example inspirations (remix freely):
+- pet age dashboards, is-it-Friday checkers, commute mood logs
+- meeting note distillers, micro gratitude journals, water intake trackers
+- screen time estimators, caffeine half-life calculators, sleep debt trackers
+- tip calculators with splitting, unit converters, timezone difference finders
+- countdown timers to events, reading time estimators, word count analyzers
+- password strength checkers, color contrast validators, aspect ratio calculators
+- grocery list makers, expense splitters, savings goal trackers
+- habit streak counters, daily affirmation displays, focus session timers
+- bookmark organizers, note-to-self savers, quick decision makers (yes/no wheels)
+
+Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips."""),
+    
     ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
-     "CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience that produces fresh content (story spark forges, NPC personality builders, cozy cocktail namers, doodle idea decks, playlist vibe spinners, random compliment generators, outrageous excuse oracles, travel daydream decks, micro poem whisperers). Feel free to riff on these examples, but rotate the theme, framing, and output tone so consecutive apps don’t feel identical. Include controls to refresh or customize output and keep the generative theme central."),
+     """CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience.
+     
+Example inspirations (remix freely):
+- story spark forges, NPC personality builders, cozy cocktail namers
+- doodle idea decks, playlist vibe spinners, random compliment generators
+- outrageous excuse oracles, travel daydream decks, micro poem whisperers
+- band name generators, startup idea mashups, fantasy character creators
+- movie plot twists, conspiracy theory generators, fake product inventors
+- superhero power combiners, alien species designers, magical spell crafters
+- fortune cookie writers, horoscope remixers, dream interpretation oracles
+- weird fact dispensers, shower thought generators, hypothetical scenario builders
+- recipe fusion creators, workout combo generators, outfit inspiration spinners
+- date idea randomizers, icebreaker question decks, would-you-rather generators
+
+Include controls to refresh or customize output and keep the generative theme central."""),
+    
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
-     "CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas. Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second, and read NDW.pointer inside the loop while handlers stay outside. Draw inspiration from prism cascade skylines, nebula ink tides, starlit bloom ribbons, chroma wind tunnels, velvet glitch tapestries, lumen ripple seas—remix palettes and motion patterns so repeat generations stay varied. Include an HTML caption describing the piece."),
+     """CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas.
+     
+Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second.
+Read NDW.pointer inside the loop while handlers stay outside.
+
+Example inspirations (remix palettes and motion patterns):
+- prism cascade skylines, nebula ink tides, starlit bloom ribbons
+- chroma wind tunnels, velvet glitch tapestries, lumen ripple seas
+- aurora borealis waves, fractal tree growers, particle swarm dances
+- geometric shape morphers, color field blenders, noise flow visualizers
+- constellation connectors, rain drop simulators, firefly jar scenes
+- ocean wave generators, smoke trail painters, crystal growth animations
+- galaxy spiral spinners, mandala pattern drawers, sound wave visualizers
+- terrain heightmap explorers, voronoi cell mosaics, reaction diffusion patterns
+- gravity well simulators, magnetic field lines, electromagnetic wave pulses
+
+Include an HTML caption describing the piece."""),
+    
     ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
-     "CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards using semantic sections, labeled inputs, progress indicators, and reveal/score mechanics (campus lore lightning rounds, mythic creature deducers, constellation spotters, onboarding checklists, cozy tea trivia duels, museum mystery matchups). You can revisit similar trivia genres, but change the scenario, question text, and styling so each iteration feels new. Prefer rich HTML layouts—no canvas—and keep everything accessible."),
+     """CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards.
+     
+Use semantic sections, labeled inputs, progress indicators, and reveal/score mechanics.
+
+Example inspirations (remix freely):
+- campus lore lightning rounds, mythic creature deducers, constellation spotters
+- onboarding checklists, cozy tea trivia duels, museum mystery matchups
+- flag identification quizzes, capital city challengers, periodic table testers
+- movie quote guessers, song lyric completers, famous painting matchers
+- animal sound identifiers, food origin trackers, language phrase learners
+- historical event timelines, geography boundary drawers, space fact verifiers
+- coding concept flash cards, math puzzle solvers, vocabulary builders
+- personality type sorters, career aptitude matchers, learning style finders
+- music genre identifiers, art movement classifiers, architectural style spotters
+
+Prefer rich HTML layouts—no canvas—and keep everything accessible."""),
 ]
 
 _category_lock = threading.Lock()
@@ -654,13 +720,16 @@ def _call_openrouter_for_page(brief: str, seed: int, category_note: str = "") ->
     temperature = TEMPERATURE
 
     prompt = f"""
+=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
+{category_note}
+You MUST build ONLY the category specified above. Do NOT build any other category.
+=======================================================
+
 You generate exactly one self-contained interactive web app per request.
 Output valid JSON only. No backticks. No explanations.
 
 Brief (may be empty → you choose a theme): {brief}
 Seed: {seed}
-
-{category_note}
 
 {_PAGE_SHAPE_HINT}
 """

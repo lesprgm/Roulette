@@ -1,75 +1,117 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Non-Deterministic Website</title>
+
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700;800&display=swap"
+    rel="stylesheet">
+
   <link rel="stylesheet" href="/static/tailwind.css" />
   <link rel="stylesheet" href="/static/css/style.css" />
+
+  <!-- GSAP -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-C6E3TKE7QK"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
+    function gtag() { dataLayer.push(arguments); }
     gtag("js", new Date());
     gtag("config", "G-C6E3TKE7QK");
   </script>
-  <style>
-    :root{
-      --ndw-pop1:#facc15; /* amber-400 */
-      --ndw-pop2:#fb923c; /* orange-400 */
-      --ndw-pop3:#7c3aed; /* violet-600 */
-      --ndw-pop4:#0ea5e9; /* sky-500 */
-      --ndw-bg:#0b1220;   /* deep blue */
-    }
-    html,body{height:100%}
-  body{ color:#0f172a; background: linear-gradient(150deg, #120827 0%, #1a1033 40%, #020617 100%); }
-    /* Stage centers the hero without affecting other sections */
-    .ndw-stage{ position:relative; min-height:48vh; display:grid; place-items:center; overflow:hidden; }
-    .ndw-stage::before{ content:""; position:absolute; inset:-25%; background:none; }
-    .ndw-stage::after{ content:""; position:absolute; inset:18%; border:1px solid rgba(148,163,184,0.08); border-radius:40px; opacity:0.25; }
-    /* Animated background removed for cleaner look */
-    .ndw-bg,
-    .ndw-glow,
-    .ndw-blob { display:none; }
-    /* Minimal hero text */
-    .ndw-hero{ position:relative; z-index:2; text-align:center; padding:2rem 1.7rem; backdrop-filter:blur(10px); background:linear-gradient(155deg, rgba(250,250,255,0.88) 0%, rgba(234,236,255,0.82) 60%, rgba(213,219,248,0.88) 100%); border-radius:30px; box-shadow:0 50px 90px rgba(12,18,36,0.45); width:min(460px,92vw); margin:0 auto; border:1px solid rgba(148,163,184,0.25); color:#111827; }
-    .ndw-title{ margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; font-size:clamp(2.5rem,6vw,3.7rem); line-height:.9; letter-spacing:.04em; text-shadow:0 12px 24px rgba(148,163,184,0.35); color:#0f172a; }
-    .ndw-accent{ background:linear-gradient(130deg,var(--ndw-pop2),var(--ndw-pop3),var(--ndw-pop4)); -webkit-background-clip:text; background-clip:text; color:transparent; opacity:0.95; }
-    @media (prefers-reduced-motion: reduce){ }
-    /* Fallback gradient if Tailwind fails to load */
-    body.ndw-base{
-      background: linear-gradient(135deg, #2e1065, #701a75 45%, #3b0764);
-      color:#ffffff;
-    }
-  </style>
 </head>
 
-<body class="min-h-screen bg-gradient-to-br from-purple-950 via-fuchsia-900 to-violet-900 ndw-base" data-api-key="">
-  <main id="appMain" class="relative w-full min-h-screen px-6 md:px-10 py-16 md:py-20">
-  <section class="relative text-center overflow-hidden flex flex-col items-center justify-center min-h-[70vh] text-white" data-role="hero">
-        <div class="ndw-stage w-full">
-        <div class="ndw-hero">
-          <h1 class="ndw-title"><span class="ndw-accent">Roulette</span></h1>
-          <p class="mt-3 text-base md:text-lg text-slate-600">Random websites with every click.</p>
-        </div>
-      </div>
+<body class="ndw-base" data-api-key="">
+  <!-- Noise Overlay -->
+  <div class="noise-overlay"></div>
 
+  <!-- Cursor Glow -->
+  <div id="cursor-glow"></div>
+
+  <!-- Dynamic Background Blobs -->
+  <div class="blob-cont">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <main id="appMain" class="w-full min-h-screen">
+    <section class="hero-wrap" data-role="hero">
+      <div class="container">
+        <h1 class="hero-title" data-text="Roulette">
+          <span class="hero-text">
+            <span class="letter">R</span><span class="letter">o</span><span class="letter">u</span><span
+              class="letter">l</span><span class="letter">e</span><span class="letter">t</span><span
+              class="letter">t</span><span class="letter">e</span>
+          </span>
+        </h1>
+        <p class="hero-sub">Random websites with every click.</p>
+
+        <!-- Placeholder for standard button if JS fails -->
+        <div class="mt-8 hero-btn-wrap" style="opacity:0"></div>
+      </div>
     </section>
   </main>
 
-  <!-- Load compiled TypeScript as ES modules (required because output contains export markers) -->
+  <!-- Load compiled TypeScript as ES modules -->
   <script type="module" src="/static/ts-build/ndw.js"></script>
   <script type="module" src="/static/ts-build/app.js"></script>
+
   <script>
-    (function(){
-      var glow = document.getElementById('ndw-glow');
-      if(!glow) return;
-      var x = window.innerWidth/2, y = window.innerHeight/3, rafId = 0;
-      function onMove(e){ x = e.clientX; y = e.clientY; if(!rafId){ rafId = requestAnimationFrame(tick); } }
-      function tick(){ glow.style.left = x + 'px'; glow.style.top = y + 'px'; rafId = 0; }
-      window.addEventListener('pointermove', onMove, { passive: true });
+    (function () {
+      // ========== GSAP Timelines ==========
+      const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
+
+      // Staggered Letter Animation
+      tl.from(".letter", {
+        y: 80,
+        opacity: 0,
+        rotateX: -90,
+        stagger: 0.05,
+        duration: 1,
+        ease: "back.out(1.7)"
+      })
+        .from(".hero-sub", {
+          y: 20,
+          opacity: 0,
+          duration: 0.8,
+        }, "-=0.5");
+
+      // ========== Ambient Blob Animation ==========
+      function moveBlob(target) {
+        gsap.to(target, {
+          x: "random(-150, 150)",
+          y: "random(-150, 150)",
+          scale: "random(0.85, 1.15)",
+          rotation: "random(-20, 20)",
+          duration: "random(12, 22)",
+          ease: "sine.inOut",
+          onComplete: () => moveBlob(target)
+        });
+      }
+      document.querySelectorAll('.blob').forEach(blob => moveBlob(blob));
+
+      // ========== Cursor Glow Tracking ==========
+      const cursorGlow = document.getElementById('cursor-glow');
+      if (cursorGlow) {
+        const xTo = gsap.quickTo(cursorGlow, "left", { duration: 0.6, ease: "power3" });
+        const yTo = gsap.quickTo(cursorGlow, "top", { duration: 0.6, ease: "power3" });
+
+        window.addEventListener('pointermove', (e) => {
+          xTo(e.clientX);
+          yTo(e.clientY);
+        }, { passive: true });
+      }
     })();
   </script>
 </body>
+
 </html>
