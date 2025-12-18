@@ -57,7 +57,7 @@ Operational tips:
 
 - **Category rotation** – `_CATEGORY_ROTATION_NOTES` defines five prompts (Interactive Entertainment, Utility Micro-Tools, Generative Randomizers, Interactive Art, Quizzes/Learning Cards). `_next_category_note` uses a per-user ring buffer with thread locking so each caller walks the themes in order, keeping output varied even across concurrent requests.
 - **Provider order & fallbacks**
-  1. Gemini (`GEMINI_GENERATION_MODEL`). The primary generation model.
+  1. Gemini (`GEMINI_GENERATION_MODEL`). The primary generation model. **Multimodal Input**: Sends the `static/design_matrix.jpg` image along with the text prompt to provide visual design context (Vision Grounding).
   2. OpenRouter (`OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL_1`, `_2`). Retries are rate-limited using exponential backoff (`OPENROUTER_BACKOFF_*`).
   3. Groq (`GROQ_MODEL`, `GROQ_FALLBACK_MODEL`). Requests enforce `LLM_TIMEOUT_SECS`, `LLM_MAX_TOKENS`, and provider-specific JSON output hints.
   4. If all providers fail, a `{"error": "Model generation failed"}` payload is returned; the HTTP status remains 200 so the front-end can display a friendly message.
@@ -127,16 +127,27 @@ The TypeScript app (`static/ts-src/app.ts`) receives the API response, mounts th
 
 ---
 
-### 9. Local Development Tips
+---
 
-1. `uvicorn api.main:app --reload` – hot-reloads API changes; prefetch delay is disabled automatically under pytest, but not during local manual runs.
-2. `npm install && npm run dev` – recompiles the UI (if using the TypeScript frontend) and proxies to the API.
-3. ENV hygiene – copy `.env.example` (if available) or create `.env` with the variables described above. Avoid committing live API keys.
-4. Tests – `pytest` uses stubbed LLM responses, disables prefetch top-up, and relies on temporary directories for queue/dedupe files.
+### 11. Vision Grounding & Design Matrix
+
+To achieve "Premium Aesthetics" without massive text prompts, the system uses **Vision Grounding**:
+- **Design Matrix**: A single JPEG image (`static/design_matrix.jpg`) containing 4 visual quadrants: **Professional**, **Playful**, **Brutalist**, and **Cozy**.
+- **The "Color Universe"**: The image includes a 24-color palette strip that the LLM samples from to ensure vibrant, non-repetitive designs.
+- **Multimodal Prompting**: Gemini 1.5+ receives this image in its context window. The text prompt instructs the model to "vibe-check" the brief and select the matching quadrant for its design language.
+- **Token Optimization**: Moving design rules into an image saves ~1,500 text tokens per request, as image input costs a flat 258 tokens.
+
+### 12. Interactive-First Hierarchy
+
+The system follows a strict **Interactive-First** design philosophy to maximize user engagement:
+- **Compact Header**: Titles and category labels are rendered in a small, centered, top-aligned header.
+- **The "Main Stage"**: The interactive portion of the app (`#ndw-content`) must be the largest visual element on first paint, occupying at least 50% of the viewport height.
+- **Zero Scroll**: The primary call-to-action or interaction point must be visible above the fold on standard desktop and mobile resolutions.
 
 ---
 
-### 10. Quick Reference for New Contributors
+### 13. Local Development Tips
+...
 
 - **Main entry points** – `api/main.py` (FastAPI app), `api/llm_client.py` (generation + compliance), `static/ts-src/app.ts` (frontend).
 - **Background jobs** – Prefetch thread (daemon) + on-demand background tasks via FastAPI’s `BackgroundTasks`.

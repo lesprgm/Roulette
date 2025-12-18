@@ -10,7 +10,7 @@ Non-Deterministic Website is an experimental platform that leverages large langu
 -  **Complete web pages** with layouts, styling, and interactive elements  
 -  **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
-The system ensures variety through intelligent deduplication, category rotation, and prompt engineering—so you'll never see the same experience twice. Optional compliance review ensures generated content meets safety and accessibility standards.
+The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
 
 ##  Screenshots
 
@@ -57,9 +57,9 @@ graph TD
     C -->|Empty| E[Request New Generation]
     E --> F[FastAPI Backend]
     F --> G[LLM Orchestrator]
-    F --> G[LLM Orchestrator]
     G --> H{Try Gemini}
-    H -->|Success| I[Receive JSON Response]
+    H -->|Vision Input| H2[Design Matrix Image]
+    H2 --> I[Receive JSON Response]
     H -->|Fail| J{Try OpenRouter}
     J -->|Success| I
     J -->|Fail| K[Fallback to Groq API]
@@ -80,6 +80,7 @@ graph TD
     style L fill:#ffeaa7
     style M fill:#fff3cd
     style H fill:#f8d7da
+    style H2 fill:#e1f5ff
 ```
 
 ### Architecture Components
@@ -315,8 +316,9 @@ For other platforms (Heroku, Railway, Fly.io, etc.):
 Traditional websites show the same content every time. This project explores the opposite: **what if every visit generated something new?** By leveraging AI, we create:
 
 - **Infinite variety** - No two generations are identical
+- **Vision-Grounded Aesthetics** - Uses a visual Design Matrix to choose from Professional, Playful, Brutalist, or Cozy vibes
+- **Interactive-First** - Apps are the centerpiece; titles are compact and centered to avoid scroll fatigue
 - **Creative surprise** - Unexpected combinations and themes
-- **Interactive experiences** - Games, simulations, and dynamic content
 - **Instant gratification** - Prefetching makes it feel instantaneous
 
 ### Key Technical Decisions

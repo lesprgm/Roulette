@@ -362,9 +362,42 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
     return doc or {"error": "Model generation failed"}
 
 
+def _get_design_matrix_b64() -> Optional[str]:
+    """Load the design matrix blueprint and return base64 string."""
+    # Use the stable repo path
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "design_matrix.jpg")
+    if not os.path.exists(path):
+        # Fallback to any file in brain dir if name changed, or return None
+        return None
+    try:
+        import base64
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        logging.warning("Failed to encode design matrix: %r", e)
+        return None
+
+
 def _call_gemini_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call Gemini for page generation."""
+    matrix_b64 = _get_design_matrix_b64()
+    
+    vision_note = ""
+    parts = []
+    
+    if matrix_b64:
+        vision_note = """
+=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
+1. Analyze the attached 'UI Design Matrix'. 
+2. Classify the brief into one of the 4 vibes (Professional, Playful, Brutalist, Cozy).
+3. Extract colors from the 'Color Universe' strip.
+4. Build the app matching the aesthetics of your selected vibe.
+==============================================
+"""
+        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+
     prompt = f"""
+{vision_note}
 === MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
 {category_note}
 You MUST build ONLY the category specified above. Do NOT build any other category.
@@ -373,17 +406,18 @@ You MUST build ONLY the category specified above. Do NOT build any other categor
 You generate exactly one self-contained interactive web app per request.
 Output valid JSON only. No backticks. No explanations.
 
-Brief (may be empty → you choose a theme): {brief}
+Brief: {brief}
 Seed: {seed}
 
 {_PAGE_SHAPE_HINT}
 """
+    parts.insert(0, {"text": prompt})
     
     body = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": TEMPERATURE,
-            "maxOutputTokens": 60000, # Large buffer for full pages
+            "maxOutputTokens": 60000, 
             "responseMimeType": "application/json",
         },
     }
@@ -583,30 +617,38 @@ GENERAL RULES:
 - No external resources (scripts/fonts/images/fetch); inline all CSS/JS. Exception: GSAP 3.12 is available globally as `window.gsap`. Use it for smooth animations.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas).
-- Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon). Do not reuse the same navy blueprint; treat the sample layout as structure only.
+- Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon).
 - Use the provided examples as inspiration and feel free to remix their spirit, but avoid repeating the exact same names or layouts verbatim run after run.
 - Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
 - Every interactive element referenced in JS must already exist in the DOM with matching IDs/classes before scripts run.
 
-BASE HTML BLUEPRINT (adapt, do not return empty sections):
+LAYOUT STRATEGY (CHOOSE ONE BEST FIT FOR THE CONCEPT):
+Do not default to a centered card every time.
+A) CONTENT-FIRST (Preferred): Large interactive area in the center, minimal header at the top.
+B) SPLIT SCREEN: Best for "Input -> Output" tools (e.g., config on left, live preview on right).
+C) BENTO GRID: Best for dashboards or multi-step tools. (Grid of cards).
+D) FULL PAGE HERO: Best for immersive art or experiences. (Content spans full viewport).
+
+HIERARCHY & IMPACT (MANDATORY):
+- The INTERACTIVE APP is the star. It must be visible immediately.
+- Header (Title/Category) must be COMPACT and CENTERED at the top. Never use a giant splash screen/hero that pushes the content below the fold.
+- Focus on "Visual Evidence": If it's a calculator, show a dial. If it's a generator, show a beautifully styled card.
+
+BASE HTML BLUEPRINT (ADAPT LAYOUT):
 <main id="ndw-shell" class="min-h-screen text-slate-900" style="--bg-100:#f8fafc;--bg-300:#e0f2fe;--accent-500:#2563eb;--text-900:#0f172a;background:linear-gradient(135deg,var(--bg-100),var(--bg-300));">
-  <section class="mx-auto max-w-4xl px-6 py-12">
-    <div class="rounded-3xl bg-white/85 backdrop-blur shadow-xl ring-1 ring-slate-200/70 p-8">
-      <header class="mb-8 space-y-3 text-center text-slate-900">
-        <p class="text-xs uppercase tracking-[0.3em] text-[color:var(--accent-500)]">[[category label here]]</p>
-        <h1 class="text-4xl font-bold">[[hero headline]]</h1>
-        <p class="text-slate-600">[[one-sentence instructions]]</p>
-      </header>
-      <div id="ndw-instructions" class="mb-6 rounded-2xl bg-slate-100/90 p-4 text-sm leading-relaxed text-slate-600">
-        [[step-by-step guidance or flavor text]]
-      </div>
-      <div id="ndw-content" class="space-y-6 text-slate-700">
-        [[dynamic cards, tools, or canvas container live here]]
-      </div>
+  <!-- Compact Centered Header -->
+  <header class="pt-8 pb-4 text-center">
+    <p class="text-[10px] uppercase tracking-[0.4em] text-[color:var(--accent-500)]">[[category]]</p>
+    <h1 class="text-xl font-semibold">[[headline]]</h1>
+  </header>
+
+  <section class="mx-auto max-w-6xl px-4 pb-12"> 
+    <div id="ndw-content" class="min-h-[50vh] transition-all duration-500">
+        [[YOUR UNIQUE INTERACTIVE LAYOUT HERE]]
     </div>
   </section>
 </main>
-NOTE: Replace the CSS variables in the style attribute above to match the chosen palette; the light gradient shown is just an example.
+NOTE: Replace CSS variables using the 'Color Universe' from the Matrix.
 
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
@@ -679,13 +721,16 @@ OUTPUT CHECKLIST:
 ✓ Websites/Quizzes: multi-section DOM layout, accessible labels, no canvas usage
 ✓ No undefined refs or missing elements
 ✓ Premium design: rounded corners, shadows, gradients, micro-animations
+✓ Varied Layout: Did not just use a centered card if a sidebar or grid was better.
 """
 
 _CATEGORY_ROTATION_NOTES = [
     ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
      """CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy.
-     
-Focus on playful, unexpected interactions that delight users. Example inspirations (remix freely):
+
+Focus on playful, unexpected interactions that delight users.
+SHOW, DON'T TELL: Do not just write a paragraph of text. Create a toy.
+Example inspirations (remix freely but make them VISUAL):
 - gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers
 - mirror maze click escapes, bubble pop orchestras, neon vine twisters
 - marshmallow catapults, echo button choirs, kaleidoscope cursor trails
@@ -696,40 +741,41 @@ Focus on playful, unexpected interactions that delight users. Example inspiratio
 - fidget spinner simulators, satisfying click counters, zen sand gardens
 - bubble wrap poppers, domino chain reactions, magnetic poetry boards
 
-Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical."""),
-    
+Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical.
+AVOID: Just a button that updates a number."""),
+
     ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
      """CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task.
      
+SHOW, DON'T TELL: A calculator should show a real-time graph or visual indicator, not just a number result.
 Example inspirations (remix freely):
-- pet age dashboards, is-it-Friday checkers, commute mood logs
-- meeting note distillers, micro gratitude journals, water intake trackers
-- screen time estimators, caffeine half-life calculators, sleep debt trackers
-- tip calculators with splitting, unit converters, timezone difference finders
-- countdown timers to events, reading time estimators, word count analyzers
-- password strength checkers, color contrast validators, aspect ratio calculators
-- grocery list makers, expense splitters, savings goal trackers
-- habit streak counters, daily affirmation displays, focus session timers
-- bookmark organizers, note-to-self savers, quick decision makers (yes/no wheels)
+- pet age dashboards (show a growing pet icon), is-it-Friday checkers (giant neon banner)
+- caffeine half-life calculators (show decay graph curve), sleep debt trackers (visual battery meter)
+- tip calculators (visual split-the-bill pie chart), unit converters (visual size comparison)
+- countdown timers (circular progress rings), reading time estimators (animated progress bar)
+- password strength checkers (animated un/lock meter), color contrast validators (live preview cards)
+- groceries expense splitters (visual stack of coins), savings goal trackers (filling a jar)
+- habit streak counters (commit graph grid), focus session timers (visually shrinking circle)
+- quick decision makers (spin-the-wheel animation)
 
-Deliver clear inputs, result panels, accessibility-friendly labels, and next-step tips."""),
+Deliver clear inputs AND RICH VISUAL RESULTS. No plain text results."""),
     
     ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
      """CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience.
      
+SHOW, DON'T TELL: Do not just generate a text string. Generate a "card" or "artifact".
 Example inspirations (remix freely):
-- story spark forges, NPC personality builders, cozy cocktail namers
-- doodle idea decks, playlist vibe spinners, random compliment generators
-- outrageous excuse oracles, travel daydream decks, micro poem whisperers
-- band name generators, startup idea mashups, fantasy character creators
-- movie plot twists, conspiracy theory generators, fake product inventors
-- superhero power combiners, alien species designers, magical spell crafters
-- fortune cookie writers, horoscope remixers, dream interpretation oracles
-- weird fact dispensers, shower thought generators, hypothetical scenario builders
-- recipe fusion creators, workout combo generators, outfit inspiration spinners
-- date idea randomizers, icebreaker question decks, would-you-rather generators
+- NPC personality builders (generate a full ID card with avatar placeholder/color)
+- cozy cocktail namers (generate a recipe card with visual ingredients list)
+- band name generators (generate a tour poster layout)
+- startup idea mashups (generate a landing page hero section)
+- fantasy character creators (stats bars, inventory slots)
+- alien species designers (DNA profile visualization)
+- tarot card readings (flip animation, visual card layout)
+- recipe fusion creators (generate a menu item card)
+- outfit inspiration spinners (color palette swatches)
 
-Include controls to refresh or customize output and keep the generative theme central."""),
+Include controls to refresh or customize output. MAKE THE OUPUT LOOK TANGIBLE AND PRINTABLE."""),
     
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
      """CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas.
@@ -753,20 +799,20 @@ Include an HTML caption describing the piece."""),
     ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
      """CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards.
      
-Use semantic sections, labeled inputs, progress indicators, and reveal/score mechanics.
-
+GAMIFY IT: Use semantic sections, progress bars, streaks, and confetti on correct answers.
 Example inspirations (remix freely):
-- campus lore lightning rounds, mythic creature deducers, constellation spotters
-- onboarding checklists, cozy tea trivia duels, museum mystery matchups
-- flag identification quizzes, capital city challengers, periodic table testers
-- movie quote guessers, song lyric completers, famous painting matchers
-- animal sound identifiers, food origin trackers, language phrase learners
-- historical event timelines, geography boundary drawers, space fact verifiers
-- coding concept flash cards, math puzzle solvers, vocabulary builders
-- personality type sorters, career aptitude matchers, learning style finders
-- music genre identifiers, art movement classifiers, architectural style spotters
+- campus lore lightning rounds (speed timer, flashcard style)
+- mythic creature deducers (visual clues reveal the answer)
+- flag identification quizzes (large colorful flags)
+- periodic table testers (highlighting grid)
+- movie quote guessers (kinetic typography)
+- historical event timelines (a draggable timeline slider)
+- geography boundary drawers, space fact verifiers
+- coding concept flash cards (syntax highlighting card flip)
+- personality type sorters (interactive sliders for traits)
 
-Prefer rich HTML layouts—no canvas—and keep everything accessible."""),
+Prefer rich HTML layouts—no canvas—and keep everything accessible.
+AVOID: A simple list of radio buttons. Make it interactive."""),
 ]
 
 _category_lock = threading.Lock()
