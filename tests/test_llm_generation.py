@@ -15,6 +15,7 @@ def test_llm_generate_normalizes_full_page_html(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     html = "<!doctype html><html><body><div id='app'>Hi</div><script>console.log('ok')</script></body></html>"
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": html})
@@ -30,6 +31,7 @@ def test_llm_generate_normalizes_components_to_custom(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     comp_doc = {
         "components": [
@@ -56,6 +58,7 @@ def test_llm_generate_picks_first_renderable_component(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     doc = {
         "components": [
@@ -77,6 +80,7 @@ def test_llm_generate_returns_error_on_call_failure(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
     # Simulate failure path (returns None)
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: None)
     monkeypatch.setattr(llm_client, "_call_groq_for_page", lambda brief, seed, category_note=None: None)
@@ -126,6 +130,7 @@ def test_llm_generate_accepts_ndw_snippet_v1(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     snippet = {
         "kind": "ndw_snippet_v1",
@@ -146,6 +151,7 @@ def test_snippet_without_background_keeps_landing_styles(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     snippet = { "kind": "ndw_snippet_v1", "html": "<div id='ndw-app'><h2>OK</h2></div>" }
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
@@ -158,6 +164,7 @@ def test_snippet_minimum_content_is_preserved(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     snippet = { "kind": "ndw_snippet_v1", "css": "#ndw-app{color:red}", "html": "<div id='ndw-app'></div>", "js": "console.log('hi')" }
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: snippet)
@@ -169,6 +176,7 @@ def test_snippet_rejects_missing_all_content(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     bad = { "kind": "ndw_snippet_v1" }
     def _call(_b,_s): return bad

@@ -12,6 +12,7 @@ def test_generate_returns_snippet_and_no_external_scripts(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
 
     html = """
     <div id='ndw-app'>

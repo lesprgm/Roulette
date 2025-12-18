@@ -57,11 +57,14 @@ graph TD
     C -->|Empty| E[Request New Generation]
     E --> F[FastAPI Backend]
     F --> G[LLM Orchestrator]
-    G --> H{Try OpenRouter}
+    F --> G[LLM Orchestrator]
+    G --> H{Try Gemini}
     H -->|Success| I[Receive JSON Response]
-    H -->|Fail| J[Fallback to Groq API]
-    J --> I
-    I --> K[Normalize & Validate]
+    H -->|Fail| J{Try OpenRouter}
+    J -->|Success| I
+    J -->|Fail| K[Fallback to Groq API]
+    K --> I
+    I --> L[Normalize & Validate]
     K --> L{Compliance Review}
     L -->|Pass/Corrected| M{Check Deduplication}
     L -->|Rejected| E
@@ -86,7 +89,7 @@ graph TD
 | **Frontend UI** | `templates/index.html`<br/>`static/ts-src/app.ts` | Landing page, generation controls, rendering engine |
 | **NDW Runtime** | `static/ts-src/ndw.ts` | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG |
 | **API Backend** | `api/main.py` | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints |
-| **LLM Client** | `api/llm_client.py` | Orchestrates OpenRouter-first with Groq fallback, retries, prompt engineering |
+| **LLM Client** | `api/llm_client.py` | Orchestrates Gemini-first with OpenRouter and Groq fallbacks, retries, prompt engineering |
 | **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery |
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
@@ -192,8 +195,9 @@ Configure behavior via environment variables:
 | `OPENROUTER_FALLBACK_MODEL_2` | Second OpenRouter fallback | `deepseek/deepseek-chat-v3.1:free` |
 | `FORCE_OPENROUTER_ONLY` | Force skipping Groq fallback | `false` |
 | `LLM_TIMEOUT_SECS` | Request timeout in seconds | `75` |
+| `GEMINI_GENERATION_MODEL` | Primary Gemini generation model | `gemini-3-flash-preview` |
 | `GEMINI_REVIEW_ENABLED` | Enable Gemini-based compliance review | `false` |
-| `GEMINI_API_KEY` | Google AI Studio API key for Gemini reviewer | (optional) |
+| `GEMINI_API_KEY` | Google AI Studio API key | (optional) |
 | `GEMINI_REVIEW_MODEL` | Gemini reviewer model slug | `gemini-1.5-flash-latest` |
 
 ### Prefetch & Caching

@@ -24,9 +24,9 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: google/gemini-2.0-flash-exp:free
+        value: devstral-2512:free
       - key: OPENROUTER_FALLBACK_MODEL_1
-        value: x-ai/grok-4-fast
+        value: google/gemini-2.0-flash-exp:free
       - key: OPENROUTER_FALLBACK_MODEL_2
         value: deepseek/deepseek-chat-v3.1:free
       - key: OPENROUTER_MAX_TOKENS
@@ -61,3 +61,5 @@ services:
         value: 75
       - key: PREFETCH_LOW_WATER
         value: 55
+      - key: GEMINI_GENERATION_MODEL
+        value: gemini-3-flash-preview

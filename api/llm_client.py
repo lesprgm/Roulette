@@ -26,8 +26,8 @@ def _testing_stub_enabled() -> bool:
 log = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemma-3n-e2b-it:free").strip()
-OPENROUTER_FALLBACK_MODEL_1 = os.getenv("OPENROUTER_FALLBACK_MODEL_1", "x-ai/grok-4-fast").strip()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "devstral-2512:free").strip()
+OPENROUTER_FALLBACK_MODEL_1 = os.getenv("OPENROUTER_FALLBACK_MODEL_1", "google/gemma-3n-e2b-it:free").strip()
 OPENROUTER_FALLBACK_MODEL_2 = os.getenv("OPENROUTER_FALLBACK_MODEL_2", "deepseek/deepseek-chat-v3.1:free").strip()
 _ENV_OPENROUTER_API_KEY = OPENROUTER_API_KEY
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
@@ -197,6 +197,11 @@ GEMINI_REVIEW_ENDPOINT = (
     if GEMINI_REVIEW_MODEL
     else ""
 )
+
+GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-3-flash-preview").strip()
+GEMINI_GENERATION_ENDPOINT = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
+)
 """
 This module now only calls the LLM. No local library or stub fallbacks.
 If generation fails, we return {"error": "..."} and the API returns 200 with that body,
@@ -273,6 +278,8 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
         providers: list[str] = []
+        if GEMINI_API_KEY:
+            providers.append("gemini")
         if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
             providers.append("openrouter")
         if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
@@ -284,6 +291,8 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
                 doc = _call_groq_for_page(brief_str, seed_val, category_note)
             elif p == "openrouter":
                 doc = _call_openrouter_for_page(brief_str, seed_val, category_note)
+            elif p == "gemini":
+                doc = _call_gemini_for_page(brief_str, seed_val, category_note)
             if doc:
                 logging.warning("llm chosen provider=%s", p)
                 break
@@ -350,8 +359,78 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
         if final_sig:
             dedupe.add(final_sig)
         return doc
-
     return doc or {"error": "Model generation failed"}
+
+
+def _call_gemini_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
+    """Call Gemini for page generation."""
+    prompt = f"""
+=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
+{category_note}
+You MUST build ONLY the category specified above. Do NOT build any other category.
+=======================================================
+
+You generate exactly one self-contained interactive web app per request.
+Output valid JSON only. No backticks. No explanations.
+
+Brief (may be empty → you choose a theme): {brief}
+Seed: {seed}
+
+{_PAGE_SHAPE_HINT}
+"""
+    
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": TEMPERATURE,
+            "maxOutputTokens": 60000, # Large buffer for full pages
+            "responseMimeType": "application/json",
+        },
+    }
+
+    try:
+        resp = requests.post(
+            GEMINI_GENERATION_ENDPOINT,
+            params={"key": GEMINI_API_KEY},
+            json=body,
+            timeout=LLM_TIMEOUT_SECS
+        )
+    except Exception as e:
+        logging.warning("Gemini generation request error: %r", e)
+        return None
+
+    if resp.status_code != 200:
+        try:
+            msg = resp.text[:400]
+        except Exception:
+            msg = str(resp.status_code)
+        logging.warning("Gemini generation HTTP %s: %s", resp.status_code, msg)
+        return None
+
+    try:
+        data = resp.json()
+    except Exception:
+        logging.warning("Gemini generation: non-JSON body")
+        return None
+
+    text = _extract_gemini_text(data)
+    if not text:
+        logging.warning("Gemini generation: empty response text")
+        return None
+
+    try:
+        page = _json_from_text(text)
+    except Exception as e:
+        logging.warning("Gemini generation: failed to extract JSON: %r", e)
+        return None
+
+    try:
+        norm = _normalize_doc(page)
+        if isinstance(norm, dict):
+            return norm
+    except Exception as e:
+        logging.warning("Gemini generation: normalization error: %r", e)
+    return None
 
 
 def _call_groq_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
@@ -495,13 +574,13 @@ DESIGN QUALITY (MANDATORY — every output must feel premium):
 - Use a cohesive color palette (3-5 colors max, harmonious). Avoid default browser grays.
 - Apply modern CSS: border-radius: 12px+ on cards/buttons, subtle box-shadows, gradient backgrounds.
 - Use generous whitespace (padding: 24px+, margin between sections, breathing room).
-- Add micro-animations: hover effects (scale, color shift), smooth transitions (0.2s ease), subtle motion.
+- Add micro-animations: hover effects (scale, color shift), smooth transitions (0.2s ease), subtle motion. Prefer GSAP for complex motion.
 - Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
 - Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
 - Color contrast: always pair dark text with light backgrounds (or vice versa). Test readability.
 
 GENERAL RULES:
-- No external resources (scripts/fonts/images/fetch); inline all CSS/JS.
+- No external resources (scripts/fonts/images/fetch); inline all CSS/JS. Exception: GSAP 3.12 is available globally as `window.gsap`. Use it for smooth animations.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas).
 - Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon). Do not reuse the same navy blueprint; treat the sample layout as structure only.
