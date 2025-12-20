@@ -272,13 +272,16 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
 
     category_note = _next_category_note(user_key)
 
+    if _testing_stub_enabled():
+        return _call_testing_stub(brief_str, seed_val, category_note)
+
     attempts = 0
     max_attempts = 3
     while attempts < max_attempts:
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
         providers: list[str] = []
-        if GEMINI_API_KEY:
+        if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
             providers.append("gemini")
         if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
             providers.append("openrouter")
@@ -360,6 +363,14 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
             dedupe.add(final_sig)
         return doc
     return doc or {"error": "Model generation failed"}
+
+
+def _call_testing_stub(brief: str, seed: int, category_note: str) -> Dict[str, Any]:
+    """Fallback stub for local development and testing."""
+    return {
+        "kind": "full_page_html",
+        "html": f"<!doctype html><html><body><h1>{brief or 'Stub App'}</h1><p>Seed: {seed}</p><p>Category: {category_note}</p></body></html>"
+    }
 
 
 def _get_design_matrix_b64() -> Optional[str]:
@@ -611,16 +622,23 @@ DESIGN QUALITY (MANDATORY — every output must feel premium):
 - Add micro-animations: hover effects (scale, color shift), smooth transitions (0.2s ease), subtle motion. Prefer GSAP for complex motion.
 - Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
 - Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
-- Color contrast: always pair dark text with light backgrounds (or vice versa). Test readability.
+- Color contrast: always pair dark text with light backgrounds (or vice versa). NEVER use medium-on-medium colors. Contrast must meet WCAG AA standards (4.5:1).
+
+READABILITY GUARDRAILS (HARD RULE):
+- IF Background is Light (e.g., pastel, white, light-gray): Text MUST be #000000, #1a1a1a, or very dark accent colors.
+- IF Background is Dark (e.g., navy, black, deep-purple): Text MUST be #ffffff, #f0f0f0, or very light accent colors.
+- COMPLEX BACKGROUNDS: If using a gradient or image-like background, wrap text in a `glass-card` (rgba(255,255,255,0.85)) or add a `text-shadow: 0 1px 2px rgba(0,0,0,0.5)` for dark text/light bg or vice versa.
+- No "Tone-on-Tone": Never use pink text on a pink background, even if they are different shades, unless the contrast is extremely high.
 
 GENERAL RULES:
-- No external resources (scripts/fonts/images/fetch); inline all CSS/JS. Exception: GSAP 3.12 is available globally as `window.gsap`. Use it for smooth animations.
+- STRICT: No external scripts or styles via CDN (e.g., no <script src="https://...">). GSAP 3.12 and Tailwind CSS are already provided globally. Use them directly without re-importing. No external fonts/images/fetch.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas).
 - Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon).
 - Use the provided examples as inspiration and feel free to remix their spirit, but avoid repeating the exact same names or layouts verbatim run after run.
 - Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
 - Every interactive element referenced in JS must already exist in the DOM with matching IDs/classes before scripts run.
+- CONTROL CONSISTENCY: UI buttons and keyboard shortcuts (e.g., Spacebar) MUST trigger the exact same function. Do not duplicate logic with slight variations.
 
 LAYOUT STRATEGY (CHOOSE ONE BEST FIT FOR THE CONCEPT):
 Do not default to a centered card every time.
@@ -721,7 +739,9 @@ OUTPUT CHECKLIST:
 ✓ Websites/Quizzes: multi-section DOM layout, accessible labels, no canvas usage
 ✓ No undefined refs or missing elements
 ✓ Premium design: rounded corners, shadows, gradients, micro-animations
+4. Check that colors are harmonious and contrast is readable. No white-on-white or black-on-black. No "blending" font colors with backgrounds.
 ✓ Varied Layout: Did not just use a centered card if a sidebar or grid was better.
+✓ Hard Readability: Font colors do not "blend" into the background. Text is sharp and high-contrast.
 """
 
 _CATEGORY_ROTATION_NOTES = [
