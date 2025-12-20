@@ -33,13 +33,15 @@ def isolated_prefetch(monkeypatch, tmp_path):
     return pf
 
 
-def _make_custom_doc(html: str, height: int = 200):
+def _make_custom_doc(html: str, height: int = 200, skeleton_seed: str = ""):
+    # Use a unique class to ensure structural uniqueness in tests where dedupe is enabled
+    unique_html = f'<div class="test-{skeleton_seed}">{html}</div>' if skeleton_seed else html
     return {
         "components": [
             {
                 "id": f"custom-{abs(hash(html))%1_000_000}",
                 "type": "custom",
-                "props": {"html": html, "height": height},
+                "props": {"html": unique_html, "height": height},
             }
         ],
         "layout": {"flow": "stack"},
@@ -50,8 +52,8 @@ def _make_custom_doc(html: str, height: int = 200):
 def test_prefetch_enqueue_dequeue_basic(isolated_prefetch):
     pf = isolated_prefetch
     assert pf.size() == 0
-    d1 = _make_custom_doc("<div>A</div>")
-    d2 = _make_custom_doc("<div>B</div>")
+    d1 = _make_custom_doc("<div>A</div>", skeleton_seed="1")
+    d2 = _make_custom_doc("<div>B</div>", skeleton_seed="2")
     assert pf.enqueue(d1)
     assert pf.enqueue(d2)
     assert pf.size() == 2
@@ -70,7 +72,7 @@ def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
     def _fake_burst(brief: str, seed: int, user_key=None):
-        yield _make_custom_doc(f"<div>seed-{seed}</div>")
+        yield _make_custom_doc(f"<div>seed-{seed}</div>", skeleton_seed=str(seed))
 
     monkeypatch.setattr(main_mod, "llm_generate_page_burst", _fake_burst)
     client = TestClient(app)
@@ -108,14 +110,15 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
     from api import main as main_mod
     pf = isolated_prefetch
 
-    docA = _make_custom_doc("<div>prefetched-A</div>")
-    docB = _make_custom_doc("<div>prefetched-B</div>")
+    docA = _make_custom_doc("<div>prefetched-A</div>", skeleton_seed="A")
+    docB = _make_custom_doc("<div>prefetched-B</div>", skeleton_seed="B")
     assert pf.enqueue(docA)
     assert pf.enqueue(docB)
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
-    sentinel = _make_custom_doc("<div>LLM-Fallback</div>")
-    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=True: sentinel)
+    sentinel = _make_custom_doc("<div>LLM-Fallback</div>", skeleton_seed="sentinel")
+    def _burst_fallback(brief, seed, user_key=None): yield sentinel
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _burst_fallback)
     client = TestClient(app)
 
     r1 = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
@@ -152,7 +155,7 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
             try:
                 return next(call_iter)
             except StopIteration:
-                return _make_custom_doc(f"<div>seed-final-{seed}</div>")
+                return _make_custom_doc(f"<div>seed-final-{seed}</div>", skeleton_seed=f"final-{seed}")
         yield _llm(brief, seed, user_key)
 
     monkeypatch.setattr(main_mod, "llm_generate_page_burst", _burst)
@@ -195,7 +198,7 @@ def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
                     active["max"] = active["count"]
             time.sleep(0.01)
             html = f"<div>parallel-{seed}-{uuid.uuid4().hex}</div>"
-            doc = _make_custom_doc(html)
+            doc = _make_custom_doc(html, skeleton_seed=f"parallel-{seed}")
             with lock:
                 active["count"] -= 1
             return doc
@@ -266,14 +269,14 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
     main_mod.PREFETCH_FILL_TO = 3
 
     # Two items in queue so that after one generate, size=1 triggers top-up to 3
-    assert pf.enqueue(_make_custom_doc("<div>T1</div>"))
-    assert pf.enqueue(_make_custom_doc("<div>T2</div>"))
+    assert pf.enqueue(_make_custom_doc("<div>T1</div>", skeleton_seed="T1"))
+    assert pf.enqueue(_make_custom_doc("<div>T2</div>", skeleton_seed="T2"))
 
     # Mock LLM as available and generate unique docs for top-up
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
     def _fake_burst(brief: str, seed: int, user_key=None):
-        yield _make_custom_doc(f"<div>topup-{seed}</div>")
+        yield _make_custom_doc(f"<div>topup-{seed}</div>", skeleton_seed=f"topup-{seed}")
 
     monkeypatch.setattr(main_mod, "llm_generate_page_burst", _fake_burst)
     client = TestClient(app)

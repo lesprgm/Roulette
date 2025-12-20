@@ -15,21 +15,40 @@ DEDUPE_MAX = int(os.getenv("DEDUPE_MAX", "200"))
 _WS_RE = re.compile(r"\s+")
 
 
-def _norm_text(s: str) -> str:
-    return _WS_RE.sub(" ", (s or "").strip().lower())
+def _skeletonize(html: str) -> str:
+    """Extract a structural 'skeleton' of the HTML.
+    Removes comments, scripts, styles, and all text nodes. 
+    Keeps only tags and their class attributes to identify layout similarity.
+    """
+    if not html:
+        return ""
+    # 1. Remove comments
+    html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
+    # 2. Remove script and style blocks completely
+    html = re.sub(r"<(script|style).*?>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    # 3. Strip all text between tags
+    html = re.sub(r">[^<]+<", "><", html)
+    # 4. Strip start/end text
+    html = re.sub(r"^[^<]+", "", html)
+    html = re.sub(r"[^>]+$", "", html)
+    # 5. Extract just tags and classes? No, let's just use the stripped tags as-is.
+    # We want to be sensitive to tag order and nesting.
+    # Optionally: keep only classes to be even more structural
+    # html = re.sub(r'<([a-z0-9]+)\s+[^>]*class=(["\'])(.*?)\2[^>]*>', r'<\1 class=\2\3\2>', html, flags=re.IGNORECASE)
+    
+    return _WS_RE.sub("", html)
 
 
 def signature_for_doc(doc: Dict) -> str:
-    """Compute a stable signature for a normalized doc.
-    Uses the core HTML payload (full_page_html.html or first custom component props.html).
+    """Compute a stable structural signature for a normalized doc.
+    Uses the skeletonized HTML to ensure visual variety.
     """
     if not isinstance(doc, dict):
         return ""
     if doc.get("kind") == "ndw_snippet_v1":
-        payload = _norm_text((doc.get("html") or "") + "\n" + (doc.get("css") or "") + "\n" + (doc.get("js") or ""))
-        h = hashlib.sha256(); h.update(payload.encode("utf-8")); return h.hexdigest()
-    if doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
-        payload = _norm_text(doc["html"])
+        payload = _skeletonize(doc.get("html") or "") + (doc.get("css") or "") + (doc.get("js") or "")
+    elif doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
+        payload = _skeletonize(doc["html"])
     else:
         payload = ""
         comps = doc.get("components")
@@ -39,7 +58,15 @@ def signature_for_doc(doc: Dict) -> str:
                 props = c0.get("props") or {}
                 h = props.get("html")
                 if isinstance(h, str):
-                    payload = _norm_text(h)
+                    payload = _skeletonize(h)
+    
+    if not payload:
+        # Fallback to JSON dump if we can't extract HTML
+        try:
+            payload = json.dumps(doc, sort_keys=True)
+        except Exception:
+            payload = str(doc)
+            
     h = hashlib.sha256()
     h.update(payload.encode("utf-8"))
     return h.hexdigest()

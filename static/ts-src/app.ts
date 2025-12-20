@@ -314,27 +314,122 @@ async function callGenerate(brief: string, seed: number) {
 function setGenerating(is: boolean) {
   const coreBtns = [document.getElementById('landingGenerate'), document.getElementById('floatingGenerate')].filter(Boolean) as HTMLElement[];
   const inlineBtns = Array.from(document.querySelectorAll('[data-gen-button="1"]')) as HTMLElement[];
-  [...coreBtns, ...inlineBtns].forEach(b => { if (is) { b.setAttribute('aria-busy', 'true'); (b as any).disabled = true; } else { b.removeAttribute('aria-busy'); (b as any).disabled = false; } });
+  [...coreBtns, ...inlineBtns].forEach(b => {
+    if (is) {
+      b.setAttribute('aria-busy', 'true');
+      b.classList.add('opacity-50', 'pointer-events-none');
+    } else {
+      b.removeAttribute('aria-busy');
+      b.classList.remove('opacity-50', 'pointer-events-none');
+    }
+  });
+}
+
+function ensureShutter() {
+  let top = document.getElementById('ndw-shutter-top');
+  let bot = document.getElementById('ndw-shutter-bot');
+  if (!top) {
+    top = document.createElement('div'); top.id = 'ndw-shutter-top';
+    Object.assign(top.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(-100%)' });
+    document.body.appendChild(top);
+  }
+  if (!bot) {
+    bot = document.createElement('div'); bot.id = 'ndw-shutter-bot';
+    Object.assign(bot.style, { position: 'fixed', bottom: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(100%)' });
+    document.body.appendChild(bot);
+  }
+  return { top, bot };
+}
+
+async function closeShutter() {
+  const { top, bot } = ensureShutter();
+  const gsap = (window as any).gsap;
+  if (!gsap) return;
+  return gsap.to([top, bot], { translateY: '0%', duration: 0.5, ease: 'power4.inOut' });
+}
+
+async function openShutter() {
+  const { top, bot } = ensureShutter();
+  const gsap = (window as any).gsap;
+  if (!gsap) return;
+  return gsap.to(top, { translateY: '-100%', duration: 0.6, ease: 'power4.inOut' })
+    .then(() => gsap.to(bot, { translateY: '100%', duration: 0.6, ease: 'power4.inOut', delay: -0.5 }));
 }
 
 (_w as any).ndwGenerate = generateNew;
 async function generateNew(e?: Event) {
-  console.debug('[ndw] generateNew invoked');
+  console.debug('[ndw] generateNew invoked (streaming burst)');
   if (e) e.preventDefault();
   const seed = Math.floor(Math.random() * 1e9);
   const jsonOut = document.getElementById('jsonOut');
   if (jsonOut) jsonOut.textContent = '';
-  setGenerating(true); showSpinner('Just a moment…');
+
+  setGenerating(true);
+  await closeShutter();
+
   const panel = document.getElementById('jsonPanel');
   const btn = document.getElementById('toggleJsonBtn');
-  if (panel && !panel.classList.contains('hidden')) { panel.classList.add('hidden'); if (btn) btn.textContent = 'Show JSON'; }
+  if (panel && !panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    if (btn) btn.textContent = 'Show JSON';
+  }
+
   try {
-    const doc = await callGenerate('', seed);
-    enterSite(doc);
-    if (jsonOut) jsonOut.textContent = JSON.stringify(doc, null, 2);
-    ensureFloatingGenerate(); adaptGenerateButtons();
-  } catch (err) { console.error('Generate error:', err); }
-  finally { hideSpinner(); setGenerating(false); }
+    const resp = await fetch('/generate/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
+      body: JSON.stringify({ brief: '', seed })
+    });
+
+    if (!resp.ok) throw new Error(`Stream failed: ${resp.status}`);
+    const reader = resp.body?.getReader();
+    if (!reader) throw new Error('No reader');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let firstPageSeen = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const chunk = JSON.parse(line);
+          if (chunk.event === 'page') {
+            const page = chunk.data;
+            if (!firstPageSeen) {
+              enterSite(page);
+              firstPageSeen = true;
+              await openShutter();
+            }
+            if (jsonOut) {
+              jsonOut.textContent += (jsonOut.textContent ? '\n\n' : '') + JSON.stringify(page, null, 2);
+            }
+          } else if (chunk.event === 'error') {
+            showError(chunk.data.error || 'Unknown streaming error');
+            await openShutter();
+          }
+        } catch (err) {
+          console.warn('Chunk parse error', err);
+        }
+      }
+    }
+
+    ensureFloatingGenerate();
+    adaptGenerateButtons();
+  } catch (err) {
+    console.error('Generate error:', err);
+    showError(String(err));
+    await openShutter();
+  } finally {
+    setGenerating(false);
+  }
 }
 
 function ensureFloatingGenerate() {
@@ -440,6 +535,7 @@ function renderFullPage(html: string) {
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
     ensureReadableTheme();
+    try { (window as any).lucide?.createIcons(); } catch (_) { }
   } catch (e) { console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
@@ -463,6 +559,7 @@ function renderInline(html: string) {
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
     ensureReadableTheme();
+    try { (window as any).lucide?.createIcons(); } catch (_) { }
   } catch (e) { console.error('Inline render error:', e); showError('Failed to render content.'); }
 }
 
@@ -554,6 +651,7 @@ function renderNdwSnippet(snippet: NdwSnippet) {
     ensureScrollableBody();
     const sandboxEl = document.getElementById('ndw-sandbox');
     if (sandboxEl instanceof HTMLElement) ensureReadableTheme(sandboxEl);
+    try { (window as any).lucide?.createIcons(); } catch (_) { }
   } catch (e) { console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
 

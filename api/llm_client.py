@@ -530,7 +530,23 @@ Seed: {seed}
                         "html": {"type": "STRING"},
                         "css": {"type": "STRING"},
                         "js": {"type": "STRING"},
-                        "components": {"type": "ARRAY"},
+                        "components": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "id": {"type": "STRING"},
+                                    "type": {"type": "STRING"},
+                                    "props": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "html": {"type": "STRING"},
+                                            "height": {"type": "NUMBER"}
+                                        }
+                                    }
+                                }
+                            }
+                        },
                     },
                     "required": ["kind"]
                 },
@@ -768,12 +784,17 @@ DESIGN QUALITY (MANDATORY — every output must feel premium):
 - Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
 - Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
 - Color contrast: always pair dark text with light backgrounds (or vice versa). NEVER use medium-on-medium colors. Contrast must meet WCAG AA standards (4.5:1).
+- PREMIUM ICONOGRAPHY: Lucide icons are provided globally. Use `<i data-lucide="icon-name"></i>` (e.g. `house`, `settings`, `check`) for all UI icons. Avoid raw SVGs.
+- ICON STYLING: Make icons feel premium by applying Tailwind classes:
+    - Color: Use `text-[color:var(--accent-500)]` or `text-slate-500` to match the theme.
+    - Stroke: Adjust weight for elegance (e.g., `stroke-[1.5]` for thin/refined or `stroke-[2.5]` for bold).
+    - Containers: Wrap icons in a small, soft-colored div (e.g., `bg-[color:var(--accent-50)] p-2 rounded-lg`) for a standalone 'SaaS' look.
 - INITIAL VISUAL STATE (MANDATORY): The experience must NEVER be blank/empty on load. Provide ambient motion, floating particles, or a beautiful 'Click to Start' splash screen immediately. Don't wait for user input to show visual evidence of the theme.
 - PREMIUM INTROS: Use GSAP (provided) for a staggered entrance animation of the UI elements.
 - No "Tone-on-Tone": Never use pink text on a pink background, even if they are different shades, unless the contrast is extremely high.
 
 GENERAL RULES:
-- STRICT: No external scripts or styles via CDN (e.g., no <script src="https://...">). GSAP 3.12 and Tailwind CSS are already provided globally. Use them directly without re-importing. No external fonts/images/fetch.
+- STRICT: No external scripts or styles via CDN (e.g., no <script src="https://...">). GSAP 3.12, Tailwind CSS, and Lucide Icons are already provided globally. Use them directly without re-importing. No external fonts/images/fetch.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas).
 - Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon).

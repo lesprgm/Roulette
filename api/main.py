@@ -772,7 +772,14 @@ def generate_endpoint(
             log.exception("prefetch.generate: failed to schedule background top-up")
         return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
 
-    page = llm_generate_page(req.brief, seed=req.seed or 0, user_key=client_key)
+    # Queue empty: do a burst and return the FIRST site that finishes
+    log.info("prefetch.generate: queue empty; initiating ad-hoc burst")
+    try:
+        burst_iter = llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key)
+        page = next(burst_iter, {"error": "No pages generated"})
+    except Exception as e:
+        log.exception("Ad-hoc burst failure")
+        page = {"error": str(e)}
 
     if isinstance(page, dict) and not page.get("error"):
         try:
@@ -889,7 +896,7 @@ def generate_stream(
                 yield json.dumps({"event": "error", "data": {"error": "Missing LLM credentials"}}) + "\n"
                 return
 
-        # Normal path: prefer prefetch; apply delay if served from queue
+        # Normal path: prefer prefetch
         served_from_prefetch = False
         page = prefetch.dequeue()
         if page is not None:
@@ -899,13 +906,21 @@ def generate_stream(
                     time.sleep(PREFETCH_DELAY_MS / 1000.0)
             except Exception:
                 pass
+            yield json.dumps({"event": "page", "data": page}) + "\n"
         else:
-            page = llm_generate_page(req.brief, seed=req.seed or 0, user_key=client_key)
-        if isinstance(page, dict) and not page.get("error"):
+            # Queue empty: do a burst and stream them all!
+            log.info("prefetch.generate_stream: queue empty; initiating ad-hoc burst")
             try:
-                counter.increment(1)
-            except Exception:
-                pass
+                for burst_page in llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key):
+                    if isinstance(burst_page, dict) and not burst_page.get("error"):
+                        try: counter.increment(1)
+                        except: pass
+                    yield json.dumps({"event": "page", "data": burst_page}) + "\n"
+            except Exception as e:
+                log.exception("Ad-hoc burst stream failure")
+                yield json.dumps({"event": "error", "data": {"error": str(e)}}) + "\n"
+            return
+
         try:
             if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
                 target = _prefetch_target_size(prefetch.size())
