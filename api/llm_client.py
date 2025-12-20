@@ -22,6 +22,8 @@ def _testing_stub_enabled() -> bool:
         return False
     if GROQ_API_KEY != _ENV_GROQ_API_KEY:
         return False
+    if GEMINI_API_KEY != _ENV_GEMINI_API_KEY:
+        return False
     return True
 log = logging.getLogger(__name__)
 
@@ -190,6 +192,7 @@ except Exception:
     GROQ_MAX_TOKENS = LLM_MAX_TOKENS
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+_ENV_GEMINI_API_KEY = GEMINI_API_KEY
 GEMINI_REVIEW_MODEL = os.getenv("GEMINI_REVIEW_MODEL", "gemini-1.5-flash-latest").strip()
 GEMINI_REVIEW_ENABLED = os.getenv("GEMINI_REVIEW_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 GEMINI_REVIEW_ENDPOINT = (
@@ -201,6 +204,9 @@ GEMINI_REVIEW_ENDPOINT = (
 GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-3-flash-preview").strip()
 GEMINI_GENERATION_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
+)
+GEMINI_STREAM_ENDPOINT = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:streamGenerateContent"
 )
 """
 This module now only calls the LLM. No local library or stub fallbacks.
@@ -281,12 +287,17 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
         providers: list[str] = []
-        if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
-            providers.append("gemini")
         if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
             providers.append("openrouter")
         if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
             providers.append("groq")
+        
+        # GEMINI is RESERVED for burst generation (generate_page_burst) 
+        # to maximize the 3x generation per request quota.
+        # It is only used here as an absolute last resort if others are failing.
+        if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY and not providers:
+            providers.append("gemini")
+        
         logging.warning("llm providers_order=%s force_openrouter_only=%s", providers, FORCE_OPENROUTER_ONLY)
         for p in providers:
             logging.warning("llm attempting provider=%s", p)
@@ -454,29 +465,163 @@ Seed: {seed}
 
     try:
         data = resp.json()
-    except Exception:
-        logging.warning("Gemini generation: non-JSON body")
+        text = _extract_gemini_text(data)
+        if not text:
+            return None
+        return _normalize_doc(_json_from_text(text))
+    except Exception as e:
+        logging.warning("Gemini generation extraction error: %r", e)
         return None
 
-    text = _extract_gemini_text(data)
-    if not text:
-        logging.warning("Gemini generation: empty response text")
-        return None
+
+def generate_page_burst(brief: str, seed: int, user_key: Optional[str] = None) -> Iterable[Dict[str, Any]]:
+    """Yield up to 3 sites from a single streaming burst."""
+    if not GEMINI_API_KEY:
+        yield generate_page(brief, seed, user_key)
+        return
+
+    # Fetch 3 categories for the burst
+    category_notes = [_next_category_note(user_key) for _ in range(3)]
+    matrix_b64 = _get_design_matrix_b64()
+    
+    parts = []
+    if matrix_b64:
+        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+
+    prompt = f"""
+=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
+1. Analyze the attached 'UI Design Matrix'. 
+2. Classify the brief into one of the 4 vibes (Professional, Playful, Brutalist, Cozy).
+3. Extract colors from the 'Color Universe' strip.
+4. Build the apps matching the aesthetics of your selected vibe.
+==============================================
+
+=== MANDATORY CATEGORY ASSIGNMENTS (DO NOT IGNORE) ===
+SITE 1 Category: {category_notes[0]}
+SITE 2 Category: {category_notes[1]}
+SITE 3 Category: {category_notes[2]}
+
+You MUST build each site following its assigned category.
+=========================================================
+
+You generate EXACTLY 3 unique, self-contained interactive web apps as a JSON array.
+Each app must be a complete experience with high-quality design.
+
+Brief: {brief}
+Seed: {seed}
+
+{_PAGE_SHAPE_HINT}
+"""
+    parts.insert(0, {"text": prompt})
+    
+    body = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": TEMPERATURE,
+            "maxOutputTokens": 60000, 
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "kind": {"type": "STRING"},
+                        "title": {"type": "STRING"},
+                        "html": {"type": "STRING"},
+                        "css": {"type": "STRING"},
+                        "js": {"type": "STRING"},
+                        "components": {"type": "ARRAY"},
+                    },
+                    "required": ["kind"]
+                },
+                "minItems": 3,
+                "maxItems": 3
+            }
+        },
+    }
 
     try:
-        page = _json_from_text(text)
-    except Exception as e:
-        logging.warning("Gemini generation: failed to extract JSON: %r", e)
-        return None
+        resp = requests.post(
+            GEMINI_STREAM_ENDPOINT,
+            params={"key": GEMINI_API_KEY},
+            json=body,
+            timeout=LLM_TIMEOUT_SECS,
+            stream=True
+        )
+        if resp.status_code != 200:
+            logging.warning("Gemini stream HTTP %s: %s", resp.status_code, resp.text[:200])
+            yield {"error": f"HTTP {resp.status_code}"}
+            return
 
-    try:
-        norm = _normalize_doc(page)
-        if isinstance(norm, dict):
-            return norm
-    except Exception as e:
-        logging.warning("Gemini generation: normalization error: %r", e)
-    return None
+        full_text = ""
+        last_obj_count = 0
+        
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            chunk = line.decode("utf-8").strip()
+            # The REST API stream format is a JSON array of response objects
+            # Each chunk starts with a comma or brace
+            if chunk.startswith("[") or chunk.startswith(","):
+                chunk = chunk[1:].strip()
+            if chunk.endswith("]"):
+                chunk = chunk[:-1].strip()
+            if not chunk:
+                continue
+                
+            try:
+                data = json.loads(chunk)
+                t = _extract_gemini_text(data)
+                if t:
+                    full_text += t
+            except Exception:
+                continue
 
+            # Stream-parse objects from the array
+            sites = _extract_completed_objects_from_array(full_text)
+            for i in range(last_obj_count, len(sites)):
+                yield _normalize_doc(sites[i])
+                last_obj_count += 1
+                
+    except Exception as e:
+        logging.warning("Burst generation error: %r", e)
+        yield {"error": str(e)}
+
+
+def _extract_completed_objects_from_array(text: str) -> List[Dict[str, Any]]:
+    """Naively extract completed {...} objects from a JSON array string."""
+    objs = []
+    # Strip the leading '[' if present
+    s = text.strip()
+    if s.startswith("["):
+        s = s[1:].strip()
+        
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    
+    for i, ch in enumerate(s):
+        if ch == '"' and not esc:
+            in_str = not in_str
+        if in_str:
+            esc = (ch == "\\") and not esc
+            continue
+            
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start != -1:
+                candidate = s[start:i+1]
+                try:
+                    objs.append(json.loads(candidate))
+                except Exception:
+                    pass
+                start = -1
+    return objs
 
 def _call_groq_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call Groq (OpenAI-compatible) and parse a page dict; None on failure."""
@@ -623,11 +768,8 @@ DESIGN QUALITY (MANDATORY — every output must feel premium):
 - Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
 - Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
 - Color contrast: always pair dark text with light backgrounds (or vice versa). NEVER use medium-on-medium colors. Contrast must meet WCAG AA standards (4.5:1).
-
-READABILITY GUARDRAILS (HARD RULE):
-- IF Background is Light (e.g., pastel, white, light-gray): Text MUST be #000000, #1a1a1a, or very dark accent colors.
-- IF Background is Dark (e.g., navy, black, deep-purple): Text MUST be #ffffff, #f0f0f0, or very light accent colors.
-- COMPLEX BACKGROUNDS: If using a gradient or image-like background, wrap text in a `glass-card` (rgba(255,255,255,0.85)) or add a `text-shadow: 0 1px 2px rgba(0,0,0,0.5)` for dark text/light bg or vice versa.
+- INITIAL VISUAL STATE (MANDATORY): The experience must NEVER be blank/empty on load. Provide ambient motion, floating particles, or a beautiful 'Click to Start' splash screen immediately. Don't wait for user input to show visual evidence of the theme.
+- PREMIUM INTROS: Use GSAP (provided) for a staggered entrance animation of the UI elements.
 - No "Tone-on-Tone": Never use pink text on a pink background, even if they are different shades, unless the contrast is extremely high.
 
 GENERAL RULES:
@@ -648,7 +790,7 @@ C) BENTO GRID: Best for dashboards or multi-step tools. (Grid of cards).
 D) FULL PAGE HERO: Best for immersive art or experiences. (Content spans full viewport).
 
 HIERARCHY & IMPACT (MANDATORY):
-- The INTERACTIVE APP is the star. It must be visible immediately.
+- The INTERACTIVE APP is the star. It must be visible immediately. Use the ID `ndw-content` for the main app container.
 - Header (Title/Category) must be COMPACT and CENTERED at the top. Never use a giant splash screen/hero that pushes the content below the fold.
 - Focus on "Visual Evidence": If it's a calculator, show a dial. If it's a generator, show a beautifully styled card.
 
@@ -671,8 +813,9 @@ NOTE: Replace CSS variables using the 'Color Universe' from the Matrix.
 SNIPPET RUNTIME (NDW APIs):
 - NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
 - Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000).
-- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) returns canvas with .ctx, .dpr (NOT canvas.canvas.width).
-- Use canvas.ctx.width/height (or canvas.width / canvas.dpr) for layout math; NDW scales the backing buffer for HiDPI so raw canvas.width is larger than the visible area.
+- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) returns canvas with .ctx, .dpr. 
+- Avoid `fullScreen: true` for full_page_html apps as it can overlap your custom headers; instead, set `parent: document.getElementById('ndw-content')` and specific px sizes or leave width/height out for a 800x600 default.
+- Use canvas.ctx.width/height (or canvas.width / canvas.dpr) for layout math.
 - NDW.onKey((e) => ...) / NDW.onPointer((e) => ...) register once outside NDW.loop; use NDW.isDown inside the loop for continuous input.
 - NDW.isDown('ArrowLeft' | 'mouse' | ...), NDW.onResize, NDW.utils (clamp, lerp, rng(seed), hash(seed)), NDW.pointer {x,y,down}.
 - Initialize all state before NDW.loop; register handlers before NDW.loop; never declare them inside the loop.

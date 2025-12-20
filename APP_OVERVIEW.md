@@ -43,8 +43,9 @@ Key takeaway: large values for `PREFETCH_PREWARM_COUNT` can delay boot long enou
 - **Top-up loop** (`_top_up_prefetch`)
   - Reads current queue size and computes a target: `max(min_fill, _prefetch_target_size(current))`.
   - `_prefetch_target_size` raises the target to `PREFETCH_FILL_TO` (defaults to `max(PREFETCH_BATCH_MAX, PREFETCH_LOW_WATER)`, so 55 with stock settings) whenever the queue dips below `PREFETCH_LOW_WATER`.
-  - Generation now runs through a bounded worker pool (`PREFETCH_MAX_WORKERS`, default 2). The dispatcher submits LLM jobs until `prefetch.size() + inflight < target`, then waits for completions. Results arriving after the queue reaches the target are discarded instead of written, so the cache never overfills even if threads finish late.
-  - Each successful doc is enqueued immediately (skipping duplicates via `dedupe`) and batched for review. Prefetch generation no longer blocks on Gemini; `_schedule_prefetch_review` processes files asynchronously, with batches of up to `PREFETCH_REVIEW_BATCH` (default 3) flowing through the Gemini reviewer. Timeouts or transient failures re-queue the affected files up to three times before giving up.
+  - **Triple-Burst Workers**: Generation runs through a bounded worker pool (`PREFETCH_MAX_WORKERS`, default 2). Each worker calls `llm_generate_page_burst`, which yields up to **3 websites per single LLM request** (Gemini-only). Workers are streaming-aware: they consume the generator and enqueue each site immediately as it is parsed from the stream, allowing the cache to refill in real-time.
+  - Results arriving after the queue reaches the target are discarded instead of written.
+  - Each successful doc is enqueued immediately (skipping duplicates via `dedupe`) and batched for review. Prefetch generation no longer blocks on Gemini; `_schedule_prefetch_review` processes files asynchronously.
 
 Operational tips:
 - Set `PREFETCH_TOPUP_ENABLED=0` in environments with strict rate limits or when running tests manually.
@@ -57,10 +58,10 @@ Operational tips:
 
 - **Category rotation** – `_CATEGORY_ROTATION_NOTES` defines five prompts (Interactive Entertainment, Utility Micro-Tools, Generative Randomizers, Interactive Art, Quizzes/Learning Cards). `_next_category_note` uses a per-user ring buffer with thread locking so each caller walks the themes in order, keeping output varied even across concurrent requests.
 - **Provider order & fallbacks**
-  1. Gemini (`GEMINI_GENERATION_MODEL`). The primary generation model. **Multimodal Input**: Sends the `static/design_matrix.jpg` image along with the text prompt to provide visual design context (Vision Grounding).
-  2. OpenRouter (`OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL_1`, `_2`). Retries are rate-limited using exponential backoff (`OPENROUTER_BACKOFF_*`).
-  3. Groq (`GROQ_MODEL`, `GROQ_FALLBACK_MODEL`). Requests enforce `LLM_TIMEOUT_SECS`, `LLM_MAX_TOKENS`, and provider-specific JSON output hints.
-  4. If all providers fail, a `{"error": "Model generation failed"}` payload is returned; the HTTP status remains 200 so the front-end can display a friendly message.
+  1. **OpenRouter / Groq**: Prioritized for ad-hoc single-page requests via `/generate` (non-prefetched path). This preserves the strict Gemini quota for high-efficiency bursting.
+  2. **Gemini Bursting**: Technically the primary model for **Triple-Burst Streaming**. Gemini is the only provider that attempts to batch 3 sites per request. It is skipped for ad-hoc requests unless fallbacks fail.
+  3. **Streaming & Partial JSON**: The system uses a depth-aware bracket-counter to extract completed `{...}` objects from streaming JSON arrays. This "salvages" completed sites from truncated streams and allows immediate enqueuing before the final `]` arrives.
+  4. If all providers fail, a `{"error": "Model generation failed"}` payload is returned.
 - **Normalization pipeline**
   - `_json_from_text` extracts JSON from completions that may have stray prose.
   - `_normalize_doc` standardises to one of the supported shapes and guarantees required properties exist.
@@ -143,6 +144,16 @@ The system follows a strict **Interactive-First** design philosophy to maximize 
 - **Compact Header**: Titles and category labels are rendered in a small, centered, top-aligned header.
 - **The "Main Stage"**: The interactive portion of the app (`#ndw-content`) must be the largest visual element on first paint, occupying at least 50% of the viewport height.
 - **Zero Scroll**: The primary call-to-action or interaction point must be visible above the fold on standard desktop and mobile resolutions.
+
+---
+
+### 13. Triple-Burst Streaming Generation
+
+To maximize the 20 requests/day Gemini quota, the system implements a "Burst" strategy:
+- **Batching**: A single Gemini request generates 3 items in a JSON array.
+- **Streaming Parser**: A custom iterator uses bracket-depth-counting to extract completed objects from the stream. This allows the prefetcher to process site #1 while site #2 is still being generated by the LLM.
+- **Salvage Mechanism**: If a stream is truncated by token limits, the prefetcher retains all fully formed objects identified by the parser.
+- **Review Synergy**: The system aligns the burst size (3) with the `PREFETCH_REVIEW_BATCH` (3). This means a single Gemini generation request leads to a single, combined Gemini batch review request, maximizing the efficiency of the 20/day API quotas for both roles.
 
 ---
 

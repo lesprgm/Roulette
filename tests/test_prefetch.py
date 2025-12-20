@@ -69,10 +69,10 @@ def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int, user_key=None, run_review=True):
-        return _make_custom_doc(f"<div>seed-{seed}</div>")
+    def _fake_burst(brief: str, seed: int, user_key=None):
+        yield _make_custom_doc(f"<div>seed-{seed}</div>")
 
-    monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _fake_burst)
     client = TestClient(app)
 
     r = client.post("/prefetch/fill", json={"brief": "", "count": 7}, headers=API_HEADERS)
@@ -89,10 +89,10 @@ def test_prefetch_fill_skips_duplicates(monkeypatch, isolated_prefetch):
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _same_doc(brief: str, seed: int, user_key=None, run_review=True):
-        return _make_custom_doc("<div>same</div>")
+    def _same_burst(brief: str, seed: int, user_key=None):
+        yield _make_custom_doc("<div>same</div>")
 
-    monkeypatch.setattr(main_mod, "llm_generate_page", _same_doc)
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _same_burst)
     client = TestClient(app)
 
     r = client.post("/prefetch/fill", json={"brief": "", "count": 6}, headers=API_HEADERS)
@@ -147,13 +147,15 @@ def test_top_up_prefetch_retries_after_errors(monkeypatch, isolated_prefetch):
 
     call_iter = iter(responses)
 
-    def _llm(brief: str, seed: int, user_key=None, run_review=True):
-        try:
-            return next(call_iter)
-        except StopIteration:
-            return _make_custom_doc(f"<div>seed-final-{seed}</div>")
+    def _burst(brief: str, seed: int, user_key=None):
+        def _llm(brief: str, seed: int, user_key=None):
+            try:
+                return next(call_iter)
+            except StopIteration:
+                return _make_custom_doc(f"<div>seed-final-{seed}</div>")
+        yield _llm(brief, seed, user_key)
 
-    monkeypatch.setattr(main_mod, "llm_generate_page", _llm)
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _burst)
     monkeypatch.setattr(main_mod.time, "sleep", lambda *_: None)
 
     main_mod._top_up_prefetch("", min_fill=3)
@@ -185,19 +187,21 @@ def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
     active = {"count": 0, "max": 0}
     lock = threading.Lock()
 
-    def _llm(brief: str, seed: int, user_key=None, run_review=True):
-        with lock:
-            active["count"] += 1
-            if active["count"] > active["max"]:
-                active["max"] = active["count"]
-        time.sleep(0.01)
-        html = f"<div>parallel-{seed}-{uuid.uuid4().hex}</div>"
-        doc = _make_custom_doc(html)
-        with lock:
-            active["count"] -= 1
-        return doc
+    def _burst(brief: str, seed: int, user_key=None):
+        def _llm(brief: str, seed: int, user_key=None):
+            with lock:
+                active["count"] += 1
+                if active["count"] > active["max"]:
+                    active["max"] = active["count"]
+            time.sleep(0.01)
+            html = f"<div>parallel-{seed}-{uuid.uuid4().hex}</div>"
+            doc = _make_custom_doc(html)
+            with lock:
+                active["count"] -= 1
+            return doc
+        yield _llm(brief, seed, user_key)
 
-    monkeypatch.setattr(main_mod, "llm_generate_page", _llm)
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _burst)
 
     main_mod._top_up_prefetch("", min_fill=4)
 
@@ -268,10 +272,10 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
     # Mock LLM as available and generate unique docs for top-up
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
 
-    def _fake_llm(brief: str, seed: int, user_key=None, run_review=True):
-        return _make_custom_doc(f"<div>topup-{seed}</div>")
+    def _fake_burst(brief: str, seed: int, user_key=None):
+        yield _make_custom_doc(f"<div>topup-{seed}</div>")
 
-    monkeypatch.setattr(main_mod, "llm_generate_page", _fake_llm)
+    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _fake_burst)
     client = TestClient(app)
 
     # Allow background top-up in this test (bypass pytest guard)

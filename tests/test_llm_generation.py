@@ -79,6 +79,7 @@ def test_llm_generate_returns_error_on_call_failure(monkeypatch):
     # No providers available
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
     monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
     # Simulate failure path (returns None)

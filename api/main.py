@@ -28,6 +28,7 @@ _REVIEW_MAX_ATTEMPTS = 3
 try:
     from api.llm_client import (
         generate_page as llm_generate_page,
+        generate_page_burst as llm_generate_page_burst,
         status as llm_status,
         probe as llm_probe,
         run_compliance_batch,
@@ -240,27 +241,32 @@ def _prefill_prefetch_queue() -> None:
         return
     log.info("prefetch.prewarm: generating %d documents before startup", desired)
     paths: List[Path] = []
+    generated_count = 0
     failures = 0
     max_failures = max(5, desired * 3)
-    i = 0
-    while len(paths) < desired and failures < max_failures:
-        seed = (int(time.time() * 1000) + i + failures) % 1_000_000_007
-        page = llm_generate_page("", seed=seed, user_key="prefetch", run_review=False)
-        if isinstance(page, dict) and page.get("error"):
+    
+    while generated_count < desired and failures < max_failures:
+        seed = (int(time.time() * 1000) + generated_count + failures) % 1_000_000_007
+        try:
+            for page in llm_generate_page_burst("", seed=seed, user_key="prefetch"):
+                if isinstance(page, dict) and page.get("error"):
+                    failures += 1
+                    break
+                
+                path = prefetch.enqueue(page)
+                if path:
+                    paths.append(path)
+                    generated_count += 1
+                    failures = 0
+                else:
+                    failures += 1
+                
+                if generated_count >= desired:
+                    break
+        except Exception as e:
+            log.error("prefetch.prewarm: burst error err=%r", e)
             failures += 1
-            log.warning("prefetch.prewarm: generation error '%s'", page.get("error"))
-            try:
-                time.sleep(0.2)
-            except Exception:
-                pass
-            continue
-        path = prefetch.enqueue(page)
-        if path:
-            paths.append(path)
-            failures = 0
-            i += 1
-        else:
-            failures += 1
+            break
     if paths:
         _schedule_prefetch_review(list(paths))
     log.info("prefetch.prewarm: completed with %d documents (failures=%d)", len(paths), failures)
@@ -286,8 +292,8 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
             return
         worker_limit = max(1, PREFETCH_MAX_WORKERS)
 
-        def _generate_once(seed: int) -> Dict[str, Any]:
-            return llm_generate_page(brief or "", seed=seed, user_key="prefetch", run_review=False)
+        def _generate_burst(seed: int) -> List[Dict[str, Any]]:
+            return list(llm_generate_page_burst("", seed=seed, user_key="prefetch"))
 
         while True:
             current = prefetch.size()
@@ -323,7 +329,7 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                     ):
                         seed = (int(time.time() * 1000) + generated + failures + seed_offset) % 1_000_000_007
                         seed_offset += 1
-                        futures.add(executor.submit(_generate_once, seed))
+                        futures.add(executor.submit(_generate_burst, seed))
 
                 _submit_available_jobs()
                 while (prefetch.size() < target and failures < max_failures) or futures:
@@ -335,64 +341,29 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                     for fut in done:
                         futures.discard(fut)
                         try:
-                            page = fut.result()
+                            # Use burst generator
+                            for page in fut.result():
+                                if not isinstance(page, dict) or page.get("error"):
+                                    failures += 1
+                                    continue
+                                
+                                if prefetch.size() >= target:
+                                    continue
+                                
+                                path = prefetch.enqueue(page)
+                                if path:
+                                    generated += 1
+                                    failures = 0
+                                    pending_paths.append(path)
+                                    if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
+                                        _schedule_prefetch_review(list(pending_paths))
+                                        pending_paths.clear()
+                                else:
+                                    failures += 1
                         except Exception as exc:
                             failures += 1
-                            log.warning(
-                                "prefetch.top_up: generation worker error (attempt %d/%d): %r",
-                                failures,
-                                max_failures,
-                                exc,
-                            )
-                            try:
-                                time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
-                            except Exception:
-                                pass
+                            log.warning("prefetch.top_up: generation worker error: %r", exc)
                             continue
-                        if not isinstance(page, dict):
-                            failures += 1
-                            log.warning(
-                                "prefetch.top_up: generation returned non-dict payload (attempt %d/%d)",
-                                failures,
-                                max_failures,
-                            )
-                            continue
-                        if page.get("error"):
-                            failures += 1
-                            log.warning(
-                                "prefetch.top_up: generation returned error (attempt %d/%d): %s",
-                                failures,
-                                max_failures,
-                                page.get("error"),
-                            )
-                            try:
-                                time.sleep(min(0.5, PREFETCH_DELAY_MS / 1000 if PREFETCH_DELAY_MS else 0.2))
-                            except Exception:
-                                pass
-                            continue
-                        if prefetch.size() >= target:
-                            log.debug(
-                                "prefetch.top_up: discarding generated doc because target already met (queue_size=%d target=%d)",
-                                prefetch.size(),
-                                target,
-                            )
-                            continue
-                        path = prefetch.enqueue(page)
-                        if path:
-                            generated += 1
-                            failures = 0
-                            pending_paths.append(path)
-                            if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
-                                _schedule_prefetch_review(list(pending_paths))
-                                pending_paths.clear()
-                        else:
-                            failures += 1
-                            log.debug(
-                                "prefetch.top_up: enqueue skipped (attempt %d/%d) queue_size=%d",
-                                failures,
-                                max_failures,
-                                prefetch.size(),
-                            )
                         if prefetch.size() >= target and failures < max_failures:
                             # Allow outstanding workers to finish but do not enqueue more jobs
                             continue
@@ -985,12 +956,16 @@ def prefetch_fill(
         )
 
     # Only allow prefetch when LLM is available (no offline injection here)
-    llm_ok = not (llm_generate_page is None or not llm_status().get("has_token"))
+    llm_ok = not (llm_generate_page_burst is None or not llm_status().get("has_token"))
 
     n = prefetch.clamp_batch(int(req.count or 0))
     initial_size = prefetch.size()
     new_paths: List[Path] = []
-    for i in range(n):
+    
+    generated_count = 0
+    attempts = 0
+    while attempts < n and generated_count < n:
+        attempts += 1
         if not llm_ok:
             log.warning("prefetch.fill: LLM unavailable mid-fill client=%s", client_key)
             return JSONResponse(
@@ -998,18 +973,27 @@ def prefetch_fill(
                 content={"error": "Missing LLM credentials"},
                 headers=_rate_limit_headers(remaining, reset_ts),
             )
-        page = llm_generate_page(
-            req.brief or "",
-            seed=(int(time.time() * 1000) + i) % 1_000_000_007,
-            user_key="prefetch",
-            run_review=False,
-        )
-        if isinstance(page, dict) and page.get("error"):
-            log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
+        
+        # Calculate seed
+        seed = (int(time.time() * 1000) + attempts) % 1_000_000_007
+        
+        try:
+            for page in llm_generate_page_burst(req.brief or "", seed=seed, user_key="prefetch"):
+                if isinstance(page, dict) and page.get("error"):
+                    log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
+                    break
+                
+                path = prefetch.enqueue(page)
+                if path:
+                    new_paths.append(path)
+                    generated_count += 1
+                
+                if generated_count >= n:
+                    break
+        except Exception as e:
+            log.error("prefetch.fill: burst error client=%s err=%r", client_key, e)
             break
-        path = prefetch.enqueue(page)
-        if path:
-            new_paths.append(path)
+
     if new_paths:
         _schedule_prefetch_review(list(new_paths))
     queue_size = prefetch.size()

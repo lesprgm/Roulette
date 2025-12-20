@@ -12,6 +12,7 @@ def _normalized_page():
 def test_prefers_openrouter_over_groq(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "also-present")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
 
     called = {"groq": False, "openrouter": False}
@@ -36,6 +37,7 @@ def test_prefers_openrouter_over_groq(monkeypatch):
 def test_fallbacks_to_groq_when_openrouter_fails(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "also-present")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
 
     called = {"groq": False, "openrouter": False}
@@ -59,6 +61,7 @@ def test_fallbacks_to_groq_when_openrouter_fails(monkeypatch):
 
 def test__call_groq_for_page_hits_groq_endpoint(monkeypatch):
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
 
     captured = {"urls": [], "bodies": []}

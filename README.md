@@ -10,7 +10,7 @@ Non-Deterministic Website is an experimental platform that leverages large langu
 -  **Complete web pages** with layouts, styling, and interactive elements  
 -  **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
-The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
+The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. To maximize throughput, we use **Triple-Burst Streaming Generation**: a single request to Gemini generates three distinct websites in a stream, tripling our daily capacity within API limits. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
 
 ##  Screenshots
 
@@ -71,9 +71,22 @@ graph TD
     M -->|Unique| N[Render in Browser]
     M -->|Duplicate| E
     N --> O[Show Generated Experience]
-    O --> P[Prefetch Refills Queue]
+    O --> P[Triple-Burst Refills Queue]
     P --> C
     D --> N
+    
+    subgraph Triple-Burst Generation
+    P1[Request 3-Site Batch]
+    P2[Streaming JSON Parser]
+    P3[Enqueue Site #1]
+    P4[Enqueue Site #2]
+    P5[Enqueue Site #3]
+    P1 --> P2
+    P2 -->|Site 1 Complete| P3
+    P2 -->|Site 2 Complete| P4
+    P2 -->|Site 3 Complete| P5
+    end
+    P ---> P1
     
     style A fill:#e1f5ff
     style O fill:#d4edda
@@ -90,8 +103,8 @@ graph TD
 | **Frontend UI** | `templates/index.html`<br/>`static/ts-src/app.ts` | Landing page, generation controls, rendering engine |
 | **NDW Runtime** | `static/ts-src/ndw.ts` | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG |
 | **API Backend** | `api/main.py` | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints |
-| **LLM Client** | `api/llm_client.py` | Orchestrates Gemini-first with OpenRouter and Groq fallbacks, retries, prompt engineering |
-| **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery |
+| **LLM Client** | `api/llm_client.py` | Orchestrates Gemini **Triple-Burst** generation with OpenRouter and Groq fallbacks. |
+| **Prefetch Engine** | `api/prefetch.py` | Background queue that pre-generates experiences for instant delivery using a streaming parser. |
 | **Deduplication** | `api/dedupe.py` | Content fingerprinting to prevent near-identical outputs |
 | **Validators** | `api/validators.py` | JSON schema validation and normalization |
 | **Compliance Reviewer (optional)** | `api/llm_client.py` | Calls Gemini to audit or auto-fix generations before serving and caches reviewer notes |

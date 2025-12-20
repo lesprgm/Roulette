@@ -40,6 +40,7 @@ def test_generate_page_injects_category_note(monkeypatch, reload_llm_client):
 
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake")
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", fake_openrouter)
 
     for _ in range(3):
@@ -59,6 +60,7 @@ def test_generate_page_maintains_separate_cycles(monkeypatch, reload_llm_client)
 
     monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake")
     monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "")
     monkeypatch.setattr(llm_client, "_call_openrouter_for_page", fake_openrouter)
 
     llm_client.generate_page("", seed=1, user_key="alpha")
