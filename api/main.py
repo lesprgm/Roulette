@@ -623,7 +623,7 @@ def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str
 
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 def root() -> str:
     """
     Serve the demo UI from templates/index.html if present.
@@ -640,7 +640,7 @@ def root() -> str:
     return "<!doctype html><html><body><h1>Non-Deterministic Website</h1><p>Add templates/index.html for the UI.</p></body></html>"
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
