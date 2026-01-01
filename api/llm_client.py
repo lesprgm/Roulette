@@ -610,10 +610,9 @@ Seed: {seed}
                                 if t:
                                     full_text += t
                                 else:
-                                    # finishReason or empty candidate
-                                    pass
-                            except Exception:
-                                # Start of stream might be just '[' or incomplete
+                                    logging.debug("Gemini chunk has no text: keys=%s", list(data.keys()))
+                            except Exception as e:
+                                logging.warning("Buffer parse error: %r | buf: %s", e, clean_buf[:200])
                                 pass
                             
                             buffer = ""
@@ -623,6 +622,10 @@ Seed: {seed}
             for i in range(last_obj_count, len(sites)):
                 yield _normalize_doc(sites[i])
                 last_obj_count += 1
+                
+        if last_obj_count == 0:
+            logging.warning("Gemini stream finished but 0 valid objects found. full_text len=%d", len(full_text))
+            yield {"error": "No valid JSON objects found in stream"}
                 
     except Exception as e:
         logging.warning("Burst generation error: %r", e)

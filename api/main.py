@@ -910,12 +910,18 @@ def generate_stream(
         else:
             # Queue empty: do a burst and stream them all!
             log.info("prefetch.generate_stream: queue empty; initiating ad-hoc burst")
+            count = 0
             try:
                 for burst_page in llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key):
                     if isinstance(burst_page, dict) and not burst_page.get("error"):
                         try: counter.increment(1)
                         except: pass
                     yield json.dumps({"event": "page", "data": burst_page}) + "\n"
+                    count += 1
+                
+                if count == 0:
+                    yield json.dumps({"event": "error", "data": {"error": "No pages generated (Provider returned empty result)"}}) + "\n"
+
             except Exception as e:
                 log.exception("Ad-hoc burst stream failure")
                 yield json.dumps({"event": "error", "data": {"error": str(e)}}) + "\n"
