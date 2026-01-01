@@ -24,19 +24,24 @@ function ensureReadableTheme(target) {
             return;
         const style = getComputedStyle(el);
         const hasImage = style.backgroundImage && style.backgroundImage !== 'none';
-        const bgLum = relativeLuminance(parseRgb(style.backgroundColor || 'rgb(255,255,255)'));
-        if (!hasImage && bgLum > 0.85) {
+        const bgRgb = parseRgb(style.backgroundColor || 'rgb(255,255,255)');
+        const bgLum = relativeLuminance(bgRgb);
+        // If background is very light and there's no image, ensure it has a subtle gradient
+        if (!hasImage && bgLum > 0.9) {
             el.style.background = 'linear-gradient(140deg,#ffffff,#f1f5f9)';
         }
-        const colorLum = relativeLuminance(parseRgb(style.color || 'rgb(51,65,85)'));
-        if (colorLum > 0.8) {
-            el.style.color = '#1f2937';
-        }
-        // If background still ends up too light, switch to a soft neutral palette
-        const finalBgLum = relativeLuminance(parseRgb(getComputedStyle(el).backgroundColor || 'rgb(255,255,255)'));
-        if (finalBgLum > 0.92) {
-            el.style.background = 'linear-gradient(135deg,#f8fafc,#e5edff)';
-            el.style.color = '#1f2937';
+        const colorRgb = parseRgb(style.color || 'rgb(51,65,85)');
+        const colorLum = relativeLuminance(colorRgb);
+        // Contrast check: if background and text are both light, or both dark, force high contrast
+        if (Math.abs(bgLum - colorLum) < 0.3) {
+            if (bgLum > 0.5) {
+                // Light background -> Force dark text
+                el.style.color = '#1f2937';
+            }
+            else {
+                // Dark background -> Force light text
+                el.style.color = '#f8fafc';
+            }
         }
     }
     catch (err) {
@@ -198,6 +203,39 @@ function invokeDomReadyListener(listener) {
         console.warn('ndw dom-ready handler error', err);
     }
 }
+function executeDocScripts(scripts, target) {
+    scripts.forEach(old => {
+        if (old.src) {
+            const src = old.src.toLowerCase();
+            const safe = src.includes('cdn.tailwindcss.com') || src.includes('unpkg.com') || src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
+            if (!safe)
+                return;
+            if (document.querySelector(`script[src="${old.src}"]`))
+                return;
+            const sc = document.createElement('script');
+            sc.src = old.src;
+            if (old.type)
+                sc.type = old.type;
+            sc.async = false;
+            document.head.appendChild(sc);
+            return;
+        }
+        const code = old.textContent || '';
+        const exec = () => {
+            const sc = document.createElement('script');
+            if (old.type)
+                sc.type = old.type;
+            sc.textContent = code;
+            target?.appendChild(sc);
+        };
+        if (containsDomReadyHook(code)) {
+            runWithPatchedDomReady(exec);
+        }
+        else {
+            exec();
+        }
+    });
+}
 function runWithPatchedDomReady(exec) {
     if (document.readyState === 'loading') {
         exec();
@@ -257,18 +295,52 @@ async function callGenerate(brief, seed) {
 function setGenerating(is) {
     const coreBtns = [document.getElementById('landingGenerate'), document.getElementById('floatingGenerate')].filter(Boolean);
     const inlineBtns = Array.from(document.querySelectorAll('[data-gen-button="1"]'));
-    [...coreBtns, ...inlineBtns].forEach(b => { if (is) {
-        b.setAttribute('aria-busy', 'true');
-        b.disabled = true;
+    [...coreBtns, ...inlineBtns].forEach(b => {
+        if (is) {
+            b.setAttribute('aria-busy', 'true');
+            b.classList.add('opacity-50', 'pointer-events-none');
+        }
+        else {
+            b.removeAttribute('aria-busy');
+            b.classList.remove('opacity-50', 'pointer-events-none');
+        }
+    });
+}
+function ensureShutter() {
+    let top = document.getElementById('ndw-shutter-top');
+    let bot = document.getElementById('ndw-shutter-bot');
+    if (!top) {
+        top = document.createElement('div');
+        top.id = 'ndw-shutter-top';
+        Object.assign(top.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(-100%)' });
+        document.body.appendChild(top);
     }
-    else {
-        b.removeAttribute('aria-busy');
-        b.disabled = false;
-    } });
+    if (!bot) {
+        bot = document.createElement('div');
+        bot.id = 'ndw-shutter-bot';
+        Object.assign(bot.style, { position: 'fixed', bottom: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(100%)' });
+        document.body.appendChild(bot);
+    }
+    return { top, bot };
+}
+async function closeShutter() {
+    const { top, bot } = ensureShutter();
+    const gsap = window.gsap;
+    if (!gsap)
+        return;
+    return gsap.to([top, bot], { translateY: '0%', duration: 0.5, ease: 'power4.inOut' });
+}
+async function openShutter() {
+    const { top, bot } = ensureShutter();
+    const gsap = window.gsap;
+    if (!gsap)
+        return;
+    return gsap.to(top, { translateY: '-100%', duration: 0.6, ease: 'power4.inOut' })
+        .then(() => gsap.to(bot, { translateY: '100%', duration: 0.6, ease: 'power4.inOut', delay: -0.5 }));
 }
 _w.ndwGenerate = generateNew;
 async function generateNew(e) {
-    console.debug('[ndw] generateNew invoked');
+    console.debug('[ndw] generateNew invoked (streaming burst)');
     if (e)
         e.preventDefault();
     const seed = Math.floor(Math.random() * 1e9);
@@ -276,7 +348,7 @@ async function generateNew(e) {
     if (jsonOut)
         jsonOut.textContent = '';
     setGenerating(true);
-    showSpinner('Just a moment…');
+    await closeShutter();
     const panel = document.getElementById('jsonPanel');
     const btn = document.getElementById('toggleJsonBtn');
     if (panel && !panel.classList.contains('hidden')) {
@@ -284,19 +356,82 @@ async function generateNew(e) {
         if (btn)
             btn.textContent = 'Show JSON';
     }
+    let deadman;
     try {
-        const doc = await callGenerate('', seed);
-        enterSite(doc);
-        if (jsonOut)
-            jsonOut.textContent = JSON.stringify(doc, null, 2);
+        const resp = await fetch('/generate/stream', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
+            body: JSON.stringify({ brief: '', seed })
+        });
+        if (!resp.ok)
+            throw new Error(`Stream failed: ${resp.status}`);
+        const reader = resp.body?.getReader();
+        if (!reader)
+            throw new Error('No reader');
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let firstPageSeen = false;
+        // Safety: If no page arrives in 6s, force open
+        deadman = setTimeout(() => {
+            if (!firstPageSeen) {
+                console.error('[ndw] Shutter deadman triggered');
+                showError('Generation timed out');
+                openShutter();
+                setGenerating(false);
+            }
+        }, 6000);
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.trim())
+                    continue;
+                try {
+                    const chunk = JSON.parse(line);
+                    if (chunk.event === 'page') {
+                        const page = chunk.data;
+                        if (!firstPageSeen) {
+                            clearTimeout(deadman);
+                            enterSite(page);
+                            firstPageSeen = true;
+                            await openShutter();
+                        }
+                        if (jsonOut) {
+                            jsonOut.textContent += (jsonOut.textContent ? '\n\n' : '') + JSON.stringify(page, null, 2);
+                        }
+                    }
+                    else if (chunk.event === 'error') {
+                        clearTimeout(deadman);
+                        showError(chunk.data.error || 'Unknown streaming error');
+                        await openShutter();
+                    }
+                }
+                catch (err) {
+                    console.warn('Chunk parse error', err);
+                }
+            }
+        }
+        if (!firstPageSeen) {
+            // Stream ended but we never saw a page?
+            clearTimeout(deadman);
+            showError('Stream ended without content');
+            await openShutter();
+        }
         ensureFloatingGenerate();
         adaptGenerateButtons();
     }
     catch (err) {
+        if (deadman)
+            clearTimeout(deadman);
         console.error('Generate error:', err);
+        showError(String(err));
+        await openShutter();
     }
     finally {
-        hideSpinner();
         setGenerating(false);
     }
 }
@@ -383,15 +518,23 @@ function renderFullPage(html) {
         const doc = parser.parseFromString(String(html), 'text/html');
         document.querySelectorAll('style[data-gen-style="1"]').forEach(s => s.remove());
         doc.head?.querySelectorAll('style').forEach(s => { const st = document.createElement('style'); st.setAttribute('data-gen-style', '1'); st.textContent = s.textContent || ''; document.head.appendChild(st); });
-        document.body.removeAttribute('style');
-        document.body.className = '';
+        document.body.style.cssText = '';
+        // Do NOT wipe document.body.className completely to protect host classes like ndw-base
+        const hostClasses = ['ndw-base'];
+        const currentClasses = Array.from(document.body.classList);
+        const toKeep = currentClasses.filter(c => hostClasses.includes(c));
+        document.body.className = toKeep.join(' ');
         if (doc.body) {
             const newStyle = doc.body.getAttribute('style');
             const newClass = doc.body.getAttribute('class');
             if (newStyle)
-                document.body.setAttribute('style', newStyle);
-            if (newClass)
-                document.body.setAttribute('class', newClass);
+                document.body.style.cssText = newStyle;
+            if (newClass) {
+                newClass.split(/\s+/).forEach(c => {
+                    if (c.trim())
+                        document.body.classList.add(c.trim());
+                });
+            }
         }
         if (mainEl) {
             mainEl.innerHTML = '';
@@ -405,30 +548,17 @@ function renderFullPage(html) {
             scripts.push(...Array.from(doc.head.querySelectorAll('script')));
         if (doc.body)
             scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-        scripts.forEach(old => {
-            if (old.src)
-                return;
-            const code = old.textContent || '';
-            const exec = () => {
-                const sc = document.createElement('script');
-                if (old.type)
-                    sc.type = old.type;
-                sc.textContent = code;
-                mainEl?.appendChild(sc);
-            };
-            if (containsDomReadyHook(code)) {
-                runWithPatchedDomReady(exec);
-            }
-            else {
-                exec();
-            }
-        });
+        executeDocScripts(scripts, mainEl);
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
         ensureScrollableBody();
         upsertTitleOverlay(undefined);
         ensureReadableTheme();
+        try {
+            window.lucide?.createIcons();
+        }
+        catch (_) { }
     }
     catch (e) {
         console.error('Full-page render error:', e);
@@ -452,30 +582,17 @@ function renderInline(html) {
             scripts.push(...Array.from(doc.head.querySelectorAll('script')));
         if (doc.body)
             scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-        scripts.forEach(old => {
-            if (old.src)
-                return;
-            const code = old.textContent || '';
-            const exec = () => {
-                const sc = document.createElement('script');
-                if (old.type)
-                    sc.type = old.type;
-                sc.textContent = code;
-                mainEl?.appendChild(sc);
-            };
-            if (containsDomReadyHook(code)) {
-                runWithPatchedDomReady(exec);
-            }
-            else {
-                exec();
-            }
-        });
+        executeDocScripts(scripts, mainEl);
         ensureFloatingGenerate();
         ensureSitesCounterOverlay();
         adaptGenerateButtons();
         ensureScrollableBody();
         upsertTitleOverlay(undefined);
         ensureReadableTheme();
+        try {
+            window.lucide?.createIcons();
+        }
+        catch (_) { }
     }
     catch (e) {
         console.error('Inline render error:', e);
@@ -509,10 +626,15 @@ function renderNdwSnippet(snippet) {
             appRoot.id = 'ndw-app';
             sandbox.appendChild(appRoot);
             const html = snippet.html || '';
-            const safeHtml = stripExternalScripts(html);
+            const safeHtml = html; // executeDocScripts will handle whitelisting
             const hasCanvasCreation = /NDW\.makeCanvas/.test(snippet.js || '');
             if (safeHtml.trim()) {
                 appRoot.innerHTML = safeHtml;
+                // Also extract and run any scripts found in the HTML
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(safeHtml, 'text/html');
+                const embedded = Array.from(doc.querySelectorAll('script'));
+                executeDocScripts(embedded, appRoot);
                 const nested = appRoot.querySelector('#ndw-app');
                 if (nested && nested !== appRoot) {
                     const cls = nested.getAttribute('class');
@@ -593,6 +715,10 @@ function renderNdwSnippet(snippet) {
         const sandboxEl = document.getElementById('ndw-sandbox');
         if (sandboxEl instanceof HTMLElement)
             ensureReadableTheme(sandboxEl);
+        try {
+            window.lucide?.createIcons();
+        }
+        catch (_) { }
     }
     catch (e) {
         console.error('NDW snippet render error:', e);

@@ -1,0 +1,13 @@
+[project]
+name = "roulette-api"
+version = "2.0.0"
+description = "Cloudflare Worker API for Non-Deterministic Website"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.9.0",
+    "httpx>=0.27.0",
+    "uvicorn", 
+]
+
+[tool.uv]
+package = true

@@ -14,6 +14,7 @@ type AppNormalizedDoc = NdwSnippet | FullPageDoc | ErrorDoc | ComponentDoc | any
 type AppWindow = Window & {
   __NDW_showSnippetErrorOverlay?: (err: any) => void;
   API_KEY?: string;
+  NDW?: any;
 };
 const _w = window as AppWindow;
 
@@ -224,7 +225,7 @@ function executeDocScripts(scripts: HTMLScriptElement[], target: HTMLElement | n
   scripts.forEach(old => {
     if (old.src) {
       const src = old.src.toLowerCase();
-      const safe = src.includes('cdn.tailwindcss.com') || src.includes('unpkg.com') || src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
+      const safe = src.includes('unpkg.com') || src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
       if (!safe) return;
       if (document.querySelector(`script[src="${old.src}"]`)) return;
       const sc = document.createElement('script');
@@ -356,15 +357,33 @@ async function openShutter() {
     .then(() => gsap.to(bot, { translateY: '100%', duration: 0.6, ease: 'power4.inOut', delay: -0.5 }));
 }
 
+let activeController: AbortController | null = null;
+
 (_w as any).ndwGenerate = generateNew;
 async function generateNew(e?: Event) {
+  if ((_w as any).__ndwGenerating) {
+    console.debug('[ndw] generation already in progress, ignoring click');
+    return;
+  }
+  
+  if (activeController) {
+    activeController.abort();
+    activeController = null;
+  }
+  
+  activeController = new AbortController();
+  const signal = activeController.signal;
+
   console.debug('[ndw] generateNew invoked (streaming burst)');
   if (e) e.preventDefault();
   const seed = Math.floor(Math.random() * 1e9);
   const jsonOut = document.getElementById('jsonOut');
   if (jsonOut) jsonOut.textContent = '';
 
+  (_w as any).__ndwGenerating = true;
+  (_w as any).__ndwTimedOut = false;
   setGenerating(true);
+  if (mainEl) mainEl.innerHTML = '';
   await closeShutter();
 
   const panel = document.getElementById('jsonPanel');
@@ -374,11 +393,16 @@ async function generateNew(e?: Event) {
     if (btn) btn.textContent = 'Show JSON';
   }
 
+  const startTime = Date.now();
+  const MIN_DELAY = 3000; // 3s mandatory delay
+
+  let deadman: any;
   try {
     const resp = await fetch('/generate/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
-      body: JSON.stringify({ brief: '', seed })
+      body: JSON.stringify({ brief: '', seed }),
+      signal
     });
 
     if (!resp.ok) throw new Error(`Stream failed: ${resp.status}`);
@@ -386,49 +410,96 @@ async function generateNew(e?: Event) {
     if (!reader) throw new Error('No reader');
 
     const decoder = new TextDecoder();
-    let buffer = '';
+    let messageBuffer = '';
     let firstPageSeen = false;
+    let currentEvent = '';
+
+    const petDeadman = () => {
+      console.debug('[ndw] petDeadman reset at', Date.now());
+      if (deadman) clearTimeout(deadman);
+      deadman = setTimeout(() => {
+        if (!firstPageSeen) {
+          console.error('[ndw] Shutter deadman triggered');
+          (_w as any).__ndwTimedOut = true;
+          showError('Generation is taking longer than usual. Please check your connection or wait a few more seconds and try again.');
+          openShutter();
+          setGenerating(false);
+        }
+      }, 120000); // 120s
+    };
+    petDeadman();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      petDeadman(); // Activity seen, reset timeout
+      messageBuffer += decoder.decode(value, { stream: true });
+      const lines = messageBuffer.split('\n');
+      messageBuffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const chunk = JSON.parse(line);
-          if (chunk.event === 'page') {
-            const page = chunk.data;
-            if (!firstPageSeen) {
-              enterSite(page);
-              firstPageSeen = true;
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        
+        if (trimmed.startsWith('event: ')) {
+          currentEvent = trimmed.substring(7);
+        } else if (trimmed.startsWith('data: ')) {
+          const dataStr = trimmed.substring(6);
+          try {
+            const data = JSON.parse(dataStr);
+            if (currentEvent === 'page') {
+              const page = data;
+              if (!firstPageSeen) {
+                clearTimeout(deadman);
+                firstPageSeen = true;
+                
+                // Wait for at least 3 seconds total before opening
+                const elapsed = Date.now() - startTime;
+                if (elapsed < MIN_DELAY) {
+                  await new Promise(r => setTimeout(r, MIN_DELAY - elapsed));
+                }
+                
+                await renderFullPage(page.html);
+                await openShutter();
+              } else {
+                renderInline(page.html);
+              }
+            } else if (currentEvent === 'meta') {
+              console.debug('[ndw] meta event:', data);
+            } else if (currentEvent === 'error') {
+              showError(`Generation error: ${data.error}`);
               await openShutter();
             }
-            if (jsonOut) {
-              jsonOut.textContent += (jsonOut.textContent ? '\n\n' : '') + JSON.stringify(page, null, 2);
-            }
-          } else if (chunk.event === 'error') {
-            showError(chunk.data.error || 'Unknown streaming error');
-            await openShutter();
+          } catch (e) {
+            console.warn('SSE parse error', e);
           }
-        } catch (err) {
-          console.warn('Chunk parse error', err);
         }
       }
+    }
+    
+    if (!firstPageSeen) {
+        // Stream ended but we never saw a page?
+        clearTimeout(deadman);
+        if (!(_w as any).__ndwTimedOut) {
+          showError('Connection closed before content was ready. Try again?');
+          await openShutter();
+        }
     }
 
     ensureFloatingGenerate();
     adaptGenerateButtons();
   } catch (err) {
+    if (deadman) clearTimeout(deadman);
     console.error('Generate error:', err);
-    showError(String(err));
-    await openShutter();
+    if (!(_w as any).__ndwTimedOut) {
+      showError(`Oops! Something went wrong: ${err}`);
+      await openShutter();
+    }
   } finally {
     setGenerating(false);
+    (_w as any).__ndwGenerating = false;
+    activeController = null;
   }
 }
 

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Non-Deterministic Website</title>
+
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700;800&display=swap"
+    rel="stylesheet">
+
+  <link rel="stylesheet" href="/tailwind.css" />
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- GSAP -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-C6E3TKE7QK"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag("js", new Date());
+    gtag("config", "G-C6E3TKE7QK");
+  </script>
+</head>
+
+<body class="ndw-base" data-api-key="">
+  <!-- Noise Overlay -->
+  <div class="noise-overlay"></div>
+
+  <!-- Cursor Glow -->
+  <div id="cursor-glow"></div>
+
+  <!-- Dynamic Background Blobs -->
+  <div class="blob-cont">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <main id="appMain" class="w-full min-h-screen">
+    <section class="hero-wrap" data-role="hero">
+      <div class="container">
+        <h1 class="hero-title" data-text="Roulette">
+          <span class="hero-text">
+            <span class="letter">R</span><span class="letter">o</span><span class="letter">u</span><span
+              class="letter">l</span><span class="letter">e</span><span class="letter">t</span><span
+              class="letter">t</span><span class="letter">e</span>
+          </span>
+        </h1>
+        <p class="hero-sub">Random websites with every click.</p>
+
+        <!-- Placeholder for standard button if JS fails -->
+        <div class="mt-8 hero-btn-wrap" style="opacity:0"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Load compiled TypeScript as ES modules -->
+  <script type="module" src="/ts-build/ndw.js"></script>
+  <script type="module" src="/ts-build/app.js"></script>
+
+  <script>
+    (function () {
+      // ========== GSAP Timelines ==========
+      const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
+
+      // Staggered Letter Animation
+      tl.from(".letter", {
+        y: 80,
+        opacity: 0,
+        rotateX: -90,
+        stagger: 0.05,
+        duration: 1,
+        ease: "back.out(1.7)"
+      })
+        .from(".hero-sub", {
+          y: 20,
+          opacity: 0,
+          duration: 0.8,
+        }, "-=0.5");
+
+      // ========== Ambient Blob Animation ==========
+      function moveBlob(target) {
+        gsap.to(target, {
+          x: "random(-150, 150)",
+          y: "random(-150, 150)",
+          scale: "random(0.85, 1.15)",
+          rotation: "random(-20, 20)",
+          duration: "random(12, 22)",
+          ease: "sine.inOut",
+          onComplete: () => moveBlob(target)
+        });
+      }
+      document.querySelectorAll('.blob').forEach(blob => moveBlob(blob));
+
+      // ========== Cursor Glow Tracking ==========
+      const cursorGlow = document.getElementById('cursor-glow');
+      if (cursorGlow) {
+        const xTo = gsap.quickTo(cursorGlow, "left", { duration: 0.6, ease: "power3" });
+        const yTo = gsap.quickTo(cursorGlow, "top", { duration: 0.6, ease: "power3" });
+
+        window.addEventListener('pointermove', (e) => {
+          xTo(e.clientX);
+          yTo(e.clientY);
+        }, { passive: true });
+      }
+    })();
+  </script>
+</body>
+
+</html>
