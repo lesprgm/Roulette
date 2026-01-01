@@ -572,29 +572,51 @@ Seed: {seed}
         full_text = ""
         last_obj_count = 0
         
+        # Buffer for accumulating multi-line JSON chunks
+        buffer = ""
+        brace_count = 0
+        in_string = False
+        escape = False
+
         for line in resp.iter_lines():
             if not line:
                 continue
-            chunk = line.decode("utf-8").strip()
-            # The REST API stream format is a JSON array of response objects
-            # Each chunk starts with a comma or brace
-            if chunk.startswith("[") or chunk.startswith(","):
-                chunk = chunk[1:].strip()
-            if chunk.endswith("]"):
-                chunk = chunk[:-1].strip()
-            if not chunk:
-                continue
-                
-            try:
-                data = json.loads(chunk)
-                t = _extract_gemini_text(data)
-                if t:
-                    full_text += t
+            chunk = line.decode("utf-8")
+            
+            # Simple state machine to find complete top-level objects in the stream array
+            for char in chunk:
+                buffer += char
+                if char == '"' and not escape:
+                    in_string = not in_string
+                if in_string:
+                    escape = (char == "\\") and not escape
                 else:
-                    logging.debug("Gemini chunk has no text: keys=%s", list(data.keys()))
-            except Exception as e:
-                logging.warning("Gemini stream parse error: %r | chunk: %s", e, chunk[:100])
-                continue
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        # If we closed a top-level object
+                        if brace_count == 0 and buffer.strip():
+                            # Clean up leading commas/brackets if present
+                            clean_buf = buffer.strip()
+                            if clean_buf.startswith(','): clean_buf = clean_buf[1:].strip()
+                            if clean_buf.startswith('['): clean_buf = clean_buf[1:].strip()
+                            if clean_buf.endswith(','): clean_buf = clean_buf[:-1].strip()
+                            if clean_buf.endswith(']'): clean_buf = clean_buf[:-1].strip()
+                            
+                            try:
+                                data = json.loads(clean_buf)
+                                t = _extract_gemini_text(data)
+                                if t:
+                                    full_text += t
+                                else:
+                                    # finishReason or empty candidate
+                                    pass
+                            except Exception:
+                                # Start of stream might be just '[' or incomplete
+                                pass
+                            
+                            buffer = ""
 
             # Stream-parse objects from the array
             sites = _extract_completed_objects_from_array(full_text)
