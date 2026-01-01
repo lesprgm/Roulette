@@ -590,7 +590,10 @@ Seed: {seed}
                 t = _extract_gemini_text(data)
                 if t:
                     full_text += t
-            except Exception:
+                else:
+                    logging.debug("Gemini chunk has no text: keys=%s", list(data.keys()))
+            except Exception as e:
+                logging.warning("Gemini stream parse error: %r | chunk: %s", e, chunk[:100])
                 continue
 
             # Stream-parse objects from the array
