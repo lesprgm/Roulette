@@ -1,5 +1,0 @@
-@import "tailwindcss";
-/* Scan the app HTML + scripts for class usage (Tailwind v4) */
-@source "../../templates/**/*.html";
-@source "../../static/ts-src/**/*.ts";
-@source "../../static/ts-build/**/*.js";
