@@ -1,12 +1,17 @@
-import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
+import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'url';
 
-export default defineWorkersConfig({
+const rootDir = fileURLToPath(new URL('.', import.meta.url));
+
+export default defineConfig({
   test: {
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: './wrangler.test.toml' },
-        isolatedStorage: false,
-      },
-    },
+    include: ['tests/frontend/**/*.test.ts'],
+    environment: 'happy-dom',
+  },
+  resolve: {
+    alias: [
+      { find: /^\.\/tunnel\.js$/, replacement: `${rootDir}static/ts-src/tunnel.ts` },
+      { find: 'three', replacement: `${rootDir}tests/frontend/mocks/three.ts` },
+    ],
   },
 });

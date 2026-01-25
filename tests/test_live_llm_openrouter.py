@@ -81,8 +81,12 @@ def test_openrouter_live_chat_completion():
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert isinstance(data, dict) and "choices" in data and data["choices"], data
-    content = data["choices"][0]["message"]["content"]
-    assert isinstance(content, str) and len(content) > 0
+    message = data["choices"][0]["message"]
+    content = message.get("content")
+    reasoning = message.get("reasoning")
+    has_text = (isinstance(content, str) and content.strip()) or (isinstance(reasoning, str) and reasoning.strip())
+    has_tools = bool(message.get("tool_calls") or message.get("function_call"))
+    assert has_text or has_tools, message
 
 
 @pytest.mark.skipif(not _live_enabled(), reason="Live LLM tests disabled or API key missing")

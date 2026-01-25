@@ -94,17 +94,22 @@ class TestLLMStreamParsing(unittest.TestCase):
 
     @patch("requests.post")
     def test_handles_empty_stream_gracefully(self, mock_post):
-        """Verify it yields an error if stream yields no objects."""
+        """Verify it falls back when the stream yields no objects."""
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.iter_lines.return_value = [] # Empty stream
         mock_post.return_value = mock_response
+        from api import llm_client
+        with patch.object(llm_client, "OPENROUTER_API_KEY", "fake"), \
+             patch.object(llm_client, "FORCE_OPENROUTER_ONLY", True), \
+             patch.object(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": "<div>Fallback</div>"}):
+            results = list(generate_page_burst("brief", 123))
 
-        results = list(generate_page_burst("brief", 123))
-
-        self.assertEqual(len(results), 1)
-        self.assertIn("error", results[0])
-        self.assertIn("No valid JSON objects", results[0]["error"])
+        self.assertGreaterEqual(len(results), 1)
+        self.assertNotIn("error", results[0])
+        self.assertEqual(results[0]["html"], "<div>Fallback</div>")
+        debug = results[0].get("ndw_debug", {})
+        self.assertEqual(debug.get("gemini_feedback", {}).get("reason"), "empty_stream")
 
     @patch("requests.post")
     def test_ignores_invalid_json_garbage(self, mock_post):
@@ -128,6 +133,46 @@ class TestLLMStreamParsing(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["html"], "Valid")
+
+    @patch("requests.post")
+    def test_tolerant_parse_html_stream(self, mock_post):
+        """Recover when Gemini emits usable HTML but no valid JSON objects."""
+        def make_chunk(text):
+            return json.dumps({
+                "candidates": [{"content": {"parts": [{"text": text}]}}]
+            }).encode("utf-8") + b"\n"
+
+        html = "<!doctype html><html><body><main id='ndw-shell'>Hi</main></body></html>"
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.iter_lines.return_value = [make_chunk(html)]
+        mock_post.return_value = mock_response
+
+        from api import llm_client
+        with patch.object(llm_client, "_fallback_single", side_effect=AssertionError("fallback invoked")):
+            results = list(generate_page_burst("brief", 123))
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["kind"], "full_page_html")
+        self.assertIn("ndw-shell", results[0]["html"])
+
+    @patch("requests.post")
+    def test_fallbacks_on_http_error(self, mock_post):
+        """Verify it falls back when Gemini returns HTTP error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_response.text = "overloaded"
+        mock_post.return_value = mock_response
+
+        from api import llm_client
+        with patch.object(llm_client, "OPENROUTER_API_KEY", "fake"), \
+             patch.object(llm_client, "FORCE_OPENROUTER_ONLY", True), \
+             patch.object(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": "<div>Fallback</div>"}):
+            results = list(generate_page_burst("brief", 123))
+
+        self.assertGreaterEqual(len(results), 1)
+        self.assertNotIn("error", results[0])
+        self.assertEqual(results[0]["html"], "<div>Fallback</div>")
 
 if __name__ == "__main__":
     unittest.main()

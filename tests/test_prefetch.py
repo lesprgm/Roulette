@@ -123,12 +123,18 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
 
     r1 = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
     assert r1.status_code == 200
-    assert r1.json() == docA
+    r1_json = r1.json()
+    if "signature" in r1_json:
+        del r1_json["signature"]
+    assert r1_json == docA
     assert pf.size() == 1
 
     r2 = client.post("/generate", json={"brief": "", "seed": 2}, headers=API_HEADERS)
     assert r2.status_code == 200
-    assert r2.json() == docB
+    r2_json = r2.json()
+    if "signature" in r2_json:
+        del r2_json["signature"]
+    assert r2_json == docB
     assert pf.size() == 0
 
     r3 = client.post("/generate", json={"brief": "", "seed": 3}, headers=API_HEADERS)
@@ -179,13 +185,13 @@ def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
     main_mod.PREFETCH_REVIEW_BATCH = 2
     main_mod.PREFETCH_MAX_WORKERS = 3
 
-    review_batches = []
+    reviewed_counts = []
 
-    def _capture_review(paths):
-        if paths:
-            review_batches.append(list(paths))
+    def _capture_review(docs):
+        reviewed_counts.append(len(docs))
+        return [{"index": i, "ok": True} for i in range(len(docs))]
 
-    monkeypatch.setattr(main_mod, "_schedule_prefetch_review", _capture_review)
+    monkeypatch.setattr(main_mod, "run_compliance_batch", _capture_review)
 
     active = {"count": 0, "max": 0}
     lock = threading.Lock()
@@ -210,7 +216,7 @@ def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
 
     assert pf.size() == 4
     assert active["max"] > 1  # Parallelism observed
-    reviewed = sum(len(batch) for batch in review_batches)
+    reviewed = sum(reviewed_counts)
     assert reviewed == 4
 
 

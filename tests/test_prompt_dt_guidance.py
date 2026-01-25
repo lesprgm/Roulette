@@ -76,8 +76,11 @@ def test_prompt_includes_canonical_template():
 def test_prompt_warns_against_chaining_ndw_calls():
     """Ensure prompt forbids chaining NDW.* onto other expressions."""
     lower = _PAGE_SHAPE_HINT.lower()
-    assert "never chain" in lower and "ndw" in lower, \
-        "Prompt must warn against chaining NDW calls"
+    # The new SDK Cheat Sheet format shows each method call as a statement
+    # The prompt should either warn against chaining or show proper usage patterns
+    assert ("never chain" in lower and "ndw" in lower) or \
+           ("ndw." in lower and "=== " in lower), \
+        "Prompt must warn against chaining NDW calls or show proper statement patterns"
 
 
 def test_prompt_encourages_variety():

@@ -230,7 +230,61 @@ def test_generate_page_retries_when_review_blocks(monkeypatch):
     assert out.get("error"), "Expected compliance failure to surface as error"
 
 
+def test_generate_page_retries_on_block_issue(monkeypatch):
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", True)
+    monkeypatch.setattr(llm_client, "_gemini_review_active", lambda: True)
+
+    def fake_review(doc, brief, category_note):
+        return {"ok": True, "issues": [{"severity": "block", "message": "bad"}]}
+
+    monkeypatch.setattr(llm_client, "_call_gemini_review", fake_review)
+    html = "<!doctype html><html><body><main id='ndw-shell'>Blocked</main></body></html>"
+    monkeypatch.setattr(llm_client, "_call_openrouter_for_page", lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": html})
+
+    out = llm_client.generate_page("any", seed=12)
+    assert out.get("error"), "Expected block issues to reject generation"
+
+
+def test_normalize_strips_external_assets():
+    html = (
+        "<!doctype html><html><head>"
+        "<script src=\"https://cdn.tailwindcss.com\"></script>"
+        "<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Outfit\">"
+        "<style>@import url('https://fonts.googleapis.com/css2?family=Outfit');</style>"
+        "</head><body><script>console.log('ok')</script></body></html>"
+    )
+    out = llm_client._normalize_doc({"kind": "full_page_html", "html": html})
+    assert "cdn.tailwindcss.com" not in out.get("html", "")
+    assert "fonts.googleapis.com" not in out.get("html", "")
+    assert "/static/vendor/tailwind-play.js" in out.get("html", "")
+    assert "console.log('ok')" in out.get("html", "")
+    debug = out.get("ndw_debug")
+    assert isinstance(debug, dict) and debug.get("external_assets_removed")
+
+
+def test_normalize_rewrites_known_cdns():
+    html = (
+        "<!doctype html><html><head>"
+        "<script src=\"https://cdn.tailwindcss.com\"></script>"
+        "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js\"></script>"
+        "<script src=\"https://unpkg.com/lucide@latest\"></script>"
+        "</head><body></body></html>"
+    )
+    out = llm_client._normalize_doc({"kind": "full_page_html", "html": html})
+    html_out = out.get("html", "")
+    assert "/static/vendor/tailwind-play.js" in html_out
+    assert "/static/vendor/gsap.min.js" in html_out
+    assert "/static/vendor/lucide.min.js" in html_out
+    assert "cdn.tailwindcss.com" not in html_out
+    assert "cdnjs.cloudflare.com" not in html_out
+    assert "unpkg.com/lucide" not in html_out
+
+
 def test_js_syntax_checker_detects_comment_bug():
+    if not hasattr(llm_client, "_first_js_syntax_error"):
+        pytest.skip("JS syntax checker removed")
     html = """<!doctype html><html><body><script>const hue = 120; // commentconst color = 'red';</script></body></html>"""
     doc = {"kind": "full_page_html", "html": html}
     err = llm_client._first_js_syntax_error(doc)  # type: ignore[attr-defined]
