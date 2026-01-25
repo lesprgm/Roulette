@@ -67,10 +67,61 @@ except Exception:
     _rr_cls = None
 
 
+def _is_render_env() -> bool:
+    return bool(
+        os.getenv("RENDER")
+        or os.getenv("RENDER_SERVICE_ID")
+        or os.getenv("RENDER_INSTANCE_ID")
+        or os.getenv("RENDER_EXTERNAL_URL")
+    )
+
+
+def _log_startup_checks() -> None:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not (openrouter_key or groq_key or gemini_key):
+        log.warning("startup.check: no LLM API keys set; generation will fail in production")
+
+    compliance_provider = (os.getenv("COMPLIANCE_PROVIDER", "gemini") or "gemini").lower()
+    if compliance_provider == "gemini":
+        review_key = os.getenv("GEMINI_REVIEW_API_KEY", "").strip() or gemini_key
+        if not review_key:
+            log.warning("startup.check: COMPLIANCE_PROVIDER=gemini but GEMINI_REVIEW_API_KEY/GEMINI_API_KEY missing")
+    elif compliance_provider == "openrouter":
+        review_model = os.getenv("OPENROUTER_REVIEW_MODEL", "").strip()
+        if not openrouter_key or not review_model:
+            log.warning("startup.check: COMPLIANCE_PROVIDER=openrouter but OPENROUTER_API_KEY or OPENROUTER_REVIEW_MODEL missing")
+
+    if not os.getenv("PREFETCH_TOKEN_SECRET", "").strip():
+        log.warning("startup.check: PREFETCH_TOKEN_SECRET not set; preview tokens reset on restart")
+
+    required_assets = [
+        Path("static/tailwind.css"),
+        Path("static/vendor/tailwind-play.js"),
+        Path("static/vendor/gsap.min.js"),
+        Path("static/vendor/lucide.min.js"),
+    ]
+    for asset in required_assets:
+        if not asset.exists():
+            log.warning("startup.check: missing asset %s", asset.as_posix())
+
+    if _is_render_env():
+        cache_mount = Path("/opt/render/project/src/cache")
+        prefetch_dir = Path(os.getenv("PREFETCH_DIR", "cache/prefetch")).resolve(strict=False)
+        if not cache_mount.exists():
+            log.warning("startup.check: Render disk not mounted at %s; prefetch queue will be ephemeral", cache_mount)
+        elif not str(prefetch_dir).startswith(str(cache_mount.resolve(strict=False))):
+            log.warning("startup.check: PREFETCH_DIR=%s is not on Render disk %s", prefetch_dir, cache_mount)
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
+        _log_startup_checks()
         if llm_generate_page is not None and llm_status().get("has_token"):
             _prefill_prefetch_queue()
         if _prefetch_topup_enabled():
@@ -102,7 +153,19 @@ app.add_middleware(
 
 static_dir = Path("static")
 if static_dir.exists():
+    # Mount subdirectories at root-level paths expected by the frontend.
+    # Order matters: more specific routes first.
+    js_dir = static_dir / "js"
+    css_dir = static_dir / "css"
+    if js_dir.exists():
+        app.mount("/js", StaticFiles(directory=str(js_dir)), name="static_js")
+    if css_dir.exists():
+        app.mount("/css", StaticFiles(directory=str(css_dir)), name="static_css")
+    # Mount tailwind.css as a single file at root (requires serving the parent dir)
+    # FastAPI's StaticFiles can serve individual files if we mount the static dir
+    # and reference the file directly. We'll mount for the asset and rely on catch-all.
     app.mount("/static", StaticFiles(directory=str(static_dir), html=False), name="static")
+
 
 
 
@@ -186,6 +249,28 @@ def _rate_limit_headers(remaining: int, reset_ts: int, *, limited: bool = False)
     return headers
 
 
+def _get_cached_prefetch_previews(limit: int) -> Optional[List[Dict[str, Any]]]:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return None
+    if PREFETCH_PREVIEW_CACHE_TTL <= 0:
+        return None
+    now = time.time()
+    with _PREFETCH_PREVIEW_LOCK:
+        cached = _PREFETCH_PREVIEW_CACHE.get(limit)
+        if cached and (now - cached[0]) <= PREFETCH_PREVIEW_CACHE_TTL:
+            return cached[1]
+    return None
+
+
+def _set_cached_prefetch_previews(limit: int, items: List[Dict[str, Any]]) -> None:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    if PREFETCH_PREVIEW_CACHE_TTL <= 0:
+        return
+    with _PREFETCH_PREVIEW_LOCK:
+        _PREFETCH_PREVIEW_CACHE[limit] = (time.time(), items)
+
+
 def _rate_limit_payload(reset_ts: int) -> Dict[str, Any]:
     wait_seconds = max(0, reset_ts - int(time.time()))
     return {
@@ -216,6 +301,10 @@ except Exception:
 if PREFETCH_MAX_WORKERS < 1:
     PREFETCH_MAX_WORKERS = 1
 
+PREFETCH_PREVIEW_CACHE_TTL = float(os.getenv("PREFETCH_PREVIEW_CACHE_TTL", "2") or 2)
+_PREFETCH_PREVIEW_CACHE: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
+_PREFETCH_PREVIEW_LOCK = threading.Lock()
+
 
 def _prefetch_topup_enabled() -> bool:
     # Disable during pytest runs or when env flag set to 0/false
@@ -244,31 +333,31 @@ def _prefill_prefetch_queue() -> None:
     generated_count = 0
     failures = 0
     max_failures = max(5, desired * 3)
+    target_size = current + desired
     
     while generated_count < desired and failures < max_failures:
         seed = (int(time.time() * 1000) + generated_count + failures) % 1_000_000_007
         try:
+            burst_docs: List[Dict[str, Any]] = []
             for page in llm_generate_page_burst("", seed=seed, user_key="prefetch"):
                 if isinstance(page, dict) and page.get("error"):
                     failures += 1
                     break
-                
-                path = prefetch.enqueue(page)
-                if path:
-                    paths.append(path)
-                    generated_count += 1
+                if isinstance(page, dict):
+                    burst_docs.append(page)
+            if burst_docs:
+                approved = _apply_compliance_batch(burst_docs, "prefetch.prewarm")
+                added_paths = _enqueue_prefetch_docs(approved, context="prefetch.prewarm", max_queue=target_size)
+                paths.extend(added_paths)
+                generated_count += len(added_paths)
+                if added_paths:
                     failures = 0
                 else:
                     failures += 1
-                
-                if generated_count >= desired:
-                    break
         except Exception as e:
             log.error("prefetch.prewarm: burst error err=%r", e)
             failures += 1
             break
-    if paths:
-        _schedule_prefetch_review(list(paths))
     log.info("prefetch.prewarm: completed with %d documents (failures=%d)", len(paths), failures)
 
 
@@ -312,7 +401,6 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                 target,
                 (brief or "")[:60],
             )
-            pending_paths: List[Path] = []
             generated = 0
             failures = 0
             max_failures = max(5, target * 3)
@@ -341,25 +429,20 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                     for fut in done:
                         futures.discard(fut)
                         try:
-                            # Use burst generator
-                            for page in fut.result():
-                                if not isinstance(page, dict) or page.get("error"):
-                                    failures += 1
-                                    continue
-                                
-                                if prefetch.size() >= target:
-                                    continue
-                                
-                                path = prefetch.enqueue(page)
-                                if path:
-                                    generated += 1
-                                    failures = 0
-                                    pending_paths.append(path)
-                                    if len(pending_paths) >= PREFETCH_REVIEW_BATCH:
-                                        _schedule_prefetch_review(list(pending_paths))
-                                        pending_paths.clear()
-                                else:
-                                    failures += 1
+                            burst_docs = [p for p in fut.result() if isinstance(p, dict) and not p.get("error")]
+                            if not burst_docs:
+                                failures += 1
+                                continue
+                            approved = _apply_compliance_batch(burst_docs, "prefetch.top_up")
+                            if not approved:
+                                failures += 1
+                                continue
+                            added_paths = _enqueue_prefetch_docs(approved, context="prefetch.top_up", max_queue=target)
+                            if added_paths:
+                                generated += len(added_paths)
+                                failures = 0
+                            else:
+                                failures += 1
                         except Exception as exc:
                             failures += 1
                             log.warning("prefetch.top_up: generation worker error: %r", exc)
@@ -373,9 +456,6 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
                         futures.clear()
                         break
                     _submit_available_jobs()
-            if pending_paths:
-                _schedule_prefetch_review(list(pending_paths))
-                pending_paths.clear()
             updated_size = prefetch.size()
             if updated_size >= target:
                 log.info("prefetch.top_up: refill complete queue_size=%d", updated_size)
@@ -396,6 +476,71 @@ def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
     except Exception:
         log.exception("prefetch.top_up: unexpected error")
         pass
+
+
+def _apply_compliance_batch(docs: List[Dict[str, Any]], context: str) -> List[Dict[str, Any]]:
+    if not docs:
+        return []
+    reviews = run_compliance_batch(docs)
+    if not isinstance(reviews, list):
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            approved: List[Dict[str, Any]] = []
+            for doc in docs:
+                stub = {"ok": True, "notes": "review skipped in tests"}
+                doc["review"] = stub
+                approved.append(doc)
+            return approved
+        if os.getenv("COMPLIANCE_FAIL_OPEN", "0").lower() in {"1", "true", "yes", "on"}:
+            approved = []
+            for doc in docs:
+                stub = {"ok": True, "notes": "review unavailable; fail-open"}
+                doc["review"] = stub
+                approved.append(doc)
+            log.warning("%s: compliance batch unavailable; fail-open %d docs", context, len(docs))
+            return approved
+        log.warning("%s: compliance batch unavailable; dropping %d docs", context, len(docs))
+        return []
+    review_map: Dict[int, Dict[str, Any]] = {}
+    for idx, item in enumerate(reviews):
+        if not isinstance(item, dict):
+            continue
+        key = item.get("index")
+        if isinstance(key, int):
+            review_map[key] = item
+        else:
+            review_map[idx] = item
+    approved = []
+    for idx, doc in enumerate(docs):
+        review = review_map.get(idx)
+        if not review:
+            log.warning("%s: missing review for index=%d", context, idx)
+            continue
+        if review.get("ok") is False:
+            log.info("%s: review rejected index=%d", context, idx)
+            continue
+        meta = doc.get("_prefetch") if isinstance(doc, dict) else None
+        corrected = review.get("doc")
+        if isinstance(corrected, dict):
+            doc = corrected
+            if isinstance(meta, dict):
+                doc["_prefetch"] = meta
+        doc["review"] = review
+        approved.append(doc)
+    return approved
+
+
+def _enqueue_prefetch_docs(docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None) -> List[Path]:
+    if not docs:
+        return []
+    stored: List[Path] = []
+    for idx, doc in enumerate(docs):
+        if max_queue is not None and prefetch.size() >= max_queue:
+            break
+        path = prefetch.enqueue(doc)
+        if not path:
+            continue
+        stored.append(path)
+    return stored
 
 
 def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
@@ -449,9 +594,12 @@ def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
                         pass
                     continue
                 doc = docs[idx]
+                meta = doc.get("_prefetch") if isinstance(doc, dict) else None
                 corrected = review.get("doc")
                 if isinstance(corrected, dict):
                     doc = corrected
+                    if isinstance(meta, dict):
+                        doc["_prefetch"] = meta
                 docs[idx] = doc
                 doc["review"] = review
                 try:
@@ -640,6 +788,15 @@ def root() -> str:
     return "<!doctype html><html><body><h1>Non-Deterministic Website</h1><p>Add templates/index.html for the UI.</p></body></html>"
 
 
+@app.get("/tailwind.css", response_class=PlainTextResponse)
+def serve_tailwind():
+    """Serve the built Tailwind CSS at root level (for frontend compatibility)."""
+    path = Path("static/tailwind.css")
+    if path.exists():
+        return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/css")
+    return PlainTextResponse("", status_code=404)
+
+
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> Dict[str, str]:
     return {"status": "ok"}
@@ -659,6 +816,37 @@ def llm_probe_endpoint() -> Dict[str, Any]:
 def metrics_total() -> Dict[str, int]:
     """Return the total number of websites generated across all users."""
     return {"total": counter.get_total()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prefetch Preview API (for 3D Tunnel Hero)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class QueuePreview(BaseModel):
+    id: str
+    title: str
+    category: str
+    vibe: str
+    created_at: float
+
+@app.get("/api/prefetch/previews", response_model=List[QueuePreview])
+def get_prefetch_previews(limit: int = 20) -> List[Dict[str, Any]]:
+    """Return recent prefetch queue entries for the 3D tunnel display."""
+    cached = _get_cached_prefetch_previews(int(limit or 0))
+    if cached is not None:
+        return cached
+    items = prefetch.peek(limit=limit)
+    _set_cached_prefetch_previews(int(limit or 0), items)
+    return items
+
+
+@app.get("/api/prefetch/{item_id}")
+def get_prefetch_entry(item_id: str) -> Dict[str, Any]:
+    """Fetch a specific prefetch queue entry by token for rendering."""
+    entry = prefetch.take(item_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Prefetch entry not found or already served.")
+    return entry
 
 
 @app.post("/generate")
@@ -744,9 +932,12 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
+    served_from_prefetch = False
     page = prefetch.dequeue()
-    if page:
+    if page is not None:
+        served_from_prefetch = True
         log.info("prefetch.generate: served page from queue")
+    if page:
         try:
             if PREFETCH_DELAY_MS > 0:
                 time.sleep(PREFETCH_DELAY_MS / 1000.0)
@@ -758,7 +949,7 @@ def generate_endpoint(
             except Exception:
                 pass
         try:
-            if _prefetch_topup_enabled():
+            if _prefetch_topup_enabled() and served_from_prefetch:
                 queue_size = prefetch.size()
                 if queue_size <= PREFETCH_LOW_WATER:
                     log.info(
@@ -908,17 +1099,33 @@ def generate_stream(
                 pass
             yield json.dumps({"event": "page", "data": page}) + "\n"
         else:
-            # Queue empty: do a burst and stream them all!
+            # Queue empty: do a burst, stream ONLY the first page, batch-review & enqueue the rest.
             log.info("prefetch.generate_stream: queue empty; initiating ad-hoc burst")
             count = 0
+            first_sent = False
+            followups: List[Dict[str, Any]] = []
             try:
                 for burst_page in llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key):
                     if isinstance(burst_page, dict) and not burst_page.get("error"):
-                        try: counter.increment(1)
-                        except: pass
-                    yield json.dumps({"event": "page", "data": burst_page}) + "\n"
+                        try:
+                            counter.increment(1)
+                        except Exception:
+                            pass
+                        if not first_sent:
+                            yield json.dumps({"event": "page", "data": burst_page}) + "\n"
+                            first_sent = True
+                        else:
+                            followups.append(burst_page)
                     count += 1
-                
+
+                if followups:
+                    log.info("prefetch.generate_stream: running compliance batch on %d followups", len(followups))
+                    approved = _apply_compliance_batch(followups, "prefetch.generate_stream")
+                    try:
+                        _enqueue_prefetch_docs(approved, context="prefetch.generate_stream")
+                    except Exception:
+                        log.exception("prefetch.generate_stream: enqueue failed for reviewed followup")
+
                 if count == 0:
                     yield json.dumps({"event": "error", "data": {"error": "No pages generated (Provider returned empty result)"}}) + "\n"
 
@@ -954,7 +1161,7 @@ def prefetch_status() -> Dict[str, Any]:
 
 class PrefetchRequest(BaseModel):
     brief: str = Field("", description="Optional brief to bias generation; may be empty")
-    count: int = Field(5, description="How many pages to prefetch (clamped to 5-20)")
+    count: int = Field(10, description="How many pages to prefetch (clamped to 5-20)")
 
 
 @app.post("/prefetch/fill")
@@ -963,7 +1170,7 @@ def prefetch_fill(
     request: Request,
     api_key: str = Depends(require_api_key),
 ):
-    """Generate N pages in advance (5-10 per request) and enqueue them for later /generate calls.
+    """Generate N pages in advance (5-20 per request) and enqueue them for later /generate calls.
     Returns how many were added plus the new queue size.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
@@ -981,7 +1188,9 @@ def prefetch_fill(
 
     n = prefetch.clamp_batch(int(req.count or 0))
     initial_size = prefetch.size()
+    target_size = initial_size + n
     new_paths: List[Path] = []
+    generated_docs: List[Dict[str, Any]] = []
     
     generated_count = 0
     attempts = 0
@@ -999,24 +1208,32 @@ def prefetch_fill(
         seed = (int(time.time() * 1000) + attempts) % 1_000_000_007
         
         try:
+            burst_docs: List[Dict[str, Any]] = []
             for page in llm_generate_page_burst(req.brief or "", seed=seed, user_key="prefetch"):
                 if isinstance(page, dict) and page.get("error"):
                     log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
                     break
-                
-                path = prefetch.enqueue(page)
-                if path:
-                    new_paths.append(path)
-                    generated_count += 1
-                
-                if generated_count >= n:
-                    break
+                if isinstance(page, dict):
+                    burst_docs.append(page)
+
+            if burst_docs:
+                generated_docs.extend(burst_docs)
+                while len(generated_docs) >= PREFETCH_REVIEW_BATCH and generated_count < n:
+                    batch = generated_docs[:PREFETCH_REVIEW_BATCH]
+                    generated_docs = generated_docs[PREFETCH_REVIEW_BATCH:]
+                    approved = _apply_compliance_batch(batch, "prefetch.fill")
+                    added_paths = _enqueue_prefetch_docs(approved, context="prefetch.fill", max_queue=target_size)
+                    new_paths.extend(added_paths)
+                    generated_count += len(added_paths)
         except Exception as e:
             log.error("prefetch.fill: burst error client=%s err=%r", client_key, e)
             break
 
-    if new_paths:
-        _schedule_prefetch_review(list(new_paths))
+    if generated_docs and generated_count < n:
+        approved = _apply_compliance_batch(generated_docs, "prefetch.fill")
+        added_paths = _enqueue_prefetch_docs(approved, context="prefetch.fill", max_queue=target_size)
+        new_paths.extend(added_paths)
+        generated_count += len(added_paths)
     queue_size = prefetch.size()
     added = max(queue_size - initial_size, 0)
 

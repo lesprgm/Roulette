@@ -4,10 +4,9 @@ import logging
 import os
 import random
 import re
-import subprocess
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Set
 import requests
 from api import dedupe
 
@@ -28,9 +27,14 @@ def _testing_stub_enabled() -> bool:
 log = logging.getLogger(__name__)
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "devstral-2512:free").strip()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.7-flash").strip()
 OPENROUTER_FALLBACK_MODEL_1 = os.getenv("OPENROUTER_FALLBACK_MODEL_1", "google/gemma-3n-e2b-it:free").strip()
 OPENROUTER_FALLBACK_MODEL_2 = os.getenv("OPENROUTER_FALLBACK_MODEL_2", "deepseek/deepseek-chat-v3.1:free").strip()
+OPENROUTER_REVIEW_MODEL = os.getenv("OPENROUTER_REVIEW_MODEL", "").strip()
+try:
+    OPENROUTER_REVIEW_MAX_TOKENS = int(os.getenv("OPENROUTER_REVIEW_MAX_TOKENS", "4096"))
+except Exception:
+    OPENROUTER_REVIEW_MAX_TOKENS = 4096
 _ENV_OPENROUTER_API_KEY = OPENROUTER_API_KEY
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FORCE_OPENROUTER_ONLY = os.getenv("FORCE_OPENROUTER_ONLY", "0").lower() in {"1", "true", "yes", "on"}
@@ -55,7 +59,6 @@ except Exception:
 _OPENROUTER_BACKOFF_FACTOR = 1.5
 
 
-_SCRIPT_RE = re.compile(r"<script([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
 
 
 
@@ -98,70 +101,6 @@ def _openrouter_reset_backoff() -> None:
         _OPENROUTER_BACKOFF_UNTIL = 0.0
 
 
-def _extract_inline_scripts(html: str) -> List[str]:
-    blocks: List[str] = []
-    if not isinstance(html, str) or not html:
-        return blocks
-    for match in _SCRIPT_RE.findall(html):
-        attrs, body = match
-        attrs = attrs or ""
-        if "src=" in attrs.lower():
-            continue
-        if body and body.strip():
-            blocks.append(body)
-    return blocks
-
-
-def _collect_js_blocks(doc: Dict[str, Any]) -> List[str]:
-    blocks: List[str] = []
-    if not isinstance(doc, dict):
-        return blocks
-    kind = doc.get("kind")
-    if kind == "ndw_snippet_v1":
-        js = doc.get("js")
-        if isinstance(js, str) and js.strip():
-            blocks.append(js)
-        html = doc.get("html")
-        if isinstance(html, str):
-            blocks.extend(_extract_inline_scripts(html))
-    elif kind == "full_page_html":
-        html = doc.get("html")
-        if isinstance(html, str):
-            blocks.extend(_extract_inline_scripts(html))
-    if isinstance(doc.get("components"), list):
-        for comp in doc["components"]:
-            if not isinstance(comp, dict):
-                continue
-            props = comp.get("props")
-            if isinstance(props, dict):
-                html = props.get("html")
-                if isinstance(html, str):
-                    blocks.extend(_extract_inline_scripts(html))
-    return [b for b in blocks if b.strip()]
-
-
-def _first_js_syntax_error(doc: Dict[str, Any]) -> Optional[str]:
-    blocks = _collect_js_blocks(doc)
-    if not blocks:
-        return None
-    for block in blocks:
-        script = f"new Function({json.dumps(block)});"
-        try:
-            result = subprocess.run(
-                ["node", "-e", script],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            return None
-        except Exception as exc:
-            logging.debug("JS syntax check unexpected error: %r", exc)
-            return None
-        if result.returncode != 0:
-            err = (result.stderr or result.stdout or "JS syntax error").strip()
-            return err.splitlines()[0]
-    return None
 
 try:
     TEMPERATURE = float(os.getenv("TEMPERATURE", "1.5"))
@@ -190,8 +129,37 @@ try:
     GROQ_MAX_TOKENS = int(os.getenv("GROQ_MAX_TOKENS", str(LLM_MAX_TOKENS)))
 except Exception:
     GROQ_MAX_TOKENS = LLM_MAX_TOKENS
+_DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 140000
+try:
+    GEMINI_MAX_OUTPUT_TOKENS = int(
+        os.getenv("GEMINI_MAX_OUTPUT_TOKENS", str(_DEFAULT_GEMINI_MAX_OUTPUT_TOKENS))
+    )
+except Exception:
+    GEMINI_MAX_OUTPUT_TOKENS = _DEFAULT_GEMINI_MAX_OUTPUT_TOKENS
+GEMINI_STREAM_DEBUG = os.getenv("GEMINI_STREAM_DEBUG", "0").lower() in {"1", "true", "yes", "on"}
+try:
+    GEMINI_STREAM_DEBUG_CHARS = int(os.getenv("GEMINI_STREAM_DEBUG_CHARS", "4000"))
+except Exception:
+    GEMINI_STREAM_DEBUG_CHARS = 4000
+GEMINI_STREAM_DEBUG_WRITE = os.getenv("GEMINI_STREAM_DEBUG_WRITE", "0").lower() in {"1", "true", "yes", "on"}
+GEMINI_STREAM_DEBUG_DIR = os.getenv("GEMINI_STREAM_DEBUG_DIR", "cache/gemini_stream").strip()
+try:
+    GEMINI_REVIEW_RETRY_ATTEMPTS = int(os.getenv("GEMINI_REVIEW_RETRY_ATTEMPTS", "2"))
+except Exception:
+    GEMINI_REVIEW_RETRY_ATTEMPTS = 2
+try:
+    GEMINI_REVIEW_RETRY_DELAY = float(os.getenv("GEMINI_REVIEW_RETRY_DELAY", "1.5"))
+except Exception:
+    GEMINI_REVIEW_RETRY_DELAY = 1.5
+try:
+    GEMINI_REVIEW_BACKOFF_SECS = int(os.getenv("GEMINI_REVIEW_BACKOFF_SECS", "300"))
+except Exception:
+    GEMINI_REVIEW_BACKOFF_SECS = 300
+_GEMINI_REVIEW_BACKOFF_UNTIL = 0.0
+_GEMINI_REVIEW_BACKOFF_LOCK = threading.Lock()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_REVIEW_API_KEY = os.getenv("GEMINI_REVIEW_API_KEY", "").strip()
 _ENV_GEMINI_API_KEY = GEMINI_API_KEY
 GEMINI_REVIEW_MODEL = os.getenv("GEMINI_REVIEW_MODEL", "gemini-1.5-flash-latest").strip()
 GEMINI_REVIEW_ENABLED = os.getenv("GEMINI_REVIEW_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
@@ -215,7 +183,12 @@ or 503 earlier in the /generate endpoint if credentials are missing.
 """
 
 def status() -> Dict[str, Any]:
-    reviewer = "gemini" if _gemini_review_active() else None
+    reviewer = None
+    provider = _review_provider()
+    if provider == "openrouter" and _openrouter_review_active():
+        reviewer = "openrouter"
+    elif provider == "gemini" and _gemini_review_active():
+        reviewer = "gemini"
     if _testing_stub_enabled():
         return {
             "provider": None,
@@ -260,7 +233,13 @@ def probe() -> Dict[str, Any]:
     return {"ok": False, "using": "stub"}
 
 
-def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_review: bool = True) -> Dict[str, Any]:
+def generate_page(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+    run_review: bool = True,
+    providers_override: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """Return a doc in one of the two accepted shapes or {error}.
 
     Behaviors:
@@ -287,16 +266,24 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
         providers: list[str] = []
-        if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
-            providers.append("openrouter")
-        if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-            providers.append("groq")
-        
-        # GEMINI is RESERVED for burst generation (generate_page_burst) 
-        # to maximize the 3x generation per request quota.
-        # It is only used here as an absolute last resort if others are failing.
-        if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY and not providers:
-            providers.append("gemini")
+        if providers_override:
+            for p in providers_override:
+                if p == "openrouter" and (OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY):
+                    providers.append("openrouter")
+                elif p == "groq" and GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
+                    providers.append("groq")
+                elif p == "gemini" and GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
+                    providers.append("gemini")
+        if not providers:
+            if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
+                providers.append("openrouter")
+            if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
+                providers.append("groq")
+            # GEMINI is RESERVED for burst generation (generate_page_burst)
+            # to maximize the 3x generation per request quota.
+            # It is only used here as an absolute last resort if others are failing.
+            if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY and not providers:
+                providers.append("gemini")
         
         logging.warning("llm providers_order=%s force_openrouter_only=%s", providers, FORCE_OPENROUTER_ONLY)
         for p in providers:
@@ -328,18 +315,17 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
                 seed_val = (seed_val + 7919) % 10_000_019
                 continue
 
-        js_error = _first_js_syntax_error(doc)
-        if js_error:
-            logging.warning("JS syntax validation failed before review (attempt %d): %s", attempts, js_error)
-            doc = None
-            seed_val = (seed_val + 7919) % 10_000_019
-            continue
-
         review_data: Optional[Dict[str, Any]] = None
         if run_review:
             review_data, corrected_doc, review_ok = _maybe_run_compliance_review(doc, brief_str, category_note)
             if corrected_doc is not None:
-                doc = corrected_doc
+                try:
+                    doc = _normalize_doc(corrected_doc)
+                except Exception as exc:
+                    logging.warning("Compliance review returned invalid corrected doc: %r", exc)
+                    doc = None
+                    seed_val = (seed_val + 7919) % 10_000_019
+                    continue
                 logging.info("Compliance review applied corrections to doc (attempt %d)", attempts)
             if review_data:
                 logging.info(
@@ -349,12 +335,6 @@ def generate_page(brief: str, seed: int, user_key: Optional[str] = None, run_rev
                 )
             if not review_ok:
                 logging.info("Compliance review rejected doc; retrying another generation (attempt %d)", attempts)
-                doc = None
-                seed_val = (seed_val + 7919) % 10_000_019
-                continue
-            js_error = _first_js_syntax_error(doc)
-            if js_error:
-                logging.warning("JS syntax validation failed after review (attempt %d): %s", attempts, js_error)
                 doc = None
                 seed_val = (seed_val + 7919) % 10_000_019
                 continue
@@ -412,8 +392,8 @@ def _call_gemini_for_page(brief: str, seed: int, category_note: str = "") -> Opt
 === VISION GROUNDING: DESIGN MATRIX ATTACHED ===
 1. Analyze the attached 'UI Design Matrix'. 
 2. Classify the brief into one of the 4 vibes (Professional, Playful, Brutalist, Cozy).
-3. Extract colors from the 'Color Universe' strip.
-4. Build the app matching the aesthetics of your selected vibe.
+3. YOU MUST USE COLORS FROM THE 'Color Universe' strip. Sampling these exact hex values is MANDATORY.
+4. Build the app matching the aesthetics of your selected vibe. FAILURE TO MATCH VIBE COLORS WILL RESULT IN REJECTION.
 ==============================================
 """
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
@@ -426,7 +406,8 @@ You MUST build ONLY the category specified above. Do NOT build any other categor
 =======================================================
 
 You generate exactly one self-contained interactive web app per request.
-Output valid JSON only. No backticks. No explanations.
+Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '{{'.
+The JSON MUST include a non-empty "html" field containing the complete <!doctype html> document.
 
 Brief: {brief}
 Seed: {seed}
@@ -435,12 +416,41 @@ Seed: {seed}
 """
     parts.insert(0, {"text": prompt})
     
+    response_schema = {
+        "type": "object",
+        "properties": {
+            "kind": {"type": "string"},
+            "title": {"type": "string"},
+            "html": {"type": "string"},
+            "css": {"type": "string"},
+            "js": {"type": "string"},
+            "components": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "type": {"type": "string"},
+                        "props": {
+                            "type": "object",
+                            "properties": {
+                                "html": {"type": "string"},
+                                "height": {"type": "number"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "required": ["kind", "html"],
+    }
     body = {
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": TEMPERATURE,
-            "maxOutputTokens": 60000, 
+            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
+            "responseSchema": response_schema,
         },
     }
 
@@ -474,14 +484,65 @@ Seed: {seed}
         return None
 
 
+def _fallback_single(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+    providers_override: Optional[List[str]] = None,
+) -> Iterable[Dict[str, Any]]:
+    doc = generate_page(brief, seed, user_key, providers_override=providers_override)
+    if isinstance(doc, dict) and not doc.get("error"):
+        if extra:
+            debug = doc.get("ndw_debug")
+            if not isinstance(debug, dict):
+                debug = {}
+            debug["gemini_feedback"] = extra
+            doc["ndw_debug"] = debug
+        yield doc
+        return
+    err = {"error": "Model generation failed"}
+    if extra:
+        err["ndw_debug"] = {"gemini_feedback": extra}
+    yield err
+
+
+def _fallback_burst(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+    target_docs: int = 10,
+    providers_override: Optional[List[str]] = None,
+) -> Iterable[Dict[str, Any]]:
+    """Generate multiple docs when burst streaming is unavailable."""
+    generated = 0
+    attempts = 0
+    max_attempts = max(target_docs, 1) * 2
+    while generated < target_docs and attempts < max_attempts:
+        attempts += 1
+        doc = generate_page(
+            brief,
+            seed + attempts,
+            user_key,
+            providers_override=providers_override,
+        )
+        if not isinstance(doc, dict) or doc.get("error"):
+            break
+        yield doc
+        generated += 1
+    if generated == 0:
+        yield {"error": "Model generation failed"}
+
+
 def generate_page_burst(brief: str, seed: int, user_key: Optional[str] = None) -> Iterable[Dict[str, Any]]:
-    """Yield up to 3 sites from a single streaming burst."""
+    """Yield up to 10 sites from a single streaming burst."""
     if not GEMINI_API_KEY:
-        yield generate_page(brief, seed, user_key)
+        yield from _fallback_burst(brief, seed, user_key, target_docs=10)
         return
 
-    # Fetch 3 categories for the burst
-    category_notes = [_next_category_note(user_key) for _ in range(3)]
+    # Fetch 10 categories for the burst
+    category_notes = [_next_category_note(user_key) for _ in range(10)]
+    target_docs = len(category_notes)
     matrix_b64 = _get_design_matrix_b64()
     
     parts = []
@@ -500,12 +561,21 @@ def generate_page_burst(brief: str, seed: int, user_key: Optional[str] = None) -
 SITE 1 Category: {category_notes[0]}
 SITE 2 Category: {category_notes[1]}
 SITE 3 Category: {category_notes[2]}
+SITE 4 Category: {category_notes[3]}
+SITE 5 Category: {category_notes[4]}
+SITE 6 Category: {category_notes[5]}
+SITE 7 Category: {category_notes[6]}
+SITE 8 Category: {category_notes[7]}
+SITE 9 Category: {category_notes[8]}
+SITE 10 Category: {category_notes[9]}
 
 You MUST build each site following its assigned category.
 =========================================================
 
-You generate EXACTLY 3 unique, self-contained interactive web apps as a JSON array.
+You generate EXACTLY 10 unique, self-contained interactive web apps as a JSON array.
 Each app must be a complete experience with high-quality design.
+Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '['.
+Every item MUST include a non-empty "html" field containing a complete <!doctype html> document.
 
 Brief: {brief}
 Seed: {seed}
@@ -518,40 +588,40 @@ Seed: {seed}
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": TEMPERATURE,
-            "maxOutputTokens": 60000, 
+            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
             "responseSchema": {
-                "type": "ARRAY",
+                "type": "array",
                 "items": {
-                    "type": "OBJECT",
+                    "type": "object",
                     "properties": {
-                        "kind": {"type": "STRING"},
-                        "title": {"type": "STRING"},
-                        "html": {"type": "STRING"},
-                        "css": {"type": "STRING"},
-                        "js": {"type": "STRING"},
+                        "kind": {"type": "string"},
+                        "title": {"type": "string"},
+                        "html": {"type": "string"},
+                        "css": {"type": "string"},
+                        "js": {"type": "string"},
                         "components": {
-                            "type": "ARRAY",
+                            "type": "array",
                             "items": {
-                                "type": "OBJECT",
+                                "type": "object",
                                 "properties": {
-                                    "id": {"type": "STRING"},
-                                    "type": {"type": "STRING"},
+                                    "id": {"type": "string"},
+                                    "type": {"type": "string"},
                                     "props": {
-                                        "type": "OBJECT",
+                                        "type": "object",
                                         "properties": {
-                                            "html": {"type": "STRING"},
-                                            "height": {"type": "NUMBER"}
+                                            "html": {"type": "string"},
+                                            "height": {"type": "number"}
                                         }
                                     }
                                 }
                             }
                         },
                     },
-                    "required": ["kind"]
+                    "required": ["kind", "html"]
                 },
-                "minItems": 3,
-                "maxItems": 3
+                "minItems": 10,
+                "maxItems": 10
             }
         },
     }
@@ -566,11 +636,26 @@ Seed: {seed}
         )
         if resp.status_code != 200:
             logging.warning("Gemini stream HTTP %s: %s", resp.status_code, resp.text[:200])
-            yield {"error": f"HTTP {resp.status_code}"}
+            logging.warning("Gemini stream failed; falling back to OpenRouter/Groq")
+            providers_override = None
+            if resp.status_code in {429, 503}:
+                providers_override = ["groq"]
+            yield from _fallback_burst(
+                brief,
+                seed,
+                user_key,
+                target_docs=target_docs,
+                providers_override=providers_override,
+            )
             return
 
         full_text = ""
         last_obj_count = 0
+        yielded_docs = 0
+        prompt_feedback: Optional[Dict[str, Any]] = None
+        finish_reasons: Set[str] = set()
+        safety_ratings: List[Any] = []
+        stop_stream = False
         
         # Buffer for accumulating multi-line JSON chunks
         buffer = ""
@@ -582,6 +667,14 @@ Seed: {seed}
             if not line:
                 continue
             chunk = line.decode("utf-8")
+            raw = chunk.strip()
+            if raw.startswith("event:") or raw.startswith(":"):
+                continue
+            if raw.startswith("data:"):
+                raw = raw[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                chunk = raw
             
             # Simple state machine to find complete top-level objects in the stream array
             for char in chunk:
@@ -606,6 +699,17 @@ Seed: {seed}
                             
                             try:
                                 data = json.loads(clean_buf)
+                                if isinstance(data, dict):
+                                    pf = data.get("promptFeedback")
+                                    if isinstance(pf, dict) and prompt_feedback is None:
+                                        prompt_feedback = pf
+                                    for cand in data.get("candidates") or []:
+                                        fr = cand.get("finishReason")
+                                        if isinstance(fr, str) and fr:
+                                            finish_reasons.add(fr)
+                                        sr = cand.get("safetyRatings")
+                                        if sr:
+                                            safety_ratings.append(sr)
                                 t = _extract_gemini_text(data)
                                 if t:
                                     full_text += t
@@ -620,16 +724,80 @@ Seed: {seed}
             # Stream-parse objects from the array
             sites = _extract_completed_objects_from_array(full_text)
             for i in range(last_obj_count, len(sites)):
-                yield _normalize_doc(sites[i])
+                try:
+                    doc = _normalize_doc(sites[i])
+                except Exception as exc:
+                    logging.warning("Gemini stream skipped invalid doc: %r", exc)
+                    last_obj_count += 1
+                    continue
+                yield doc
                 last_obj_count += 1
+                yielded_docs += 1
+                if yielded_docs >= target_docs:
+                    stop_stream = True
+                    break
+            if stop_stream:
+                break
+
+        _log_gemini_stream_debug(full_text, yielded_docs, finish_reasons, prompt_feedback, safety_ratings)
+        if last_obj_count > target_docs:
+            logging.warning(
+                "Gemini stream produced %d items; expected %d",
+                last_obj_count,
+                target_docs,
+            )
                 
-        if last_obj_count == 0:
+        if yielded_docs == 0:
             logging.warning("Gemini stream finished but 0 valid objects found. full_text len=%d", len(full_text))
-            yield {"error": "No valid JSON objects found in stream"}
+            recovered_docs: List[Dict[str, Any]] = []
+            if full_text.strip():
+                try:
+                    recovered = _json_from_text(full_text)
+                    if isinstance(recovered, list):
+                        for item in recovered:
+                            try:
+                                recovered_docs.append(_normalize_doc(item))
+                            except Exception as exc:
+                                logging.warning("Gemini stream tolerant parse normalize error: %r", exc)
+                    elif isinstance(recovered, dict):
+                        recovered_docs.append(_normalize_doc(recovered))
+                except Exception as exc:
+                    logging.warning("Gemini stream tolerant parse failed: %r", exc)
+            if recovered_docs:
+                logging.warning("Gemini stream tolerant parse recovered %d docs", len(recovered_docs))
+                for doc in recovered_docs[:target_docs]:
+                    yield doc
+                return
+            feedback = {
+                "reason": "empty_stream",
+                "blockReason": prompt_feedback.get("blockReason") if isinstance(prompt_feedback, dict) else None,
+                "promptSafetyRatings": prompt_feedback.get("safetyRatings") if isinstance(prompt_feedback, dict) else None,
+                "finishReasons": sorted(finish_reasons),
+                "candidateSafetyRatings": safety_ratings[:3],
+            }
+            if prompt_feedback:
+                logging.warning(
+                    "Gemini stream promptFeedback blockReason=%s safetyRatings=%s",
+                    prompt_feedback.get("blockReason"),
+                    prompt_feedback.get("safetyRatings"),
+                )
+            if finish_reasons:
+                logging.warning("Gemini stream finishReasons=%s", sorted(finish_reasons))
+            if safety_ratings:
+                logging.warning("Gemini stream candidate safetyRatings=%s", safety_ratings[:3])
+            logging.warning("Gemini stream produced no valid pages; falling back to OpenRouter/Groq")
+            yield from _fallback_single(brief, seed, user_key, extra=feedback)
                 
     except Exception as e:
         logging.warning("Burst generation error: %r", e)
-        yield {"error": str(e)}
+        logging.warning("Gemini burst error; falling back to OpenRouter/Groq")
+        yield from _fallback_burst(
+            brief,
+            seed,
+            user_key,
+            target_docs=10,
+            providers_override=["groq"],
+        )
 
 
 def _extract_completed_objects_from_array(text: str) -> List[Dict[str, Any]]:
@@ -823,6 +991,7 @@ DESIGN QUALITY (MANDATORY — every output must feel premium):
 
 GENERAL RULES:
 - STRICT: No external scripts or styles via CDN (e.g., no <script src="https://...">). GSAP 3.12, Tailwind CSS, and Lucide Icons are already provided globally. Use them directly without re-importing. No external fonts/images/fetch.
+- Tailwind runtime is local; do not include any <script src> tags or CDN imports in output.
 - Output HTML without stray prefixes; host injects it directly.
 - Provide clear instructions in the HTML (outside canvas).
 - Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon).
@@ -859,19 +1028,45 @@ BASE HTML BLUEPRINT (ADAPT LAYOUT):
 </main>
 NOTE: Replace CSS variables using the 'Color Universe' from the Matrix.
 
-SNIPPET RUNTIME (NDW APIs):
-- NDW.loop((dt) => ...) → dt in milliseconds. DO NOT manually track time (no Date.now(), performance.now(), NDW.time.elapsed).
-- Physics: velocity += accel * (dt/1000); position += velocity * (dt/1000).
-- NDW.makeCanvas({fullScreen,width,height,parent,dpr}) returns canvas with .ctx, .dpr. 
-- Avoid `fullScreen: true` for full_page_html apps as it can overlap your custom headers; instead, set `parent: document.getElementById('ndw-content')` and specific px sizes or leave width/height out for a 800x600 default.
-- Use canvas.ctx.width/height (or canvas.width / canvas.dpr) for layout math.
-- NDW.onKey((e) => ...) / NDW.onPointer((e) => ...) register once outside NDW.loop; use NDW.isDown inside the loop for continuous input.
-- NDW.isDown('ArrowLeft' | 'mouse' | ...), NDW.onResize, NDW.utils (clamp, lerp, rng(seed), hash(seed)), NDW.pointer {x,y,down}.
-- Initialize all state before NDW.loop; register handlers before NDW.loop; never declare them inside the loop.
-- Never chain NDW.* off other expressions (no `.NDW`). Call each NDW method as its own statement.
-- Canvas scenes must call ctx.clearRect(0, 0, ctx.width, ctx.height) each frame.
-- Declare all state objects/arrays before NDW.loop; do not redeclare inside the loop.
-- When you manually manage buffers, reference `canvas.width` and `canvas.height` directly for clearRect or resizing (e.g., `ctx.clearRect(0, 0, canvas.width, canvas.height);`).
+SNIPPET RUNTIME (NDW SDK CHEAT SHEET):
+=== FRAME LOOP ===
+NDW.loop((dt) => { ... })  // dt = milliseconds since last frame. Required for games/animations.
+
+=== INPUT ===
+NDW.isPressed("ArrowUp")  // true only on first frame of keypress (rising edge)
+NDW.isDown("ArrowLeft")   // true while key is held
+NDW.jump()    // alias: ArrowUp, Space, W
+NDW.shot()    // alias: X, Z, mouse click  
+NDW.action()  // alias: Enter, Space, mouse click
+NDW.pointer   // { x, y, down } - mouse/touch position relative to canvas
+
+=== AUDIO ===
+NDW.audio.playTone(freq, durationMs, type, gain)  // e.g., playTone(440, 100, 'sine', 0.1)
+
+=== JUICE (visual feedback) ===
+NDW.juice.shake(intensity, durationMs)  // e.g., shake(5, 200) for screen shake
+NDW.particles.spawn({x, y, count, spread, color, size, life})  // spawn particles
+NDW.particles.update(dt, ctx)  // call in loop to render particles
+
+=== CANVAS ===
+const canvas = NDW.makeCanvas({parent: document.getElementById('ndw-content'), width: 800, height: 600});
+// returns {ctx, dpr, clear()} - DPI-aware by default
+
+=== MATH ===
+NDW.utils.dist(x1, y1, x2, y2)      // distance between points
+NDW.utils.angle(x1, y1, x2, y2)     // angle in radians
+NDW.utils.overlaps(objA, objB)      // AABB/Circle collision detection
+NDW.utils.lerp(a, b, t)             // linear interpolation
+NDW.utils.clamp(v, min, max)        // clamp value to range
+NDW.utils.rng(seed)                 // seeded random number generator
+
+=== PERSISTENCE ===
+NDW.utils.store.get("key")          // get from localStorage
+NDW.utils.store.set("key", value)   // save to localStorage
+
+=== HANDLERS (register ONCE outside loop) ===
+NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
+NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
 
 JS GUARDRAILS:
 - Wrap DOM queries inside DOMContentLoaded if scripts appear before the HTML (`document.addEventListener('DOMContentLoaded', () => { ... });`).
@@ -887,7 +1082,7 @@ CONTROLS & INPUT REFERENCE (canvas categories only):
 
 DO NOT:
 - Do not use inline event handlers (`onclick=""`, etc.) or global window timers.
-- Do not reference external fonts, CDNs, or fetch remote data.
+- Do not reference external fonts, CDNs, or fetch remote data. No iframes or document.write.
 - Do not leave empty containers (e.g., an `#ndw-app` with no children) or placeholder text like "TODO".
 - Do not create duplicate IDs or register multiple identical NDW.onPointer/onKey handlers inside loops.
 - Do not build a different category than the one explicitly assigned above. Follow the CATEGORY ASSIGNMENT exactly.
@@ -972,22 +1167,31 @@ Example inspirations (remix freely):
 
 Deliver clear inputs AND RICH VISUAL RESULTS. No plain text results."""),
     
-    ("CATEGORY ASSIGNMENT (3/5): Generative Randomizer",
-     """CATEGORY ASSIGNMENT (3/5): You MUST build a Generative / Randomizer experience.
-     
-SHOW, DON'T TELL: Do not just generate a text string. Generate a "card" or "artifact".
-Example inspirations (remix freely):
-- NPC personality builders (generate a full ID card with avatar placeholder/color)
-- cozy cocktail namers (generate a recipe card with visual ingredients list)
-- band name generators (generate a tour poster layout)
-- startup idea mashups (generate a landing page hero section)
-- fantasy character creators (stats bars, inventory slots)
-- alien species designers (DNA profile visualization)
-- tarot card readings (flip animation, visual card layout)
-- recipe fusion creators (generate a menu item card)
-- outfit inspiration spinners (color palette swatches)
+    ("CATEGORY ASSIGNMENT (3/5): Playable Simple Game",
+     """CATEGORY ASSIGNMENT (3/5): You MUST build a Playable Simple Game.
 
-Include controls to refresh or customize output. MAKE THE OUPUT LOOK TANGIBLE AND PRINTABLE."""),
+Use the NDW SDK for frame-independent logic:
+- NDW.loop((dt) => { ... }) for the game loop (dt = milliseconds)
+- NDW.isPressed("ArrowUp") or NDW.jump() for single-hit input (jumping, shooting)
+- NDW.isDown("ArrowLeft") for continuous input (movement)
+- NDW.audio.playTone(440, 100) for sound effects
+- NDW.juice.shake(5, 200) for screen shake on hits
+- NDW.particles.spawn({x, y, count: 10}) for explosions
+- NDW.makeCanvas({parent: document.getElementById('ndw-content'), width: 800, height: 600})
+
+Example inspirations (remix freely):
+- Snake (collect apples, grow longer, avoid self)
+- Breakout/Pong (paddle controls, ball physics)
+- Flappy Bird (tap to jump, avoid pipes)
+- Asteroid shooter (rotate, thrust, shoot)
+- Endless runner (jump over obstacles, collect coins)
+- Clicker/idle games (upgrade buttons, progress bars)
+- Memory matching (flip cards, find pairs)
+- Reaction time testers (click when color changes)
+- Maze navigators (arrow key movement)
+- Falling blocks (Tetris-style)
+
+MUST HAVE: Score display, game over state, restart button, sound on key actions."""),
     
     ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
      """CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas.
@@ -1184,9 +1388,17 @@ Seed: {seed}
         return None
 
     try:
-        text = (data.get("choices", [{}])[0].get("message", {}).get("content"))
+        message = data.get("choices", [{}])[0].get("message", {}) or {}
+        text = message.get("content")
     except Exception:
+        message = {}
         text = None
+    if not text or not isinstance(text, str) or not text.strip():
+        reasoning = message.get("reasoning")
+        if isinstance(reasoning, str):
+            trimmed = reasoning.strip()
+            if trimmed.startswith("{") or trimmed.startswith("[") or "<html" in trimmed.lower() or "<!doctype" in trimmed.lower():
+                text = reasoning
     if not text or not isinstance(text, str):
         try:
             text = resp.text
@@ -1218,33 +1430,44 @@ Seed: {seed}
 def _gemini_review_active() -> bool:
     if os.getenv("PYTEST_CURRENT_TEST"):
         return False
-    return bool(GEMINI_REVIEW_ENABLED and GEMINI_API_KEY and GEMINI_REVIEW_ENDPOINT)
+    with _GEMINI_REVIEW_BACKOFF_LOCK:
+        if _GEMINI_REVIEW_BACKOFF_UNTIL and time.time() < _GEMINI_REVIEW_BACKOFF_UNTIL:
+            return False
+    review_key = GEMINI_REVIEW_API_KEY or GEMINI_API_KEY
+    return bool(GEMINI_REVIEW_ENABLED and review_key and GEMINI_REVIEW_ENDPOINT)
+
+
+def _mark_gemini_review_backoff() -> None:
+    if GEMINI_REVIEW_BACKOFF_SECS <= 0:
+        return
+    with _GEMINI_REVIEW_BACKOFF_LOCK:
+        until = time.time() + GEMINI_REVIEW_BACKOFF_SECS
+        global _GEMINI_REVIEW_BACKOFF_UNTIL
+        _GEMINI_REVIEW_BACKOFF_UNTIL = max(_GEMINI_REVIEW_BACKOFF_UNTIL, until)
+
+
+def _openrouter_review_active() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    return bool(OPENROUTER_API_KEY and OPENROUTER_REVIEW_MODEL)
+
+
+def _review_provider() -> str:
+    provider = os.getenv("COMPLIANCE_PROVIDER", "gemini").strip().lower()
+    if provider in {"openrouter", "or"}:
+        if _openrouter_review_active():
+            return "openrouter"
+        if _gemini_review_active():
+            return "gemini"
+        return "openrouter"
+    return "gemini"
 
 
 def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> Optional[Dict[str, Any]]:
     if not _gemini_review_active():
         return None
-    try:
-        serialized = json.dumps(doc, ensure_ascii=False, indent=2)
-    except Exception:
-        serialized = str(doc)
-    instructions = (
-        "You are a compliance reviewer and fixer for interactive web apps. "
-        "Inspect the provided JSON payload for safety, policy violations, markup/runtime bugs, or accessibility issues. "
-        "If problems are minor, repair them directly and return the corrected payload. "
-        "If the experience is unsafe or too broken to repair confidently, reject it. "
-        "Respond with compact JSON using this schema:\n"
-        '{"ok": true|false, "issues":[{"severity":"info|warn|block","field":"...","message":"..."}],'
-        '"notes":"optional summary","doc":{...optional corrected payload...}}\n'
-        "Only set ok=true if the final payload (original or corrected) is safe, functional, and accessible."
-    )
-    prompt = (
-        f"{instructions}\n\n"
-        f"Brief: {brief or '(auto generated)'}\n"
-        f"Category Instruction: {category_note}\n\n"
-        "App JSON:\n"
-        f"{serialized}\n"
-    )
+    prompt = _build_review_prompt(doc, brief, category_note, allow_null_doc=False, doc_required=False)
+    review_schema = _gemini_review_schema()
     body = {
         "contents": [
             {
@@ -1255,25 +1478,47 @@ def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> 
         ],
         "generationConfig": {
             "temperature": 0.0,
-            "maxOutputTokens": 250000,
+            "maxOutputTokens": 20000,
+            "responseMimeType": "application/json",
+            "responseSchema": review_schema,
         },
     }
-    try:
-        resp = requests.post(
-            GEMINI_REVIEW_ENDPOINT,
-            params={"key": GEMINI_API_KEY},
-            json=body,
-            timeout=max(LLM_TIMEOUT_SECS, 120),
-        )
-    except Exception as exc:
-        logging.warning("Gemini review request error: %r", exc)
-        return None
-    if resp.status_code != 200:
+    attempts = max(1, GEMINI_REVIEW_RETRY_ATTEMPTS)
+    delay = max(0.5, GEMINI_REVIEW_RETRY_DELAY)
+    resp = None
+    review_key = GEMINI_REVIEW_API_KEY or GEMINI_API_KEY
+    for attempt in range(1, attempts + 1):
         try:
-            msg = resp.text[:400]
-        except Exception:
-            msg = str(resp.status_code)
-        logging.warning("Gemini review HTTP %s: %s", resp.status_code, msg)
+            resp = requests.post(
+                GEMINI_REVIEW_ENDPOINT,
+                params={"key": review_key},
+                json=body,
+                timeout=max(LLM_TIMEOUT_SECS, 120),
+            )
+        except Exception as exc:
+            logging.warning("Gemini review request error: %r", exc)
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            return None
+        if resp.status_code in {429, 503}:
+            logging.warning("Gemini review HTTP %s: %s", resp.status_code, resp.text[:200])
+            _mark_gemini_review_backoff()
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            return None
+        if resp.status_code != 200:
+            try:
+                msg = resp.text[:400]
+            except Exception:
+                msg = str(resp.status_code)
+            logging.warning("Gemini review HTTP %s: %s", resp.status_code, msg)
+            return None
+        break
+    if resp is None:
         return None
     try:
         payload = resp.json()
@@ -1306,13 +1551,21 @@ def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> 
 def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
     try:
         candidates = payload.get("candidates") or []
+        best_text = ""
         for cand in candidates:
             content = cand.get("content") or {}
             parts = content.get("parts") or []
+            text_parts: list[str] = []
             for part in parts:
                 txt = part.get("text")
-                if isinstance(txt, str) and txt.strip():
-                    return txt
+                if isinstance(txt, str):
+                    text_parts.append(txt)
+            if text_parts:
+                joined = "".join(text_parts)
+                if joined.strip() and len(joined) > len(best_text):
+                    best_text = joined
+                continue
+            for part in parts:
                 function_call = part.get("functionCall")
                 if isinstance(function_call, dict):
                     args = function_call.get("arguments")
@@ -1328,55 +1581,153 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
                         return json.dumps(data_blob, ensure_ascii=False)
                     except Exception:
                         pass
+        if best_text:
+            return best_text
     except Exception:
         pass
     return None
 
 
-def _maybe_run_compliance_review(
-    doc: Dict[str, Any], brief: str, category_note: str
-) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], bool]:
-    if not isinstance(doc, dict):
-        return None, None, True
-    if not _gemini_review_active():
-        return None, None, True
-    logging.info("Compliance review: submitting doc for Gemini evaluation")
-    review = _call_gemini_review(doc, brief, category_note)
-    if not isinstance(review, dict):
-        logging.info("Compliance review: Gemini response missing or unusable; skipping")
-        return None, None, True
-    corrected_doc = None
-    for key in ("doc", "fixed_doc", "corrected_doc", "patched_doc"):
-        maybe_doc = review.get(key)
-        if isinstance(maybe_doc, dict):
-            corrected_doc = maybe_doc
-            break
-    ok_value = review.get("ok")
-    if ok_value is False:
-        logging.info("Compliance review: Gemini blocked doc with %d issues", len(review.get("issues", [])))
-        return review, None, False
-    if corrected_doc is not None:
-        logging.info("Compliance review: Gemini returned corrected payload")
-        return review, corrected_doc, True
-    logging.info("Compliance review: Gemini approved without changes")
-    return review, None, True
-
-
-def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-    if not documents:
-        return None
-    if not _gemini_review_active():
-        return None
+def _build_review_prompt(
+    doc: Dict[str, Any],
+    brief: str,
+    category_note: str,
+    allow_null_doc: bool = True,
+    doc_required: bool = True,
+) -> str:
     try:
-        return _call_gemini_review_batch(documents)
-    except Exception as exc:
-        logging.warning("Gemini batch review error: %r", exc)
-        return None
+        serialized = json.dumps(doc, ensure_ascii=False, indent=2)
+    except Exception:
+        serialized = str(doc)
+    if doc_required:
+        if allow_null_doc:
+            doc_rule = (
+                "Always include doc; set doc to null if you made no corrections. "
+                "If you corrected the payload, include the corrected doc object."
+            )
+        else:
+            doc_rule = "Always include a doc object (use corrected payload if changed, otherwise the original payload)."
+    else:
+        doc_rule = (
+            "Only include doc if you corrected the payload; otherwise omit doc entirely."
+        )
+    if doc_required:
+        schema_line = (
+            '{"ok": true|false, "issues":[{"severity":"info|warn|block","field":"...","message":"..."}],'
+            '"notes":"optional summary","doc":{...optional corrected payload...} or null}\n'
+            if allow_null_doc
+            else '{"ok": true|false, "issues":[{"severity":"info|warn|block","field":"...","message":"..."}],'
+                 '"notes":"optional summary","doc":{...optional corrected payload...}}\n'
+        )
+    else:
+        schema_line = (
+            '{"ok": true|false, "issues":[{"severity":"info|warn|block","field":"...","message":"..."}],'
+            '"notes":"optional summary", "doc":{...optional corrected payload...} (omit doc if unchanged)}\n'
+        )
+    required_line = (
+        "Always include keys ok, issues, notes, and doc. "
+        if doc_required
+        else "Always include ok, issues, and notes. "
+    )
+    instructions = (
+        "You are a compliance reviewer and fixer for interactive web apps. "
+        "Inspect the provided JSON payload for safety, policy violations, markup/runtime bugs, or accessibility issues. "
+        "If problems are minor, repair them directly and return the corrected payload. "
+        "If the experience is unsafe or too broken to repair confidently, reject it. "
+        "Hard rules: remove any external <script src>, <link href>, or CSS @import urls (http/https). "
+        "Do not rely on external fonts/images/CDNs; assume GSAP, Tailwind CSS, and Lucide are already present globally. "
+        "Output JSON only. No explanations. "
+        "Respond with compact JSON using this schema:\n"
+        f"{schema_line}"
+        f"{required_line}If there are no issues, use an empty issues array. "
+        "Notes must be <= 160 characters and MUST be an empty string when there are no issues. "
+        f"{doc_rule} Only set ok=true if the final payload (original or corrected) is safe, "
+        "functional, and accessible."
+    )
+    return (
+        f"{instructions}\n\n"
+        f"Brief: {brief or '(auto generated)'}\n"
+        f"Category Instruction: {category_note}\n\n"
+        "App JSON:\n"
+        f"{serialized}\n"
+    )
 
 
-def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-    if not documents:
-        return None
+def _review_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "issues": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {"type": "string"},
+                        "field": {"type": "string"},
+                        "message": {"type": "string"},
+                    },
+                    "required": ["severity", "field", "message"],
+                    "additionalProperties": False,
+                },
+            },
+            "notes": {"type": "string", "maxLength": 160},
+            "doc": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string"},
+                            "html": {"type": "string"},
+                        },
+                        "required": ["kind", "html"],
+                        "additionalProperties": False,
+                    },
+                    {"type": "null"},
+                ],
+            },
+        },
+        "required": ["ok", "issues", "notes", "doc"],
+        "additionalProperties": False,
+    }
+
+
+def _gemini_review_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "ok": {"type": "boolean"},
+            "issues": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {"type": "string"},
+                        "field": {"type": "string"},
+                        "message": {"type": "string"},
+                    },
+                    "required": ["severity", "field", "message"],
+                },
+            },
+            "notes": {"type": "string"},
+            "doc": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string"},
+                    "html": {"type": "string"},
+                },
+                "required": ["kind", "html"],
+            },
+        },
+        "required": ["ok"],
+    }
+
+
+def _build_batch_review_prompt(
+    documents: List[Dict[str, Any]],
+    allow_null_doc: bool = True,
+    doc_required: bool = True,
+) -> str:
     prompt_sections = []
     for idx, doc in enumerate(documents):
         try:
@@ -1386,16 +1737,274 @@ def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[
         prompt_sections.append(
             f"APP_INDEX: {idx}\nJSON:\n{serialized}\n"
         )
+    if doc_required:
+        if allow_null_doc:
+            doc_rule = (
+                "Always include doc; set doc to null if you made no corrections. "
+                "If you corrected the payload, include the corrected doc object. "
+                "If a document is irreparable, set ok=false and set doc to null."
+            )
+        else:
+            doc_rule = (
+                "Always include a doc object (use corrected payload if changed, otherwise the original payload). "
+                "If a document is irreparable, set ok=false but still include the original doc."
+            )
+    else:
+        doc_rule = (
+            "Only include doc if you corrected the payload; otherwise omit doc entirely. "
+            "If a document is irreparable, set ok=false and omit doc."
+        )
+    if doc_required:
+        schema_line = (
+            '{"index": <matching APP_INDEX>, "ok": true|false, '
+            '"issues":[{"severity":"info|warn|block","field":"...","message":"..."}], '
+            '"notes":"optional summary", "doc":{...optional corrected payload...} or null}\n'
+            if allow_null_doc
+            else '{"index": <matching APP_INDEX>, "ok": true|false, '
+                 '"issues":[{"severity":"info|warn|block","field":"...","message":"..."}], '
+                 '"notes":"optional summary", "doc":{...optional corrected payload...}}\n'
+        )
+    else:
+        schema_line = (
+            '{"index": <matching APP_INDEX>, "ok": true|false, '
+            '"issues":[{"severity":"info|warn|block","field":"...","message":"..."}], '
+            '"notes":"optional summary", "doc":{...optional corrected payload...} (omit doc if unchanged)}\n'
+        )
+    required_line = (
+        "Always include ok, issues, notes, and doc in every result. "
+        if doc_required
+        else "Always include ok, issues, and notes in every result. "
+    )
     instructions = (
         "You are a compliance reviewer and fixer for interactive web apps. "
-        "Evaluate each document below. Return a JSON array where each element is:\n"
-        '{"index": <matching APP_INDEX>, "ok": true|false, '
-        '"issues":[{"severity":"info|warn|block","field":"...","message":"..."}], '
-        '"notes":"optional summary", "doc":{...optional corrected payload...}}\n'
+        "Evaluate each document below. Return a JSON object with a 'results' array. "
+        "Each array element is:\n"
+        f"{schema_line}"
+        "Output JSON only. No explanations. The first non-whitespace character MUST be '{'. "
         "Only set ok=true if the payload (original or corrected) is safe, functional, and accessible. "
-        "If a document is irreparable, set ok=false and omit the doc field."
+        "Hard rules: remove any external <script src>, <link href>, or CSS @import urls (http/https). "
+        "Do not rely on external fonts/images/CDNs; assume GSAP, Tailwind CSS, and Lucide are already present globally. "
+        f"{required_line}If there are no issues, use an empty issues array. "
+        "Notes must be <= 160 characters and MUST be an empty string when there are no issues. "
+        f"{doc_rule}"
     )
-    prompt = instructions + "\n\n---\n" + "\n---\n".join(prompt_sections)
+    return instructions + "\n\n---\n" + "\n---\n".join(prompt_sections)
+
+
+def _batch_review_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "ok": {"type": "boolean"},
+                        "issues": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "severity": {"type": "string"},
+                                    "field": {"type": "string"},
+                                    "message": {"type": "string"},
+                                },
+                                "required": ["severity", "field", "message"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        "notes": {"type": "string", "maxLength": 160},
+                        "doc": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "kind": {"type": "string"},
+                                        "html": {"type": "string"},
+                                    },
+                                    "required": ["kind", "html"],
+                                    "additionalProperties": False,
+                                },
+                                {"type": "null"},
+                            ],
+                        },
+                    },
+                    "required": ["index", "ok", "issues", "notes", "doc"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["results"],
+        "additionalProperties": False,
+    }
+
+
+def _gemini_batch_review_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "ok": {"type": "boolean"},
+                        "issues": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "severity": {"type": "string"},
+                                    "field": {"type": "string"},
+                                    "message": {"type": "string"},
+                                },
+                                "required": ["severity", "field", "message"],
+                            },
+                        },
+                        "notes": {"type": "string"},
+                        "doc": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string"},
+                                "html": {"type": "string"},
+                            },
+                            "required": ["kind", "html"],
+                        },
+                    },
+                    "required": ["index", "ok"],
+                },
+            },
+        },
+        "required": ["results"],
+    }
+
+
+def _log_gemini_stream_debug(
+    full_text: str,
+    parsed_docs: int,
+    finish_reasons: Set[str],
+    prompt_feedback: Optional[Dict[str, Any]],
+    safety_ratings: List[Any],
+) -> None:
+    if not GEMINI_STREAM_DEBUG:
+        return
+    text = full_text or ""
+    length = len(text)
+    max_chars = max(200, int(GEMINI_STREAM_DEBUG_CHARS or 0))
+    head = text[:max_chars]
+    tail = text[-max_chars:] if length > max_chars else ""
+    block_reason = None
+    if isinstance(prompt_feedback, dict):
+        block_reason = prompt_feedback.get("blockReason")
+    logging.warning(
+        "Gemini stream debug: len=%d parsed_docs=%d finishReasons=%s blockReason=%s head=%s",
+        length,
+        parsed_docs,
+        sorted(finish_reasons),
+        block_reason,
+        head,
+    )
+    if tail and tail != head:
+        logging.warning("Gemini stream debug tail: %s", tail)
+    if safety_ratings:
+        logging.warning("Gemini stream debug safetyRatings: %s", safety_ratings[:3])
+    if GEMINI_STREAM_DEBUG_WRITE:
+        try:
+            os.makedirs(GEMINI_STREAM_DEBUG_DIR, exist_ok=True)
+            path = os.path.join(
+                GEMINI_STREAM_DEBUG_DIR,
+                f"gemini_stream_{int(time.time() * 1000)}.txt",
+            )
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            logging.warning("Gemini stream debug saved: %s", path)
+        except Exception as exc:
+            logging.warning("Gemini stream debug write failed: %r", exc)
+
+
+def _maybe_run_compliance_review(
+    doc: Dict[str, Any], brief: str, category_note: str
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], bool]:
+    if not isinstance(doc, dict):
+        return None, None, True
+    provider = _review_provider()
+    if provider == "openrouter":
+        if not _openrouter_review_active():
+            return None, None, True
+    elif not _gemini_review_active():
+        return None, None, True
+    logging.info("Compliance review: submitting doc for %s evaluation", provider)
+    review: Optional[Dict[str, Any]]
+    if provider == "openrouter":
+        review = _call_openrouter_review(doc, brief, category_note)
+    else:
+        review = _call_gemini_review(doc, brief, category_note)
+        if not isinstance(review, dict) and _openrouter_review_active():
+            logging.info("Compliance review: gemini unavailable; falling back to openrouter")
+            review = _call_openrouter_review(doc, brief, category_note)
+            provider = "openrouter"
+    if not isinstance(review, dict):
+        logging.info("Compliance review: %s response missing or unusable; skipping", provider)
+        return None, None, True
+    corrected_doc = None
+    for key in ("doc", "fixed_doc", "corrected_doc", "patched_doc"):
+        maybe_doc = review.get(key)
+        if isinstance(maybe_doc, dict):
+            corrected_doc = maybe_doc
+            break
+    ok_value = review.get("ok")
+    has_block = any(
+        isinstance(issue, dict) and str(issue.get("severity", "")).lower() == "block"
+        for issue in (review.get("issues") or [])
+    )
+    if ok_value is False or (has_block and corrected_doc is None):
+        logging.info(
+            "Compliance review: %s blocked doc with %d issues",
+            provider,
+            len(review.get("issues", [])),
+        )
+        return review, None, False
+    if corrected_doc is not None:
+        logging.info("Compliance review: %s returned corrected payload", provider)
+        return review, corrected_doc, True
+    logging.info("Compliance review: %s approved without changes", provider)
+    return review, None, True
+
+
+def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents:
+        return None
+    provider = _review_provider()
+    if provider == "openrouter":
+        if not _openrouter_review_active():
+            return None
+    elif not _gemini_review_active():
+        return None
+    try:
+        if provider == "openrouter":
+            return _call_openrouter_review_batch(documents)
+        reviews = _call_gemini_review_batch(documents)
+        if reviews is None:
+            per_doc = _call_gemini_review_per_doc(documents)
+            if per_doc is not None:
+                return per_doc
+        if reviews is None and _openrouter_review_active():
+            logging.info("Compliance batch: gemini unavailable; falling back to openrouter")
+            return _call_openrouter_review_batch(documents)
+        return reviews
+    except Exception as exc:
+        logging.warning("Compliance batch review error: %r", exc)
+        return None
+
+
+def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents:
+        return None
+    prompt = _build_batch_review_prompt(documents, allow_null_doc=False, doc_required=False)
+    batch_review_schema = _gemini_batch_review_schema()
     body = {
         "contents": [
             {
@@ -1406,25 +2015,47 @@ def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[
         ],
         "generationConfig": {
             "temperature": 0.0,
-            "maxOutputTokens": min(8192, 2048 * len(documents)),
+            "maxOutputTokens": min(20000, 4096 * len(documents)),
+            "responseMimeType": "application/json",
+            "responseSchema": batch_review_schema,
         },
     }
-    try:
-        resp = requests.post(
-            GEMINI_REVIEW_ENDPOINT,
-            params={"key": GEMINI_API_KEY},
-            json=body,
-            timeout=max(LLM_TIMEOUT_SECS, 120),
-        )
-    except Exception as exc:
-        logging.warning("Gemini batch review request error: %r", exc)
-        return None
-    if resp.status_code != 200:
+    attempts = max(1, GEMINI_REVIEW_RETRY_ATTEMPTS)
+    delay = max(0.5, GEMINI_REVIEW_RETRY_DELAY)
+    resp = None
+    review_key = GEMINI_REVIEW_API_KEY or GEMINI_API_KEY
+    for attempt in range(1, attempts + 1):
         try:
-            msg = resp.text[:400]
-        except Exception:
-            msg = str(resp.status_code)
-        logging.warning("Gemini batch review HTTP %s: %s", resp.status_code, msg)
+            resp = requests.post(
+                GEMINI_REVIEW_ENDPOINT,
+                params={"key": review_key},
+                json=body,
+                timeout=max(LLM_TIMEOUT_SECS, 120),
+            )
+        except Exception as exc:
+            logging.warning("Gemini batch review request error: %r", exc)
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            return None
+        if resp.status_code in {429, 503}:
+            logging.warning("Gemini batch review HTTP %s: %s", resp.status_code, resp.text[:200])
+            _mark_gemini_review_backoff()
+            if attempt < attempts:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            return None
+        if resp.status_code != 200:
+            try:
+                msg = resp.text[:400]
+            except Exception:
+                msg = str(resp.status_code)
+            logging.warning("Gemini batch review HTTP %s: %s", resp.status_code, msg)
+            return None
+        break
+    if resp is None:
         return None
     try:
         payload = resp.json()
@@ -1446,12 +2077,236 @@ def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[
         try:
             data = _json_from_text(text)
         except Exception:
-            logging.warning("Gemini batch review response unparsable: %s", text[:200])
-            return None
+            repaired = _repair_json_loose(text)
+            if repaired != text:
+                try:
+                    data = json.loads(repaired)
+                except Exception:
+                    logging.warning("Gemini batch review response unparsable: %s", text[:200])
+                    return None
+            else:
+                logging.warning("Gemini batch review response unparsable: %s", text[:200])
+                return None
     if isinstance(data, dict):
         data = data.get("results") or data.get("reviews")
     if not isinstance(data, list):
         logging.warning("Gemini batch review invalid payload type: %s", type(data))
+        return None
+    return data
+
+
+def _call_gemini_review_per_doc(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents or not _gemini_review_active():
+        return None
+    reviews: List[Dict[str, Any]] = []
+    for idx, doc in enumerate(documents):
+        review = _call_gemini_review(doc, "", "")
+        if not isinstance(review, dict):
+            return None
+        if "index" not in review:
+            review["index"] = idx
+        reviews.append(review)
+    return reviews
+
+
+def _openrouter_extract_content(payload: Dict[str, Any]) -> Optional[str]:
+    try:
+        choice = (payload.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        if isinstance(content, dict):
+            for key in ("text", "content", "arguments"):
+                val = content.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text") or part.get("content")
+                    if isinstance(text, str):
+                        parts.append(text)
+            if parts:
+                return "".join(parts)
+        tool_calls = msg.get("tool_calls") or msg.get("toolCalls") or []
+        for call in tool_calls:
+            fn = call.get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, str) and args.strip():
+                return args
+            if isinstance(args, dict):
+                return json.dumps(args)
+        function_call = msg.get("function_call") or msg.get("functionCall")
+        if isinstance(function_call, dict):
+            args = function_call.get("arguments")
+            if isinstance(args, str) and args.strip():
+                return args
+            if isinstance(args, dict):
+                return json.dumps(args)
+        for key in ("text", "output_text", "output"):
+            val = choice.get(key) or msg.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+    except Exception:
+        return None
+    return None
+
+
+def _call_openrouter_review(doc: Dict[str, Any], brief: str, category_note: str) -> Optional[Dict[str, Any]]:
+    if not _openrouter_review_active():
+        return None
+    prompt = _build_review_prompt(doc, brief, category_note, allow_null_doc=True, doc_required=True)
+    schema = _review_schema()
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": OPENROUTER_REVIEW_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.0,
+        "max_tokens": OPENROUTER_REVIEW_MAX_TOKENS,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "compliance_review",
+                "schema": schema,
+                "strict": True,
+            },
+        },
+    }
+    def _send_review(req_body: Dict[str, Any], label: str) -> Optional[Dict[str, Any]]:
+        try:
+            resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=req_body, timeout=LLM_TIMEOUT_SECS)
+        except Exception as exc:
+            logging.warning("OpenRouter review request error (%s): %r", label, exc)
+            return None
+        if resp.status_code != 200:
+            try:
+                msg = resp.text[:400]
+            except Exception:
+                msg = str(resp.status_code)
+            logging.warning("OpenRouter review HTTP %s (%s): %s", resp.status_code, label, msg)
+            return None
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            logging.warning("OpenRouter review non-JSON HTTP body (%s): %r", label, exc)
+            return None
+        if isinstance(payload, dict) and payload.get("error"):
+            logging.warning("OpenRouter review error payload (%s): %s", label, payload.get("error"))
+            return None
+        text = _openrouter_extract_content(payload)
+        if not text or not isinstance(text, str):
+            snippet = ""
+            try:
+                snippet = json.dumps(payload)[:400]
+            except Exception:
+                snippet = str(payload)[:400]
+            logging.warning("OpenRouter review empty response text (%s). payload=%s", label, snippet)
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            try:
+                parsed = _json_from_text(text)
+            except Exception:
+                logging.warning("OpenRouter review response unparsable (%s): %s", label, text[:200])
+                return None
+        return parsed if isinstance(parsed, dict) else None
+
+    resp_body = _send_review(body, "schema")
+    if resp_body is None and body.get("response_format"):
+        body_no_schema = dict(body)
+        body_no_schema.pop("response_format", None)
+        resp_body = _send_review(body_no_schema, "noschema")
+    if resp_body is None:
+        return None
+    return resp_body
+
+
+def _call_openrouter_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
+    if not documents:
+        return None
+    if not _openrouter_review_active():
+        return None
+    prompt = _build_batch_review_prompt(documents, allow_null_doc=True, doc_required=True)
+    schema = _batch_review_schema()
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": OPENROUTER_REVIEW_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.0,
+        "max_tokens": OPENROUTER_REVIEW_MAX_TOKENS,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "compliance_review_batch",
+                "schema": schema,
+                "strict": True,
+            },
+        },
+    }
+    def _send_review(req_body: Dict[str, Any], label: str) -> Optional[List[Dict[str, Any]]]:
+        try:
+            resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=req_body, timeout=LLM_TIMEOUT_SECS)
+        except Exception as exc:
+            logging.warning("OpenRouter batch review request error (%s): %r", label, exc)
+            return None
+        if resp.status_code != 200:
+            try:
+                msg = resp.text[:400]
+            except Exception:
+                msg = str(resp.status_code)
+            logging.warning("OpenRouter batch review HTTP %s (%s): %s", resp.status_code, label, msg)
+            return None
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            logging.warning("OpenRouter batch review non-JSON HTTP body (%s): %r", label, exc)
+            return None
+        if isinstance(payload, dict) and payload.get("error"):
+            logging.warning("OpenRouter batch review error payload (%s): %s", label, payload.get("error"))
+            return None
+        text = _openrouter_extract_content(payload)
+        if not text or not isinstance(text, str):
+            snippet = ""
+            try:
+                snippet = json.dumps(payload)[:400]
+            except Exception:
+                snippet = str(payload)[:400]
+            logging.warning("OpenRouter batch review empty response text (%s). payload=%s", label, snippet)
+            return None
+        try:
+            data = json.loads(text)
+        except Exception:
+            try:
+                data = _json_from_text(text)
+            except Exception:
+                logging.warning("OpenRouter batch review response unparsable (%s): %s", label, text[:200])
+                return None
+        if isinstance(data, dict):
+            data = data.get("results") or data.get("reviews")
+        if not isinstance(data, list):
+            logging.warning("OpenRouter batch review invalid payload type (%s): %s", label, type(data))
+            return None
+        return data
+
+    data = _send_review(body, "schema")
+    if data is None and body.get("response_format"):
+        body_no_schema = dict(body)
+        body_no_schema.pop("response_format", None)
+        data = _send_review(body_no_schema, "noschema")
+    if data is None:
         return None
     return data
 
@@ -1526,6 +2381,36 @@ def _json_from_text(text: str) -> Any:
     raise ValueError("No JSON or HTML content found")
 
 
+def _repair_json_loose(text: str) -> str:
+    """Best-effort repair for truncated JSON by closing open strings/braces."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    in_str = False
+    esc = False
+    braces = 0
+    brackets = 0
+    for ch in t:
+        if ch == '"' and not esc:
+            in_str = not in_str
+        if not in_str:
+            if ch == '{':
+                braces += 1
+            elif ch == '}':
+                braces -= 1
+            elif ch == '[':
+                brackets += 1
+            elif ch == ']':
+                brackets -= 1
+        esc = (ch == '\\') and not esc
+    if in_str:
+        t += '"'
+    if brackets > 0:
+        t += ']' * brackets
+    if braces > 0:
+        t += '}' * braces
+    return t
+
 def _seeded_palette_hint(seed: int) -> Dict[str, str]:
     random.seed(seed)
     colors = ["slate", "indigo", "rose", "emerald", "amber", "violet", "cyan"]
@@ -1547,7 +2432,7 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(doc, dict):
         raise ValueError("not a dict")
     if isinstance(doc.get("error"), str):
-        return {"error": str(doc["error"])[:500]}
+        return _sanitize_doc_external_assets({"error": str(doc["error"])[:500]})
     # Inference: if no explicit kind/components but looks like a snippet payload, coerce
     if ("html" in doc or "css" in doc or "js" in doc) and not (doc.get("components") or doc.get("kind") or doc.get("type")):
         doc = {"kind": "ndw_snippet_v1", **{k: v for k, v in doc.items() if k in {"title","background","css","html","js"}}}
@@ -1594,22 +2479,22 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
                     break
         if not out.get("html") and not out.get("css") and not out.get("js"):
             raise ValueError("ndw_snippet_v1 missing content")
-        return out
+        return _sanitize_doc_external_assets(out)
     # Accept common variants/synonyms for full-page HTML
     for key in ("kind", "type"):
         k = str(doc.get(key) or "").lower()
         if k in {"full_page_html", "page_html", "html_page", "full_html"}:
             html = doc.get("html") or doc.get("content") or doc.get("body")
             if isinstance(html, str) and html.strip():
-                return {"kind": "full_page_html", "html": html}
+                return _sanitize_doc_external_assets({"kind": "full_page_html", "html": html})
     if isinstance(doc.get("html"), str) and doc["html"].strip():
-        return {"kind": "full_page_html", "html": doc["html"]}
+        return _sanitize_doc_external_assets({"kind": "full_page_html", "html": doc["html"]})
     for key in ("content", "body", "page", "app", "markup"):
         val = doc.get(key)
         if isinstance(val, str) and ("<" in val and ">" in val):
-            return {"kind": "full_page_html", "html": val}
+            return _sanitize_doc_external_assets({"kind": "full_page_html", "html": val})
         if isinstance(val, dict) and isinstance(val.get("html"), str):
-            return {"kind": "full_page_html", "html": val.get("html")}
+            return _sanitize_doc_external_assets({"kind": "full_page_html", "html": val.get("html")})
     comps = doc.get("components")
     if isinstance(comps, dict):
         comps = [comps]
@@ -1642,7 +2527,7 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
                 }
             )
         if normalized_components:
-            return {"components": normalized_components}
+            return _sanitize_doc_external_assets({"components": normalized_components})
     def _find_html(obj: Any, depth: int = 0) -> Optional[str]:
         if depth > 2:
             return None
@@ -1661,5 +2546,114 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         return None
     html_any = _find_html(doc)
     if html_any:
-        return {"kind": "full_page_html", "html": html_any}
+        return _sanitize_doc_external_assets({"kind": "full_page_html", "html": html_any})
     raise ValueError("No renderable HTML found")
+
+
+_EXTERNAL_URL_RE = re.compile(r"^(https?:)?//", re.IGNORECASE)
+_SCRIPT_SRC_RE = re.compile(r"<script\b[^>]*\bsrc\s*=\s*(\"|')?([^\"'>\s]+)\1[^>]*>\s*</script\s*>", re.IGNORECASE)
+_LINK_HREF_RE = re.compile(r"<link\b[^>]*\bhref\s*=\s*(\"|')?([^\"'>\s]+)\1[^>]*>", re.IGNORECASE)
+_CSS_IMPORT_RE = re.compile(r"@import\s+(?:url\(\s*([^)]+)\s*\)|([\"'][^\"']+[\"']))\s*;?", re.IGNORECASE)
+_TAILWIND_CDN_RE = re.compile(r"^(?:https?:)?//cdn\.tailwindcss\.com(?:/|\?|$)", re.IGNORECASE)
+_GSAP_CDN_RE = re.compile(r"^(?:https?:)?//cdnjs\.cloudflare\.com/ajax/libs/gsap/[^/]+/gsap(?:\.min)?\.js", re.IGNORECASE)
+_LUCIDE_CDN_RE = re.compile(r"^(?:https?:)?//unpkg\.com/lucide(?:@[^/]+)?(?:/.*)?$", re.IGNORECASE)
+
+
+def _strip_external_assets(html: str) -> Tuple[str, List[Dict[str, str]]]:
+    issues: List[Dict[str, str]] = []
+    if not isinstance(html, str):
+        return html, issues
+
+    def is_external(url: str) -> bool:
+        return bool(_EXTERNAL_URL_RE.match((url or "").strip()))
+
+    def rewrite_script_src(src: str) -> Optional[str]:
+        if _TAILWIND_CDN_RE.match(src):
+            return "/static/vendor/tailwind-play.js"
+        if _GSAP_CDN_RE.match(src):
+            return "/static/vendor/gsap.min.js"
+        if _LUCIDE_CDN_RE.match(src):
+            return "/static/vendor/lucide.min.js"
+        return None
+
+    def strip_script(match: re.Match[str]) -> str:
+        src = match.group(2) or ""
+        if is_external(src):
+            local = rewrite_script_src(src)
+            if local:
+                tag = match.group(0)
+                new_tag = re.sub(r"\bsrc\s*=\s*(['\"]).*?\1", f'src="{local}"', tag, flags=re.IGNORECASE)
+                issues.append({"severity": "info", "field": "html", "message": f"Rewrote external script: {src} -> {local}"})
+                return new_tag
+            issues.append({"severity": "warn", "field": "html", "message": f"Removed external script: {src}"})
+            return ""
+        return match.group(0)
+
+    def strip_link(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        href = match.group(2) or ""
+        if is_external(href):
+            issues.append({"severity": "warn", "field": "html", "message": f"Removed external stylesheet: {href}"})
+            return ""
+        return tag
+
+    def strip_import(match: re.Match[str]) -> str:
+        raw = match.group(1) or match.group(2) or ""
+        url = raw.strip().strip("\"' ")
+        if is_external(url):
+            issues.append({"severity": "warn", "field": "html", "message": f"Removed external @import: {url}"})
+            return ""
+        return match.group(0)
+
+    html = _SCRIPT_SRC_RE.sub(strip_script, html)
+    html = _LINK_HREF_RE.sub(strip_link, html)
+    html = _CSS_IMPORT_RE.sub(strip_import, html)
+    return html, issues
+
+
+def _sanitize_doc_external_assets(doc: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(doc, dict):
+        return doc
+    issues: List[Dict[str, str]] = []
+    if doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
+        sanitized, removed = _strip_external_assets(doc["html"])
+        if sanitized != doc["html"]:
+            doc = dict(doc)
+            doc["html"] = sanitized
+        issues.extend(removed)
+    comps = doc.get("components")
+    if isinstance(comps, list):
+        next_comps = []
+        changed = False
+        for comp in comps:
+            if not isinstance(comp, dict):
+                next_comps.append(comp)
+                continue
+            props = comp.get("props")
+            html = props.get("html") if isinstance(props, dict) else None
+            if isinstance(html, str):
+                sanitized, removed = _strip_external_assets(html)
+                if sanitized != html:
+                    new_comp = dict(comp)
+                    new_props = dict(props)
+                    new_props["html"] = sanitized
+                    new_comp["props"] = new_props
+                    comp = new_comp
+                    changed = True
+                if removed:
+                    for item in removed:
+                        item = dict(item)
+                        item["field"] = f"components[{comp.get('id') or ''}].html"
+                        issues.append(item)
+            next_comps.append(comp)
+        if changed:
+            doc = dict(doc)
+            doc["components"] = next_comps
+    if issues:
+        debug = doc.get("ndw_debug")
+        if not isinstance(debug, dict):
+            debug = {}
+        debug.setdefault("external_assets_removed", []).extend(issues)
+        doc = dict(doc)
+        doc["ndw_debug"] = debug
+    return doc
