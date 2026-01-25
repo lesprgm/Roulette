@@ -7,8 +7,9 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
-      npm install
+      npm ci
       npm run build
+      npm prune --omit=dev
     startCommand: python -m uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
@@ -20,46 +21,68 @@ services:
       - key: GROQ_FALLBACK_MODEL
         value: qwen/qwen3-32b
       - key: GROQ_MAX_TOKENS
-        value: "8192"
+        value: '15000'
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: devstral-2512:free
+        value: z-ai/glm-4.7-flash
       - key: OPENROUTER_FALLBACK_MODEL_1
         value: google/gemini-2.0-flash-exp:free
       - key: OPENROUTER_FALLBACK_MODEL_2
         value: deepseek/deepseek-chat-v3.1:free
       - key: OPENROUTER_MAX_TOKENS
-        value: "15000"
+        value: '15000'
       - key: FORCE_OPENROUTER_ONLY
-        value: "0"
+        value: '0'
       - key: TEMPERATURE
-        value: "1.2"
+        value: '1.2'
       - key: LLM_MAX_TOKENS
-        value: "15000"
+        value: '15000'
       - key: LLM_TIMEOUT_SECS
-        value: "75"
+        value: '75'
       - key: RATE_MAX_REQUESTS
-        value: "30"
+        value: '30'
       - key: RATE_WINDOW_SECONDS
-        value: "10800"
+        value: '10800'
       - key: ALLOW_OFFLINE_GENERATION
-        value: "1"
+        value: '0'
       - key: REDIS_URL
         sync: false
       - key: GEMINI_REVIEW_ENABLED
-        value: "1"
+        value: '1'
       - key: GEMINI_REVIEW_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3-flash-preview
+      - key: GEMINI_REVIEW_API_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MAX_OUTPUT_TOKENS
+        value: '140000'
+      - key: COMPLIANCE_FAIL_OPEN
+        value: '1'
+      - key: COMPLIANCE_PROVIDER
+        value: gemini
+      - key: OPENROUTER_REVIEW_MODEL
+        value: openai/gpt-5-nano
+      - key: OPENROUTER_REVIEW_MAX_TOKENS
+        value: '4096'
       - key: PREFETCH_PREWARM_COUNT
         value: 0
       - key: PREFETCH_TOPUP_ENABLED
-        value: "0"
+        value: '0'
       - key: PREFETCH_FILL_TO
         value: 75
       - key: PREFETCH_LOW_WATER
         value: 55
+      - key: PREFETCH_TOKEN_SECRET
+        sync: false
+      - key: PREFETCH_TOKEN_TTL_SECONDS
+        value: '1800'
       - key: GEMINI_GENERATION_MODEL
         value: gemini-3-flash-preview
+      - key: PREFETCH_REVIEW_BATCH
+        value: '3'
+    disk:
+      name: ndw-cache
+      mountPath: /opt/render/project/src/cache
+      sizeGB: 1
