@@ -19,9 +19,16 @@ type AppWindow = Window & {
 const _w = window as AppWindow;
 
 const bodyEl = document.body;
-const mainEl = document.getElementById('appMain');
-console.debug('[ndw] app script evaluated; readyState=', document.readyState);
+let mainEl: HTMLElement | null = null;
 const SANDBOX_SCOPE = '#ndw-sandbox';
+
+function resolveMainEl(): HTMLElement | null {
+  if (!mainEl) {
+    const el = document.getElementById('appMain');
+    if (el) mainEl = el;
+  }
+  return mainEl;
+}
 
 function parseRgb(color: string): [number, number, number] {
   const match = color.match(/rgba?\(([^)]+)\)/);
@@ -105,8 +112,16 @@ function ensureJsonOverlay() {
     });
   }
 }
-ensureJsonOverlay();
-ensureControlStyles();
+
+export function updateJsonOut(data: any) {
+  const jsonOut = document.getElementById('jsonOut');
+  if (!jsonOut) return;
+  try {
+    jsonOut.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    jsonOut.textContent = String(err || 'Failed to stringify JSON');
+  }
+}
 
 function ensureControlStyles() {
   const id = 'ndw-control-style';
@@ -121,6 +136,20 @@ function ensureControlStyles() {
 #floatingGenerateWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:9999;}
 `;
   document.head.appendChild(style);
+}
+
+let __ndwAppInitialized = false;
+export function initApp() {
+  if (__ndwAppInitialized) return;
+  __ndwAppInitialized = true;
+  mainEl = document.getElementById('appMain');
+  console.debug('[ndw] app init; readyState=', document.readyState);
+  ensureControlStyles();
+  ensureJsonOverlay();
+  ensureFloatingGenerate();
+  ensureSitesCounterOverlay();
+  refreshSitesCounter();
+  renderLanding();
 }
 
 function scopeCssText(cssText: string, scope: string): string {
@@ -221,33 +250,132 @@ function invokeDomReadyListener(listener: EventListenerOrEventListenerObject): v
   }
 }
 
+function ensureOptionalGlobals() {
+  const w = window as any;
+  if (!w.lucide) {
+    w.lucide = { createIcons: () => {} };
+  }
+  if (!w.gsap) {
+    const safeComplete = (vars?: any) => {
+      if (vars && typeof vars.onComplete === 'function') {
+        try {
+          vars.onComplete();
+        } catch (err) {
+          console.warn('[ndw] gsap stub onComplete error', err);
+        }
+      }
+    };
+    const noop = (_target?: any, vars?: any) => {
+      safeComplete(vars);
+      return {};
+    };
+    const timeline = (vars?: any) => {
+      safeComplete(vars);
+      const tl = {
+        to: (_target?: any, next?: any) => { safeComplete(next); return tl; },
+        from: (_target?: any, next?: any) => { safeComplete(next); return tl; },
+        fromTo: (_target?: any, _from?: any, next?: any) => { safeComplete(next); return tl; },
+        set: (_target?: any, next?: any) => { safeComplete(next); return tl; },
+      };
+      return tl;
+    };
+    w.gsap = {
+      to: noop,
+      from: noop,
+      fromTo: (_target?: any, _from?: any, vars?: any) => { safeComplete(vars); return {}; },
+      set: noop,
+      timeline,
+      quickTo: () => noop,
+    };
+  }
+}
+
+function loadExternalScript(src: string, type?: string | null): Promise<void> {
+  return new Promise(resolve => {
+    const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+    const markDone = (el?: HTMLScriptElement) => {
+      if (el) {
+        el.dataset.ndwLoaded = '1';
+      }
+      resolve();
+    };
+    const isReady = () => {
+      const w = window as any;
+      if (src.includes('gsap') && w.gsap) return true;
+      if (src.includes('lucide') && w.lucide) return true;
+      if (src.includes('tailwind') && w.tailwind) return true;
+      return false;
+    };
+    if (existing) {
+      if (existing.dataset.ndwLoaded === '1' || isReady()) {
+        resolve();
+        return;
+      }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        existing.dataset.ndwLoaded = '1';
+        resolve();
+      };
+      existing.addEventListener('load', finish, { once: true });
+      existing.addEventListener('error', finish, { once: true });
+      setTimeout(finish, 4000);
+      return;
+    }
+    const sc = document.createElement('script');
+    sc.src = src;
+    if (type) sc.type = type;
+    sc.async = false;
+    sc.addEventListener('load', () => markDone(sc), { once: true });
+    sc.addEventListener('error', () => markDone(sc), { once: true });
+    document.head.appendChild(sc);
+  });
+}
+
 function executeDocScripts(scripts: HTMLScriptElement[], target: HTMLElement | null) {
+  const externalLoads: Promise<void>[] = [];
+  const inlineScripts: HTMLScriptElement[] = [];
   scripts.forEach(old => {
     if (old.src) {
       const src = old.src.toLowerCase();
-      const safe = src.includes('unpkg.com') || src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
+      const safe =
+        src.includes('/static/vendor/') ||
+        src.includes('/vendor/') ||
+        src.includes('unpkg.com') ||
+        src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
       if (!safe) return;
-      if (document.querySelector(`script[src="${old.src}"]`)) return;
-      const sc = document.createElement('script');
-      sc.src = old.src;
-      if (old.type) sc.type = old.type;
-      sc.async = false;
-      document.head.appendChild(sc);
+      externalLoads.push(loadExternalScript(old.src, old.type));
       return;
     }
-    const code = old.textContent || '';
-    const exec = () => {
-      const sc = document.createElement('script');
-      if (old.type) sc.type = old.type;
-      sc.textContent = code;
-      target?.appendChild(sc);
-    };
-    if (containsDomReadyHook(code)) {
-      runWithPatchedDomReady(exec);
-    } else {
-      exec();
-    }
+    inlineScripts.push(old);
   });
+  const runInline = () => {
+    ensureOptionalGlobals();
+    inlineScripts.forEach(old => {
+      const code = old.textContent || '';
+      const exec = () => {
+        const sc = document.createElement('script');
+        if (old.type) sc.type = old.type;
+        sc.textContent = code;
+        try {
+          target?.appendChild(sc);
+        } catch (err) {
+          console.error('[ndw] inline script error', err);
+        }
+      };
+      if (containsDomReadyHook(code)) {
+        runWithPatchedDomReady(exec);
+      } else {
+        exec();
+      }
+    });
+  };
+  if (externalLoads.length) {
+    Promise.allSettled(externalLoads).then(runInline);
+  } else {
+    runInline();
+  }
 }
 
 function runWithPatchedDomReady(exec: () => void): void {
@@ -303,6 +431,16 @@ function enterSite(doc: AppNormalizedDoc) {
   renderInline(first.props.html);
 }
 
+export function renderDocForPreview(doc: AppNormalizedDoc) {
+  try {
+    document.body.classList.add('generated-mode');
+    document.body.classList.remove('landing-mode');
+  } catch (_) {
+    // Ignore DOM errors in headless preview mode.
+  }
+  enterSite(doc);
+}
+
 async function callGenerate(brief: string, seed: number) {
   const resp = await fetch('/generate', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': API_KEY }, body: JSON.stringify({ brief, seed }) });
   if (!resp.ok) {
@@ -326,36 +464,81 @@ function setGenerating(is: boolean) {
   });
 }
 
-function ensureShutter() {
-  let top = document.getElementById('ndw-shutter-top');
-  let bot = document.getElementById('ndw-shutter-bot');
-  if (!top) {
-    top = document.createElement('div'); top.id = 'ndw-shutter-top';
-    Object.assign(top.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(-100%)' });
-    document.body.appendChild(top);
-  }
-  if (!bot) {
-    bot = document.createElement('div'); bot.id = 'ndw-shutter-bot';
-    Object.assign(bot.style, { position: 'fixed', bottom: '0', left: '0', width: '100%', height: '50%', background: '#0f172a', zIndex: '99999', transform: 'translateY(100%)' });
-    document.body.appendChild(bot);
-  }
-  return { top, bot };
-}
-
 async function closeShutter() {
-  const { top, bot } = ensureShutter();
-  const gsap = (window as any).gsap;
-  if (!gsap) return;
-  return gsap.to([top, bot], { translateY: '0%', duration: 0.5, ease: 'power4.inOut' });
+  return;
 }
 
 async function openShutter() {
-  const { top, bot } = ensureShutter();
-  const gsap = (window as any).gsap;
-  if (!gsap) return;
-  return gsap.to(top, { translateY: '-100%', duration: 0.6, ease: 'power4.inOut' })
-    .then(() => gsap.to(bot, { translateY: '100%', duration: 0.6, ease: 'power4.inOut', delay: -0.5 }));
+  return;
 }
+
+// Progressive Reveal: feature is fully disabled (kept as no-op for compatibility).
+export async function prepareReveal() {
+  const mainEl = document.getElementById('appMain');
+  if (!mainEl) return;
+  mainEl.style.opacity = '1';
+}
+
+export async function playReveal() {
+  const mainEl = document.getElementById('appMain');
+  if (!mainEl) return;
+  mainEl.style.opacity = '1';
+}
+
+export function hideLandingElements() {
+    const selectors = ['.blob-cont', '.noise-overlay', '#cursor-glow'];
+    selectors.forEach(sel => {
+        const el = document.querySelector(sel);
+        if (el) el.remove();
+    });
+    const tunnelContainer = document.getElementById('tunnel-container');
+    if (tunnelContainer) tunnelContainer.style.display = 'none';
+    if (tunnel) {
+      tunnel.destroy();
+      tunnel = null;
+    }
+    document.body.classList.add('generated-mode');
+    document.body.classList.remove('landing-mode');
+    document.body.style.removeProperty('min-height');
+    document.body.style.removeProperty('background');
+    document.body.style.removeProperty('background-image');
+    document.body.style.removeProperty('background-color');
+    document.documentElement.style.removeProperty('min-height');
+}
+
+function setupLandingCues() {
+  if ((_w as any).__ndwLandingCues) return;
+  const hint = document.getElementById('heroHint');
+  const cue = document.getElementById('scrollCue');
+  if (!hint && !cue) return;
+  (_w as any).__ndwLandingCues = true;
+
+  let hintTimer: number | undefined;
+  let cueTimer: number | undefined;
+
+  const hideAll = () => {
+    if (hintTimer) window.clearTimeout(hintTimer);
+    if (cueTimer) window.clearTimeout(cueTimer);
+    hint?.classList.add('is-hidden');
+    cue?.classList.add('is-hidden');
+    window.removeEventListener('scroll', onScroll);
+  };
+
+  const onScroll = () => {
+    if (window.scrollY > 24) {
+      hideAll();
+    }
+  };
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  hintTimer = window.setTimeout(() => hint?.classList.add('is-hidden'), 4500);
+  cueTimer = window.setTimeout(() => cue?.classList.add('is-hidden'), 5500);
+}
+
+// export function _resetMainEl() {
+//   mainEl = document.getElementById('appMain');
+//   // console.error('[debug] _resetMainEl found:', mainEl?.id);
+// }
 
 let activeController: AbortController | null = null;
 
@@ -383,6 +566,12 @@ async function generateNew(e?: Event) {
   (_w as any).__ndwGenerating = true;
   (_w as any).__ndwTimedOut = false;
   setGenerating(true);
+  
+  // Cleanup previous site's resources before rendering new content
+  if (_w.NDW?._cleanup) {
+    try { _w.NDW._cleanup(); } catch (e) { console.warn('[ndw] cleanup error:', e); }
+  }
+  
   if (mainEl) mainEl.innerHTML = '';
   await closeShutter();
 
@@ -394,9 +583,116 @@ async function generateNew(e?: Event) {
   }
 
   const startTime = Date.now();
-  const MIN_DELAY = 3000; // 3s mandatory delay
+  const MIN_DELAY = 3000; // 3s optimistic opening fallback
+  const PATIENCE_DELAY = 5000; // 5s: Update spinner text
+  const DEADMAN_DELAY = 80000; // 80s: Give up
 
   let deadman: any;
+  let optimisticTimer: any;
+  let patienceTimer: any;
+  let shutterOpened = false;
+  
+  // Optimistic Shutter Opening: If 3s pass, ONLY open if we have content ready
+  optimisticTimer = setTimeout(async () => {
+    // Only open if we actually have a page rendered (firstPageSeen)
+    // If we haven't seen a page yet, we keep the shutter closed so we don't show a blank white screen.
+    if ((_w as any).__ndwGenerating && !(_w as any).__ndwTimedOut && firstPageSeen && !shutterOpened) {
+      console.debug('[ndw] Optimistic shutter opening triggered (content ready)');
+      await openShutter();
+      shutterOpened = true;
+    }
+  }, MIN_DELAY);
+
+  // Patience Timer: If 5s pass and still nothing, reassure the user
+  patienceTimer = setTimeout(() => {
+    if ((_w as any).__ndwGenerating && !firstPageSeen) {
+       showSpinner('Connecting to deep logic…');
+    }
+  }, PATIENCE_DELAY);
+
+  // Lifted to function scope for timer access
+  let firstPageSeen = false;
+
+  const renderFirstPage = async (page: any) => {
+    clearTimeout(deadman);
+    firstPageSeen = true;
+    hideHeroOverlay();
+    hideLandingElements();
+    hideSpinner();
+    updateJsonOut(page);
+
+    const isFullPage = page && page.kind === 'full_page_html' && typeof page.html === 'string' && page.html.trim();
+
+    if (isFullPage) {
+      // Double-Buffering: Render to hidden buffer first
+      const buffer = document.getElementById('ndw-sandbox-buffer');
+      if (buffer) {
+        renderToTarget(page.html, buffer);
+        // Swap buffer to main
+        const target = resolveMainEl();
+        if (target) {
+          target.innerHTML = '';
+          target.appendChild(buffer.firstElementChild?.cloneNode(true) || document.createTextNode(''));
+        }
+      } else {
+        renderFullPage(page.html);
+      }
+    } else {
+      enterSite(page);
+    }
+
+    if (!shutterOpened) {
+      await openShutter();
+      shutterOpened = true;
+    }
+  };
+
+  const renderFollowupPage = (page: any) => {
+    const isFullPage = page && page.kind === 'full_page_html' && typeof page.html === 'string' && page.html.trim();
+    if (isFullPage) {
+      renderFullPage(page.html);
+    } else {
+      enterSite(page);
+    }
+    updateJsonOut(page);
+  };
+
+  const handleEvent = async (event: string, data: any) => {
+    if (event === 'page') {
+      const page = data;
+      if (!firstPageSeen) {
+        await renderFirstPage(page);
+      } else {
+        renderFollowupPage(page);
+      }
+    } else if (event === 'error') {
+      showError(`Generation error: ${data.error}`);
+      updateJsonOut(data);
+      hideSpinner();
+      if (!shutterOpened) {
+        await openShutter();
+        shutterOpened = true;
+      }
+    }
+  };
+
+  const petDeadman = () => {
+    if (deadman) clearTimeout(deadman);
+    deadman = setTimeout(() => {
+      if (!firstPageSeen) {
+        console.error('[ndw] Shutter deadman triggered');
+        (_w as any).__ndwTimedOut = true;
+        showError('Generation timed out. Please try again.');
+        if (!shutterOpened) {
+          openShutter();
+          shutterOpened = true;
+        }
+        setGenerating(false);
+        hideSpinner();
+      }
+    }, DEADMAN_DELAY); 
+  };
+
   try {
     const resp = await fetch('/generate/stream', {
       method: 'POST',
@@ -411,29 +707,15 @@ async function generateNew(e?: Event) {
 
     const decoder = new TextDecoder();
     let messageBuffer = '';
-    let firstPageSeen = false;
     let currentEvent = '';
 
-    const petDeadman = () => {
-      console.debug('[ndw] petDeadman reset at', Date.now());
-      if (deadman) clearTimeout(deadman);
-      deadman = setTimeout(() => {
-        if (!firstPageSeen) {
-          console.error('[ndw] Shutter deadman triggered');
-          (_w as any).__ndwTimedOut = true;
-          showError('Generation is taking longer than usual. Please check your connection or wait a few more seconds and try again.');
-          openShutter();
-          setGenerating(false);
-        }
-      }, 120000); // 120s
-    };
     petDeadman();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      petDeadman(); // Activity seen, reset timeout
+      petDeadman(); 
       messageBuffer += decoder.decode(value, { stream: true });
       const lines = messageBuffer.split('\n');
       messageBuffer = lines.pop() || '';
@@ -448,31 +730,20 @@ async function generateNew(e?: Event) {
           const dataStr = trimmed.substring(6);
           try {
             const data = JSON.parse(dataStr);
-            if (currentEvent === 'page') {
-              const page = data;
-              if (!firstPageSeen) {
-                clearTimeout(deadman);
-                firstPageSeen = true;
-                
-                // Wait for at least 3 seconds total before opening
-                const elapsed = Date.now() - startTime;
-                if (elapsed < MIN_DELAY) {
-                  await new Promise(r => setTimeout(r, MIN_DELAY - elapsed));
-                }
-                
-                await renderFullPage(page.html);
-                await openShutter();
-              } else {
-                renderInline(page.html);
-              }
-            } else if (currentEvent === 'meta') {
-              console.debug('[ndw] meta event:', data);
-            } else if (currentEvent === 'error') {
-              showError(`Generation error: ${data.error}`);
-              await openShutter();
-            }
+            await handleEvent(currentEvent, data);
           } catch (e) {
             console.warn('SSE parse error', e);
+          }
+        } else if (trimmed.startsWith('{')) {
+          try {
+            const payload = JSON.parse(trimmed);
+            const event = payload?.event || '';
+            const data = payload?.data ?? payload;
+            if (event) {
+              await handleEvent(event, data);
+            }
+          } catch (e) {
+            console.warn('NDJSON parse error', e);
           }
         }
       }
@@ -483,24 +754,61 @@ async function generateNew(e?: Event) {
         clearTimeout(deadman);
         if (!(_w as any).__ndwTimedOut) {
           showError('Connection closed before content was ready. Try again?');
-          await openShutter();
+          if (!shutterOpened) {
+            await openShutter();
+            shutterOpened = true;
+          }
         }
     }
 
     ensureFloatingGenerate();
     adaptGenerateButtons();
   } catch (err) {
-    if (deadman) clearTimeout(deadman);
-    console.error('Generate error:', err);
-    if (!(_w as any).__ndwTimedOut) {
-      showError(`Oops! Something went wrong: ${err}`);
-      await openShutter();
+    console.error('[ndw] stream error', err);
+    if (!(_w as any).__ndwTimedOut && !firstPageSeen) {
+      try {
+        const fallback = await callGenerate('', seed);
+        if (fallback && !fallback.error) {
+          await renderFirstPage(fallback);
+        } else {
+          showError(fallback?.error || 'Generation failed. Please try again.');
+          if (!shutterOpened) {
+            await openShutter();
+            shutterOpened = true;
+          }
+        }
+      } catch (fallbackErr) {
+        console.error('[ndw] fallback generate failed', fallbackErr);
+        showError('Generation failed. Please try again.');
+        if (!shutterOpened) {
+          await openShutter();
+          shutterOpened = true;
+        }
+      }
+    } else if (!(_w as any).__ndwTimedOut) {
+      showError('Generation failed. Please try again.');
+      if (!shutterOpened) {
+        await openShutter();
+        shutterOpened = true;
+      }
     }
   } finally {
+    if (deadman) clearTimeout(deadman);
+    if (optimisticTimer) clearTimeout(optimisticTimer);
+    if (patienceTimer) clearTimeout(patienceTimer);
     setGenerating(false);
     (_w as any).__ndwGenerating = false;
     activeController = null;
+    hideSpinner();
   }
+}
+
+// Utility to render content to a specific target element
+function renderToTarget(html: string, target: HTMLElement) {
+    const doc = parseHtmlDocument(html);
+    applyGeneratedStyles(doc, false);
+    populateTargetFromDoc(doc, target);
+    executeScriptsFromDoc(doc, target);
 }
 
 function ensureFloatingGenerate() {
@@ -516,20 +824,108 @@ function ensureFloatingGenerate() {
   document.body.appendChild(wrap);
   document.getElementById('floatingGenerate')?.addEventListener('click', generateNew);
 }
-ensureFloatingGenerate();
+
+import { InfiniteTunnel } from './tunnel.js';
+
+// ... existing code ...
+
+let tunnel: InfiniteTunnel | null = null;
+
+async function initTunnel() {
+  const container = document.getElementById('tunnel-container');
+  if (container && !tunnel) {
+    tunnel = new InfiniteTunnel(container);
+    tunnel.setOnCardClick((id) => loadPrefetchSite(id));
+    await tunnel.init();
+    tunnel.setTheme(false); // Default to light mode for tunnel
+  }
+}
+
+async function loadPrefetchSite(id: string) {
+  if ((_w as any).__ndwGenerating) return;
+  console.debug(`[ndw] loading queued site ${id}`);
+  
+  // Close shutter to transition
+  await closeShutter();
+  
+  try {
+    const resp = await fetch(`/api/prefetch/${encodeURIComponent(id)}`);
+    if (!resp.ok) throw new Error(`Prefetch load failed: ${resp.status}`);
+    const page = await resp.json();
+    hideHeroOverlay();
+    hideLandingElements();
+    updateJsonOut(page);
+    
+    // Clear tunnel if we are leaving landing (optional, or keep it for back nav)
+    // For now we keep it in background but hidden by full page content
+    
+    enterSite(page);
+    
+    // Open shutter
+    await openShutter();
+    
+  } catch (e) {
+    console.error('Prefetch load error:', e);
+    showError('Failed to load site from queue.');
+    await openShutter();
+  }
+}
+
+function lockHeroOverlay() {
+  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
+  if (!hero) return;
+  if (hero.parentElement !== document.body) {
+    document.body.appendChild(hero);
+  }
+  hero.style.position = 'fixed';
+  hero.style.top = '0';
+  hero.style.left = '0';
+  hero.style.width = '100%';
+  hero.style.height = '100vh';
+  hero.style.zIndex = '10';
+  hero.style.pointerEvents = 'none';
+  hero.style.display = 'flex';
+  hero.style.flexDirection = 'column';
+  hero.style.justifyContent = 'center';
+  hero.style.alignItems = 'center';
+  hero.style.textAlign = 'center';
+  hero.style.transform = 'translateZ(0)';
+  hero.style.willChange = 'transform';
+  const container = hero.querySelector('.container') as HTMLElement | null;
+  if (container) {
+    container.style.pointerEvents = 'auto';
+  }
+}
+
+function hideHeroOverlay() {
+  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
+  if (!hero) return;
+  hero.classList.add('is-hidden');
+  document.body.classList.remove('landing-mode');
+  document.body.classList.add('generated-mode');
+}
+
+function showHeroOverlay() {
+  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
+  if (!hero) return;
+  hero.classList.remove('is-hidden');
+  document.body.classList.add('landing-mode');
+  document.body.classList.remove('generated-mode');
+}
 
 function renderLanding() {
   const btn = document.getElementById('landingGenerate');
-  if (!btn) return;
-  if ((btn as any).__ndwBound) return;
-  btn.addEventListener('click', generateNew);
-  (btn as any).__ndwBound = true;
-  console.debug('[ndw] landingGenerate bound');
-}
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => { console.debug('[ndw] DOMContentLoaded'); renderLanding(); });
-} else {
-  renderLanding();
+  if (btn && !(btn as any).__ndwBound) {
+    btn.addEventListener('click', generateNew);
+    (btn as any).__ndwBound = true;
+    console.debug('[ndw] landingGenerate bound');
+  }
+  
+  // Initialize 3D Tunnel
+  initTunnel().catch(e => console.error('[ndw] Tunnel init failed', e));
+  lockHeroOverlay();
+  showHeroOverlay();
+  setupLandingCues();
 }
 
 function ensureSitesCounterOverlay() {
@@ -539,7 +935,6 @@ function ensureSitesCounterOverlay() {
   wrap.innerHTML = `<div id="sitesCounterBadge" class="px-3 py-2 rounded bg-slate-900/80 text-white text-xs shadow border border-slate-700/50">Sites generated: 0</div>`;
   document.body.appendChild(wrap);
 }
-ensureSitesCounterOverlay();
 
 async function refreshSitesCounter() {
   try {
@@ -553,7 +948,15 @@ async function refreshSitesCounter() {
     if (badge) badge.textContent = `Sites generated: ${n}`;
   } catch { }
 }
-refreshSitesCounter();
+function autoInitIfEnabled() {
+  if ((_w as any).__ndwDisableAutoInit) return;
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
+}
+autoInitIfEnabled();
 
 // Update browser tab title without showing an on-page overlay.
 function upsertTitleOverlay(title?: string) {
@@ -568,18 +971,64 @@ function upsertTitleOverlay(title?: string) {
 
 function escapeHtml(s: string) { return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
+function parseHtmlDocument(html: string): Document {
+  const parser = new DOMParser();
+  return parser.parseFromString(String(html), 'text/html');
+}
+
+function applyGeneratedStyles(doc: Document, clearExisting: boolean) {
+  if (clearExisting) {
+    document.querySelectorAll('style[data-gen-style="1"]').forEach(s => s.remove());
+  }
+  doc.head?.querySelectorAll('style').forEach(s => {
+    const st = document.createElement('style');
+    st.setAttribute('data-gen-style', '1');
+    const typeAttr = s.getAttribute('type');
+    if (typeAttr) st.setAttribute('type', typeAttr);
+    st.textContent = s.textContent || '';
+    document.head.appendChild(st);
+  });
+}
+
+function populateTargetFromDoc(doc: Document, target: HTMLElement | null) {
+  if (!target) return;
+  target.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  const nodes = doc.body ? Array.from(doc.body.childNodes) : [];
+  nodes.forEach(n => frag.appendChild(n.cloneNode(true)));
+  target.appendChild(frag);
+}
+
+function executeScriptsFromDoc(doc: Document, target: HTMLElement | null) {
+  const scripts: HTMLScriptElement[] = [];
+  if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
+  if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
+  executeDocScripts(scripts, target);
+}
+
+function postRenderCommon(options?: { skipReadable?: boolean }) {
+  ensureFloatingGenerate();
+  ensureSitesCounterOverlay();
+  adaptGenerateButtons();
+  ensureScrollableBody();
+  upsertTitleOverlay(undefined);
+  const skipReadable = options?.skipReadable ?? document.body.classList.contains('generated-mode');
+  if (!skipReadable) ensureReadableTheme();
+  try { (window as any).lucide?.createIcons(); } catch (_) { }
+}
+
 function renderFullPage(html: string) {
   try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(String(html), 'text/html');
-    document.querySelectorAll('style[data-gen-style="1"]').forEach(s => s.remove());
-    doc.head?.querySelectorAll('style').forEach(s => { const st = document.createElement('style'); st.setAttribute('data-gen-style', '1'); st.textContent = s.textContent || ''; document.head.appendChild(st); });
+    const doc = parseHtmlDocument(html);
+    applyGeneratedStyles(doc, true);
     document.body.style.cssText = '';
     // Do NOT wipe document.body.className completely to protect host classes like ndw-base
-    const hostClasses = ['ndw-base'];
+    const hostClasses = ['ndw-base', 'generated-mode'];
     const currentClasses = Array.from(document.body.classList);
     const toKeep = currentClasses.filter(c => hostClasses.includes(c));
     document.body.className = toKeep.join(' ');
+    
+    hideLandingElements();
 
     if (doc.body) {
       const newStyle = doc.body.getAttribute('style');
@@ -587,50 +1036,28 @@ function renderFullPage(html: string) {
       if (newStyle) document.body.style.cssText = newStyle;
       if (newClass) {
         newClass.split(/\s+/).forEach(c => {
-          if (c.trim()) document.body.classList.add(c.trim());
+          const next = c.trim();
+          if (!next || next === 'landing-mode') return;
+          document.body.classList.add(next);
         });
       }
     }
-    if (mainEl) {
-      mainEl.innerHTML = '';
-      const frag = document.createDocumentFragment();
-      const nodes = doc.body ? Array.from(doc.body.childNodes) : [];
-      nodes.forEach(n => frag.appendChild(n.cloneNode(true)));
-      mainEl.appendChild(frag);
-    }
-    const scripts: HTMLScriptElement[] = [];
-    if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
-    if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-    executeDocScripts(scripts, mainEl);
-    ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
-    ensureScrollableBody();
-    upsertTitleOverlay(undefined);
-    ensureReadableTheme();
-    try { (window as any).lucide?.createIcons(); } catch (_) { }
+    document.body.classList.remove('landing-mode');
+    const target = resolveMainEl();
+    populateTargetFromDoc(doc, target);
+    executeScriptsFromDoc(doc, target);
+    postRenderCommon({ skipReadable: true });
   } catch (e) { console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
 function renderInline(html: string) {
   try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(String(html), 'text/html');
-    doc.head?.querySelectorAll('style').forEach(s => { const st = document.createElement('style'); st.setAttribute('data-gen-style', '1'); st.textContent = s.textContent || ''; document.head.appendChild(st); });
-    if (mainEl) {
-      mainEl.innerHTML = '';
-      const frag = document.createDocumentFragment();
-      const nodes = doc.body ? Array.from(doc.body.childNodes) : [];
-      nodes.forEach(n => frag.appendChild(n.cloneNode(true)));
-      mainEl.appendChild(frag);
-    }
-    const scripts: HTMLScriptElement[] = [];
-    if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
-    if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-    executeDocScripts(scripts, mainEl);
-    ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
-    ensureScrollableBody();
-    upsertTitleOverlay(undefined);
-    ensureReadableTheme();
-    try { (window as any).lucide?.createIcons(); } catch (_) { }
+    const doc = parseHtmlDocument(html);
+    applyGeneratedStyles(doc, false);
+    const target = resolveMainEl();
+    populateTargetFromDoc(doc, target);
+    executeScriptsFromDoc(doc, target);
+    postRenderCommon();
   } catch (e) { console.error('Inline render error:', e); showError('Failed to render content.'); }
 }
 
@@ -639,8 +1066,9 @@ function renderNdwSnippet(snippet: NdwSnippet) {
     const bg = snippet.background || {};
     const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
     document.querySelectorAll('style[data-ndw-sandbox="1"]').forEach(s => s.remove());
-    if (mainEl) {
-      mainEl.innerHTML = '';
+    const target = resolveMainEl();
+    if (target) {
+      target.innerHTML = '';
       const sandbox = document.createElement('div');
       sandbox.id = 'ndw-sandbox';
       sandbox.className = 'ndw-sandbox';
@@ -684,7 +1112,7 @@ function renderNdwSnippet(snippet: NdwSnippet) {
         c.style.minHeight = '60vh';
         appRoot.appendChild(c);
       }
-      mainEl.appendChild(sandbox);
+      target.appendChild(sandbox);
       scopeInlineStyles(sandbox, SANDBOX_SCOPE);
       ensureReadableTheme(sandbox);
     }
@@ -705,6 +1133,16 @@ function renderNdwSnippet(snippet: NdwSnippet) {
         };
       }
       const rawJs = snippet.js;
+      
+      // Security: Basic Keyword Stripping (Tier 1.5 Runtime Check)
+      // This prevents obvious malicious network/eval calls in the generated snippet
+      const dangerous = /\b(fetch|XMLHttpRequest|WebSocket|Worker|eval|Function|import)\b/g;
+      if (dangerous.test(rawJs || '')) {
+         console.warn('[ndw] Blocked dangerous API in snippet JS');
+         showError('Security Block: Dangerous API usage detected.');
+         return;
+      }
+
       const execSnippet = () => {
         const sc = document.createElement('script'); sc.type = 'text/javascript';
         sc.textContent = `(function(){try
@@ -718,16 +1156,14 @@ function renderNdwSnippet(snippet: NdwSnippet) {
         execSnippet();
       }
     }
-    ensureFloatingGenerate(); ensureSitesCounterOverlay(); adaptGenerateButtons();
-    ensureScrollableBody();
+    postRenderCommon();
     const sandboxEl = document.getElementById('ndw-sandbox');
     if (sandboxEl instanceof HTMLElement) ensureReadableTheme(sandboxEl);
-    try { (window as any).lucide?.createIcons(); } catch (_) { }
   } catch (e) { console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
 
 
-function showError(msg: string) { if (!mainEl) return; const wrap = document.createElement('div'); wrap.className = 'max-w-xl mx-auto mt-8 px-4'; wrap.innerHTML = `<div class="p-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-800">${escapeHtml(String(msg || 'Error'))}</div>`; mainEl.innerHTML = ''; mainEl.appendChild(wrap); }
+function showError(msg: string) { const target = resolveMainEl(); if (!target) return; const wrap = document.createElement('div'); wrap.className = 'max-w-xl mx-auto mt-8 px-4'; wrap.innerHTML = `<div class="p-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-800">${escapeHtml(String(msg || 'Error'))}</div>`; target.innerHTML = ''; target.appendChild(wrap); }
 
 let __genBtnSeq = 0;
 function buildUiverseButton(id?: string) { const wrap = document.createElement('div'); wrap.className = 'inline-block align-middle'; wrap.innerHTML = `<div class="ndw-button button" aria-label="Generate"><button ${id ? `id="${id}"` : ''} data-gen-button="1" name="checkbox" type="button" aria-label="Generate"></button><span></span><span></span><span></span><span></span></div>`; return wrap; }
