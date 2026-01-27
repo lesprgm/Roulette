@@ -21,7 +21,8 @@ from api import counter, dedupe
 from api import prefetch
 
 _REVIEW_QUEUE_LOCK = threading.Lock()
-_PREFETCH_REVIEW_QUEUE: Deque[Tuple[List[Path], int]] = deque()
+PrefetchHandle = str
+_PREFETCH_REVIEW_QUEUE: Deque[Tuple[List[PrefetchHandle], int]] = deque()
 _REVIEW_WORKER: Optional[threading.Thread] = None
 _REVIEW_MAX_ATTEMPTS = 3
 
@@ -180,9 +181,13 @@ async def add_request_id(request: Request, call_next):
         return response
     finally:
         dur_ms = int((time.time() - start) * 1000)
-        print(
-            f"INFO:root:rid={rid} method={request.method} path={request.url.path} "
-            f"status={getattr(response, 'status_code', '?')} dur_ms={dur_ms}"
+        log.info(
+            "rid=%s method=%s path=%s status=%s dur_ms=%d",
+            rid,
+            request.method,
+            request.url.path,
+            getattr(response, "status_code", "?"),
+            dur_ms,
         )
 
 
@@ -329,7 +334,7 @@ def _prefill_prefetch_queue() -> None:
         log.debug("prefetch.prewarm: LLM unavailable; skipping")
         return
     log.info("prefetch.prewarm: generating %d documents before startup", desired)
-    paths: List[Path] = []
+    paths: List[PrefetchHandle] = []
     generated_count = 0
     failures = 0
     max_failures = max(5, desired * 3)
@@ -529,24 +534,27 @@ def _apply_compliance_batch(docs: List[Dict[str, Any]], context: str) -> List[Di
     return approved
 
 
-def _enqueue_prefetch_docs(docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None) -> List[Path]:
+def _enqueue_prefetch_docs(
+    docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None
+) -> List[PrefetchHandle]:
     if not docs:
         return []
-    stored: List[Path] = []
+    stored: List[PrefetchHandle] = []
     for idx, doc in enumerate(docs):
         if max_queue is not None and prefetch.size() >= max_queue:
             break
-        path = prefetch.enqueue(doc)
-        if not path:
+        handle = prefetch.enqueue(doc)
+        if not handle:
             continue
-        stored.append(path)
+        stored.append(handle)
     return stored
 
 
-def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
-    retry: List[Path] = []
-    if not paths:
+def _review_prefetched_docs(handles: List[PrefetchHandle]) -> List[PrefetchHandle]:
+    retry: List[PrefetchHandle] = []
+    if not handles or prefetch.backend() != "file":
         return retry
+    paths = [prefetch.PREFETCH_DIR / h for h in handles if h]
     existing = [p for p in paths if p.exists()]
     if not existing:
         return retry
@@ -584,7 +592,7 @@ def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
             for idx, path in enumerate(valid_paths):
                 review = review_map.get(idx)
                 if not review:
-                    retry.append(path)
+                    retry.append(path.name)
                     continue
                 if review.get("ok") is False:
                     log.info("prefetch.review: removing rejected doc file=%s", path.name)
@@ -606,14 +614,14 @@ def _review_prefetched_docs(paths: List[Path]) -> List[Path]:
                     path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
                 except Exception:
                     log.exception("prefetch.review: failed to persist corrected doc file=%s", path.name)
-                    retry.append(path)
+                    retry.append(path.name)
                     continue
                 sig = dedupe.signature_for_doc(doc)
                 if sig:
                     dedupe.add(sig)
     except Exception:
         log.exception("prefetch.review: unexpected error")
-        retry.extend(existing)
+        retry.extend([p.name for p in existing])
     return retry
 
 
@@ -625,7 +633,7 @@ def _process_prefetch_review_queue() -> None:
                 _REVIEW_WORKER = None
                 return
             batch_paths, attempt = _PREFETCH_REVIEW_QUEUE.popleft()
-        retry_paths: List[Path] = []
+        retry_paths: List[PrefetchHandle] = []
         try:
             retry_paths = _review_prefetched_docs(batch_paths)
         except Exception:
@@ -646,8 +654,11 @@ def _process_prefetch_review_queue() -> None:
             )
 
 
-def _schedule_prefetch_review(paths: List[Path]) -> None:
+def _schedule_prefetch_review(handles: List[PrefetchHandle]) -> None:
     global _REVIEW_WORKER
+    if prefetch.backend() != "file":
+        return
+    paths = [prefetch.PREFETCH_DIR / h for h in handles if h]
     existing = [p for p in paths if p.exists()]
     if not existing:
         return
@@ -1153,7 +1164,7 @@ def prefetch_status() -> Dict[str, Any]:
         qsize = prefetch.size()
     except Exception:
         qsize = 0
-    return {"size": qsize, "dir": str(prefetch.PREFETCH_DIR)}
+    return {"size": qsize, "dir": str(prefetch.PREFETCH_DIR), "backend": prefetch.backend()}
 
 
 ## (Deprecated startup handler removed; logic moved to lifespan above)
@@ -1189,7 +1200,7 @@ def prefetch_fill(
     n = prefetch.clamp_batch(int(req.count or 0))
     initial_size = prefetch.size()
     target_size = initial_size + n
-    new_paths: List[Path] = []
+    new_paths: List[PrefetchHandle] = []
     generated_docs: List[Dict[str, Any]] = []
     
     generated_count = 0

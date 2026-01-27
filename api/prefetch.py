@@ -1,7 +1,7 @@
 """Prefetch queue for generated content.
 
-This module uses JSON files as the sole storage backend for compatibility
-and simplicity (file-based FIFO queue).
+Prefers Redis when REDIS_URL is configured, falling back to a file-based
+FIFO queue for local/dev compatibility.
 """
 import base64
 import hashlib
@@ -19,10 +19,26 @@ from api import dedupe
 
 log = logging.getLogger(__name__)
 
+try:
+    import redis  # type: ignore
+except Exception:  # pragma: no cover - optional dependency in some envs
+    redis = None  # type: ignore
+
 # Legacy file-based storage (fallback)
 PREFETCH_DIR = Path(os.getenv("PREFETCH_DIR", "cache/prefetch"))
 BATCH_MIN = int(os.getenv("PREFETCH_BATCH_MIN", "5"))
 BATCH_MAX = int(os.getenv("PREFETCH_BATCH_MAX", "20"))
+
+_REDIS_URL = os.getenv("REDIS_URL", "").strip()
+_REDIS_QUEUE_KEY = os.getenv("PREFETCH_REDIS_QUEUE_KEY", "ndw:prefetch:queue")
+_REDIS_DOC_PREFIX = os.getenv("PREFETCH_REDIS_DOC_PREFIX", "ndw:prefetch:doc:")
+_REDIS_CLIENT = None
+if redis and _REDIS_URL and not os.getenv("PYTEST_CURRENT_TEST"):
+    try:
+        _REDIS_CLIENT = redis.from_url(_REDIS_URL, decode_responses=True)
+    except Exception:
+        _REDIS_CLIENT = None
+        log.warning("prefetch.redis: failed to initialize redis client", exc_info=True)
 
 TOKEN_TTL_SECONDS = int(os.getenv("PREFETCH_TOKEN_TTL_SECONDS", "1800"))
 _token_secret_env = os.getenv("PREFETCH_TOKEN_SECRET", "").strip()
@@ -40,6 +56,14 @@ def _ensure_dir() -> None:
 def _list_files() -> list[Path]:
     _ensure_dir()
     return sorted(PREFETCH_DIR.glob("*.json"))
+
+
+def _redis_enabled() -> bool:
+    return _REDIS_CLIENT is not None
+
+
+def _redis_doc_key(doc_id: str) -> str:
+    return f"{_REDIS_DOC_PREFIX}{doc_id}"
 
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
@@ -160,6 +184,11 @@ def _strip_prefetch_meta(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 def size() -> int:
     """Get the current queue size."""
+    if _redis_enabled():
+        try:
+            return int(_REDIS_CLIENT.llen(_REDIS_QUEUE_KEY))
+        except Exception:
+            log.warning("prefetch.redis: failed to read queue size", exc_info=True)
     return len(_list_files())
 
 
@@ -170,6 +199,30 @@ def peek(limit: int = 20) -> list[Dict[str, Any]]:
     exp = ((now // ttl) + 1) * ttl
     previews: list[Dict[str, Any]] = []
     limit_count = max(0, int(limit or 0))
+    if _redis_enabled():
+        try:
+            ids = _REDIS_CLIENT.lrange(_REDIS_QUEUE_KEY, 0, max(0, limit_count - 1))
+            for doc_id in ids:
+                raw = _REDIS_CLIENT.get(_redis_doc_key(doc_id))
+                if not raw:
+                    _REDIS_CLIENT.lrem(_REDIS_QUEUE_KEY, 0, doc_id)
+                    continue
+                try:
+                    doc = json.loads(raw)
+                except Exception:
+                    _REDIS_CLIENT.delete(_redis_doc_key(doc_id))
+                    _REDIS_CLIENT.lrem(_REDIS_QUEUE_KEY, 0, doc_id)
+                    continue
+                if not isinstance(doc, dict):
+                    _REDIS_CLIENT.delete(_redis_doc_key(doc_id))
+                    _REDIS_CLIENT.lrem(_REDIS_QUEUE_KEY, 0, doc_id)
+                    continue
+                created_at = float(doc.get("created_at") or time.time())
+                token = _make_token("redis", doc_id, exp)
+                previews.append(_preview_from_doc(doc, token, created_at))
+            return previews
+        except Exception:
+            log.warning("prefetch.redis: peek failed; falling back to file queue", exc_info=True)
     files = _list_files()
     records: list[Tuple[float, Path, Dict[str, Any]]] = []
     for path in files:
@@ -198,6 +251,20 @@ def take(token: str) -> Optional[Dict[str, Any]]:
         return None
     kind, ident, _exp = parsed
 
+    if kind == "redis" and _redis_enabled():
+        try:
+            doc_id = ident
+            raw = _REDIS_CLIENT.get(_redis_doc_key(doc_id))
+            _REDIS_CLIENT.lrem(_REDIS_QUEUE_KEY, 1, doc_id)
+            if not raw:
+                return None
+            _REDIS_CLIENT.delete(_redis_doc_key(doc_id))
+            doc = json.loads(raw)
+            if not isinstance(doc, dict):
+                return None
+            return _strip_prefetch_meta(doc)
+        except Exception:
+            log.warning("prefetch.redis: take failed; falling back to file queue", exc_info=True)
     if kind != "file":
         return None
     name = ident
@@ -220,8 +287,8 @@ def take(token: str) -> Optional[Dict[str, Any]]:
     return _strip_prefetch_meta(doc)
 
 
-def enqueue(doc: Dict[str, Any]) -> Optional[Path]:
-    """Persist a generated page to the prefetch queue; returns path if enqueued.
+def enqueue(doc: Dict[str, Any]) -> Optional[str]:
+    """Persist a generated page to the prefetch queue; returns identifier if enqueued.
     Skips if duplicate by signature.
     """
     sig = dedupe.signature_for_doc(doc)
@@ -238,6 +305,20 @@ def enqueue(doc: Dict[str, Any]) -> Optional[Path]:
 
     dedupe.add(sig)
 
+    created_at = float(doc.get("created_at") or time.time())
+    doc["created_at"] = created_at
+    if _redis_enabled():
+        try:
+            doc_id = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}"
+            payload = json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
+            pipe = _REDIS_CLIENT.pipeline()
+            pipe.set(_redis_doc_key(doc_id), payload)
+            pipe.rpush(_REDIS_QUEUE_KEY, doc_id)
+            pipe.execute()
+            log.info("prefetch.enqueue: stored doc sig=%s id=%s queue_size=%d", sig[:12], doc_id, current_size + 1)
+            return doc_id
+        except Exception:
+            log.warning("prefetch.redis: enqueue failed; falling back to file queue", exc_info=True)
     _ensure_dir()
     fname = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
     path = PREFETCH_DIR / fname
@@ -245,11 +326,29 @@ def enqueue(doc: Dict[str, Any]) -> Optional[Path]:
     tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp.replace(path)
     log.info("prefetch.enqueue: stored doc sig=%s file=%s queue_size=%d", sig[:12], path.name, current_size + 1)
-    return path
+    return path.name
 
 
 def dequeue() -> Optional[Dict[str, Any]]:
     """Pop the next document from the queue."""
+    if _redis_enabled():
+        try:
+            while True:
+                doc_id = _REDIS_CLIENT.lpop(_REDIS_QUEUE_KEY)
+                if not doc_id:
+                    log.debug("prefetch.dequeue: queue empty")
+                    return None
+                raw = _REDIS_CLIENT.get(_redis_doc_key(doc_id))
+                if not raw:
+                    continue
+                _REDIS_CLIENT.delete(_redis_doc_key(doc_id))
+                data = json.loads(raw)
+                if not isinstance(data, dict):
+                    continue
+                log.info("prefetch.dequeue: served id=%s", doc_id)
+                return _strip_prefetch_meta(data)
+        except Exception:
+            log.warning("prefetch.redis: dequeue failed; falling back to file queue", exc_info=True)
     files = _list_files()
     if not files:
         log.debug("prefetch.dequeue: queue empty")
@@ -274,10 +373,13 @@ def dequeue() -> Optional[Dict[str, Any]]:
     return None
 
 
+def backend() -> str:
+    return "redis" if _redis_enabled() else "file"
+
+
 def clamp_batch(n: int) -> int:
     if n < BATCH_MIN:
         return BATCH_MIN
     if n > BATCH_MAX:
         return BATCH_MAX
     return n
-
