@@ -82,7 +82,3 @@ services:
         value: gemini-3-flash-preview
       - key: PREFETCH_REVIEW_BATCH
         value: '3'
-    disk:
-      name: ndw-cache
-      mountPath: /opt/render/project/src/cache
-      sizeGB: 1
