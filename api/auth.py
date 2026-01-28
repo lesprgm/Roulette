@@ -23,7 +23,22 @@ def _load_keys() -> Set[str]:
     return set(parts)
 
 
-_ALLOWED_KEYS: Set[str] = _load_keys()
+def _load_admin_keys() -> Set[str]:
+    raw = os.getenv("ADMIN_API_KEYS", "").strip()
+    if not raw:
+        return set()
+    parts = []
+    for token in raw.split(","):
+        token = token.strip()
+        if "#" in token:
+            token = token.split("#", 1)[0].strip()
+        if token:
+            parts.append(token)
+    return set(parts)
+
+
+_ADMIN_KEYS: Set[str] = _load_admin_keys()
+_ALLOWED_KEYS: Set[str] = _load_keys() | _ADMIN_KEYS
 
 
 def keys_required() -> bool:
@@ -31,6 +46,12 @@ def keys_required() -> bool:
     True if API keys are configured (auth enforced).
     """
     return len(_ALLOWED_KEYS) > 0
+
+
+def is_admin_key(key: Optional[str]) -> bool:
+    if not key:
+        return False
+    return key.strip() in _ADMIN_KEYS
 
 
 def require_api_key(x_api_key: Optional[str] = Header(None)) -> str:
@@ -44,6 +65,32 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> str:
         return "anonymous"
 
     if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing x-api-key header",
+        )
+    if x_api_key not in _ALLOWED_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+    return x_api_key
+
+
+def optional_api_key(x_api_key: Optional[str] = Header(None)) -> str:
+    """
+    Optional API key dependency:
+    - If API_KEYS is empty -> returns "anonymous" (auth disabled).
+    - If API_KEYS is set and ALLOW_PUBLIC_GENERATION=1 -> missing key is allowed ("public").
+    - If a key is provided, it must be valid or we raise 401.
+    """
+    if not keys_required():
+        return "anonymous"
+
+    allow_public = os.getenv("ALLOW_PUBLIC_GENERATION", "0").lower() in {"1", "true", "yes", "on"}
+    if not x_api_key:
+        if allow_public:
+            return "public"
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing x-api-key header",

@@ -51,6 +51,8 @@ except Exception:
 _ENV_OPENROUTER_API_KEY = OPENROUTER_API_KEY
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 FORCE_OPENROUTER_ONLY = os.getenv("FORCE_OPENROUTER_ONLY", "0").lower() in {"1", "true", "yes", "on"}
+GEMINI_ONLY = os.getenv("GEMINI_ONLY", "0").lower() in {"1", "true", "yes", "on"}
+COMPLIANCE_GEMINI_ONLY = os.getenv("COMPLIANCE_GEMINI_ONLY", "0").lower() in {"1", "true", "yes", "on"}
 
 # Groq (OpenAI-compatible) fallback provider
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
@@ -547,9 +549,18 @@ def _fallback_burst(
         yield {"error": "Model generation failed"}
 
 
-def generate_page_burst(brief: str, seed: int, user_key: Optional[str] = None) -> Iterable[Dict[str, Any]]:
+def generate_page_burst(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+    gemini_only: bool = False,
+) -> Iterable[Dict[str, Any]]:
     """Yield up to 10 sites from a single streaming burst."""
+    gemini_only = gemini_only or GEMINI_ONLY
     if not GEMINI_API_KEY:
+        if gemini_only:
+            yield {"error": "Gemini-only mode: GEMINI_API_KEY missing"}
+            return
         yield from _fallback_burst(brief, seed, user_key, target_docs=10)
         return
 
@@ -649,6 +660,9 @@ Seed: {seed}
         )
         if resp.status_code != 200:
             logging.warning("Gemini stream HTTP %s: %s", resp.status_code, resp.text[:200])
+            if gemini_only:
+                yield {"error": f"Gemini-only mode: stream HTTP {resp.status_code}"}
+                return
             logging.warning("Gemini stream failed; falling back to OpenRouter/Groq")
             providers_override = None
             if resp.status_code in {429, 503}:
@@ -798,11 +812,17 @@ Seed: {seed}
                 logging.warning("Gemini stream finishReasons=%s", sorted(finish_reasons))
             if safety_ratings:
                 logging.warning("Gemini stream candidate safetyRatings=%s", safety_ratings[:3])
+            if gemini_only:
+                yield {"error": "Gemini-only mode: stream produced no valid pages", "meta": feedback}
+                return
             logging.warning("Gemini stream produced no valid pages; falling back to OpenRouter/Groq")
             yield from _fallback_single(brief, seed, user_key, extra=feedback)
                 
     except Exception as e:
         logging.warning("Burst generation error: %r", e)
+        if gemini_only:
+            yield {"error": "Gemini-only mode: burst error"}
+            return
         logging.warning("Gemini burst error; falling back to OpenRouter/Groq")
         yield from _fallback_burst(
             brief,
@@ -1626,7 +1646,7 @@ def _maybe_run_compliance_review(
         review = _call_openrouter_review(doc, brief, category_note)
     else:
         review = _call_gemini_review(doc, brief, category_note)
-        if not isinstance(review, dict) and _openrouter_review_active():
+        if not isinstance(review, dict) and _openrouter_review_active() and not COMPLIANCE_GEMINI_ONLY:
             logging.info("Compliance review: gemini unavailable; falling back to openrouter")
             review = _call_openrouter_review(doc, brief, category_note)
             provider = "openrouter"
@@ -1675,7 +1695,7 @@ def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[
             per_doc = _call_gemini_review_per_doc(documents)
             if per_doc is not None:
                 return per_doc
-        if reviews is None and _openrouter_review_active():
+        if reviews is None and _openrouter_review_active() and not COMPLIANCE_GEMINI_ONLY:
             logging.info("Compliance batch: gemini unavailable; falling back to openrouter")
             return _call_openrouter_review_batch(documents)
         return reviews

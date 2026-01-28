@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
-from api.auth import require_api_key, extract_client_key, keys_required
+from api.auth import require_api_key, optional_api_key, extract_client_key, keys_required, is_admin_key
 from api import counter, dedupe
 from api import prefetch
 
@@ -214,12 +214,14 @@ if _REDIST_URL and _rr_cls and not os.getenv("PYTEST_CURRENT_TEST"):
         _rl_instance = None
 
 
-def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
+def _safe_rate_check(bucket: str, key: str, *, admin: bool = False) -> Tuple[bool, int, int]:
     """
     Return (allowed, remaining, reset_ts).
     Works with either the Redis limiter instance OR the in-process limiter module,
     and tolerates different function names across versions.
     """
+    if admin:
+        return True, 9999, int(time.time()) + 60
     use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
     if use_redis:
         try:
@@ -865,7 +867,7 @@ def generate_endpoint(
     req: GenerateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: str = Depends(require_api_key),
+    api_key: str = Depends(optional_api_key),
 ):
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
     llm_info = llm_status()
@@ -874,7 +876,7 @@ def generate_endpoint(
 
     if not llm_available:
         if offline_allowed:
-            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
             log.info("rate_limit (offline) allowed=%s remaining=%s", allowed, remaining)
             if not allowed:
                 return JSONResponse(
@@ -902,7 +904,7 @@ def generate_endpoint(
             }
             return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
         if os.getenv("PYTEST_CURRENT_TEST"):
-            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
             log.info("rate_limit (pytest stub) allowed=%s remaining=%s", allowed, remaining)
             if not allowed:
                 return JSONResponse(
@@ -934,7 +936,7 @@ def generate_endpoint(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
     log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
@@ -998,7 +1000,7 @@ def generate_stream(
     req: GenerateRequest,
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: str = Depends(require_api_key),
+    api_key: str = Depends(optional_api_key),
 ):
     """
     NDJSON streaming endpoint: emits a couple of JSON lines.
@@ -1019,7 +1021,7 @@ def generate_stream(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
     log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
@@ -1185,7 +1187,7 @@ def prefetch_fill(
     Returns how many were added plus the new queue size.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
-    allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key)
+    allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key, admin=is_admin_key(api_key))
     if not allowed:
         log.info("prefetch.fill: rate limited client=%s", client_key)
         return JSONResponse(
@@ -1205,6 +1207,7 @@ def prefetch_fill(
     
     generated_count = 0
     attempts = 0
+    prefetch_gemini_only = os.getenv("PREFETCH_GEMINI_ONLY", "0").lower() in {"1", "true", "yes", "on"}
     while attempts < n and generated_count < n:
         attempts += 1
         if not llm_ok:
@@ -1220,7 +1223,12 @@ def prefetch_fill(
         
         try:
             burst_docs: List[Dict[str, Any]] = []
-            for page in llm_generate_page_burst(req.brief or "", seed=seed, user_key="prefetch"):
+            for page in llm_generate_page_burst(
+                req.brief or "",
+                seed=seed,
+                user_key="prefetch",
+                gemini_only=prefetch_gemini_only,
+            ):
                 if isinstance(page, dict) and page.get("error"):
                     log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
                     break
@@ -1288,7 +1296,7 @@ def preview(
     a barebones result. Protects with the same API key dependency.
     """
     client_key = extract_client_key(api_key, request.client.host if request and request.client else "anon")
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
     if not allowed:
         payload = _rate_limit_payload(reset_ts)
         return PlainTextResponse(

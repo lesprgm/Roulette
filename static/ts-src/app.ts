@@ -98,7 +98,7 @@ function ensureJsonOverlay() {
   const wrap = document.createElement('div');
   wrap.id = 'jsonOverlay';
   wrap.className = 'fixed top-3 right-3 z-50';
-  wrap.innerHTML = `<button id="toggleJsonBtn" type="button" class="px-3 py-2 rounded bg-slate-900/80 text-white text-xs">Show JSON</button>
+  wrap.innerHTML = `<button id="toggleJsonBtn" type="button" class="px-3 py-2 rounded bg-slate-900/80 text-white text-xs">Peek under the hood</button>
   <div id="jsonPanel" class="hidden mt-2 max-w-[60vw] max-h-[60vh] overflow-auto bg-white border border-slate-200 rounded shadow-lg p-3 text-slate-900">
     <pre id="jsonOut" class="text-[11px] whitespace-pre-wrap text-slate-900"></pre>
   </div>`;
@@ -108,7 +108,7 @@ function ensureJsonOverlay() {
   if (btn && panel) {
     btn.addEventListener('click', () => {
       panel.classList.toggle('hidden');
-      btn.textContent = panel.classList.contains('hidden') ? 'Show JSON' : 'Hide JSON';
+      btn.textContent = panel.classList.contains('hidden') ? 'Peek under the hood' : 'Hide JSON';
     });
   }
 }
@@ -121,6 +121,258 @@ export function updateJsonOut(data: any) {
   } catch (err) {
     jsonOut.textContent = String(err || 'Failed to stringify JSON');
   }
+}
+
+type TransitionKind = 'portal' | 'iris' | 'noise' | 'warp' | 'flash';
+const TRANSITIONS: TransitionKind[] = ['portal', 'iris', 'noise', 'warp', 'flash'];
+let transitionIndex = 0;
+let hasRenderedOnce = false;
+let transitionInFlight = false;
+
+function nextTransition(): TransitionKind {
+  const t = TRANSITIONS[transitionIndex % TRANSITIONS.length];
+  transitionIndex += 1;
+  return t;
+}
+
+export function __ndwTestResetTransitions() {
+  transitionIndex = 0;
+  hasRenderedOnce = false;
+  transitionInFlight = false;
+}
+
+function ensureTransitionStyles() {
+  if (document.getElementById('ndw-transition-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'ndw-transition-styles';
+  st.textContent = `
+    .ndw-transition-snapshot {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 9998;
+      overflow: hidden;
+      transform: translateZ(0);
+      will-change: opacity, transform, filter;
+    }
+    .ndw-transition-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0;
+      transform: translateZ(0);
+      will-change: opacity, transform, clip-path;
+      mix-blend-mode: normal;
+    }
+    .ndw-transition-noise {
+      background-image:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.06) 0, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0.06) 1px, rgba(0,0,0,0.06) 2px),
+        repeating-linear-gradient(90deg, rgba(0,0,0,0.05) 0, rgba(0,0,0,0.05) 1px, rgba(255,255,255,0.05) 1px, rgba(255,255,255,0.05) 2px);
+    }
+  `;
+  document.head.appendChild(st);
+}
+
+function buildSnapshot(): HTMLElement {
+  const snapshot = document.createElement('div');
+  snapshot.className = 'ndw-transition-snapshot';
+  const bodyStyle = getComputedStyle(document.body);
+  snapshot.style.backgroundColor = bodyStyle.backgroundColor;
+  snapshot.style.backgroundImage = bodyStyle.backgroundImage;
+  snapshot.style.backgroundSize = bodyStyle.backgroundSize;
+  snapshot.style.backgroundPosition = bodyStyle.backgroundPosition;
+  snapshot.style.backgroundRepeat = bodyStyle.backgroundRepeat;
+
+  const frag = document.createDocumentFragment();
+  Array.from(document.body.childNodes).forEach(node => {
+    frag.appendChild(node.cloneNode(true));
+  });
+  snapshot.appendChild(frag);
+  snapshot.querySelectorAll('script').forEach(el => el.remove());
+  snapshot.querySelectorAll('#floatingGenerateWrap, #jsonOverlay, #sitesCounterFloating, #tunnel-container, .blob-cont, .noise-overlay, #cursor-glow').forEach(el => el.remove());
+  snapshot.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  return snapshot;
+}
+
+function getAccentColor(): string {
+  try {
+    const styles = getComputedStyle(document.body);
+    const accent = styles.getPropertyValue('--accent-500').trim();
+    if (accent) return accent;
+    const primary = styles.getPropertyValue('--primary').trim();
+    if (primary) return primary;
+    const bg = styles.backgroundColor;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)') return bg;
+  } catch (_) {
+    // ignore
+  }
+  return '#facc15';
+}
+
+async function runTransition(renderFn: () => void) {
+  const target = resolveMainEl();
+  if (!target) {
+    renderFn();
+    hasRenderedOnce = true;
+    return;
+  }
+  if (transitionInFlight) {
+    renderFn();
+    return;
+  }
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    renderFn();
+    hasRenderedOnce = true;
+    return;
+  }
+  if (!hasRenderedOnce) {
+    renderFn();
+    hasRenderedOnce = true;
+    return;
+  }
+  ensureTransitionStyles();
+  transitionInFlight = true;
+  const transition = nextTransition();
+
+  const snapshot = buildSnapshot();
+  document.body.appendChild(snapshot);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ndw-transition-overlay';
+  document.body.appendChild(overlay);
+
+  const originalOpacity = target.style.opacity;
+  const originalTransform = target.style.transform;
+  const originalFilter = target.style.filter;
+  target.style.opacity = '0';
+  target.style.transform = 'scale(1)';
+  target.style.filter = 'none';
+
+  try {
+    renderFn();
+  } catch (err) {
+    console.error('[ndw] render error during transition', err);
+  }
+
+  await new Promise(requestAnimationFrame);
+
+  const animations: Animation[] = [];
+  const canAnimate = typeof (snapshot as any).animate === 'function';
+  const durations: Record<TransitionKind, number> = {
+    portal: 280,
+    iris: 260,
+    noise: 200,
+    warp: 240,
+    flash: 160,
+  };
+  const duration = durations[transition];
+
+  if (canAnimate) {
+    const fadeOut = snapshot.animate(
+      [
+        { opacity: 1, transform: 'scale(1)', filter: 'blur(0px)' },
+        { opacity: 0, transform: 'scale(1.01)', filter: 'blur(2px)' },
+      ],
+      { duration, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)', fill: 'forwards' }
+    );
+    animations.push(fadeOut);
+
+    const fadeIn = target.animate(
+      [
+        { opacity: 0, transform: 'scale(0.992)', filter: 'blur(3px)' },
+        { opacity: 1, transform: 'scale(1)', filter: 'blur(0px)' },
+      ],
+      { duration, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)', fill: 'forwards' }
+    );
+    animations.push(fadeIn);
+
+    if (transition === 'portal') {
+      overlay.style.background =
+        'radial-gradient(circle at 50% 50%, rgba(15,23,42,0.35) 0%, rgba(15,23,42,0.15) 35%, rgba(15,23,42,0) 70%)';
+      overlay.style.clipPath = 'circle(0% at 50% 50%)';
+      animations.push(
+        overlay.animate(
+          [
+            { opacity: 1, clipPath: 'circle(0% at 50% 50%)' },
+            { opacity: 0, clipPath: 'circle(160% at 50% 50%)' },
+          ],
+          { duration, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' }
+        )
+      );
+    } else if (transition === 'iris') {
+      overlay.style.background =
+        'radial-gradient(circle at 50% 50%, rgba(15,23,42,0.2) 0%, rgba(15,23,42,0) 60%)';
+      animations.push(
+        overlay.animate(
+          [
+            { opacity: 0.6, transform: 'scale(0.75)' },
+            { opacity: 0, transform: 'scale(1.4)' },
+          ],
+          { duration, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)', fill: 'forwards' }
+        )
+      );
+    } else if (transition === 'noise') {
+      overlay.classList.add('ndw-transition-noise');
+      animations.push(
+        overlay.animate(
+          [
+            { opacity: 0 },
+            { opacity: 0.25 },
+            { opacity: 0 },
+          ],
+          { duration: Math.max(180, duration), easing: 'linear', fill: 'forwards' }
+        )
+      );
+    } else if (transition === 'warp') {
+      animations.push(
+        snapshot.animate(
+          [
+            { opacity: 1, filter: 'blur(0px)' },
+            { opacity: 0, filter: 'blur(6px)' },
+          ],
+          { duration, easing: 'cubic-bezier(0.25, 0.6, 0.2, 1)', fill: 'forwards' }
+        )
+      );
+      animations.push(
+        target.animate(
+          [
+            { opacity: 0, filter: 'blur(6px)' },
+            { opacity: 1, filter: 'blur(0px)' },
+          ],
+          { duration, easing: 'cubic-bezier(0.25, 0.6, 0.2, 1)', fill: 'forwards' }
+        )
+      );
+    } else if (transition === 'flash') {
+      overlay.style.background = getAccentColor();
+      animations.push(
+        overlay.animate(
+          [
+            { opacity: 0 },
+            { opacity: 0.4 },
+            { opacity: 0 },
+          ],
+          { duration: Math.max(150, duration), easing: 'ease-out', fill: 'forwards' }
+        )
+      );
+    }
+
+    await Promise.all(animations.map(anim => anim.finished.catch(() => {})));
+  } else {
+    snapshot.style.opacity = '0';
+    target.style.opacity = '1';
+    await new Promise(resolve => setTimeout(resolve, duration));
+  }
+
+  snapshot.remove();
+  overlay.remove();
+  target.style.opacity = originalOpacity;
+  target.style.transform = originalTransform;
+  target.style.filter = originalFilter;
+  hasRenderedOnce = true;
+  transitionInFlight = false;
 }
 
 function ensureControlStyles() {
@@ -225,7 +477,15 @@ function scopeInlineStyles(container: HTMLElement, scope: string) {
   });
 }
 
-const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && String(bodyEl.dataset.apiKey)) || 'demo_123';
+const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && String(bodyEl.dataset.apiKey)) || '';
+
+function buildAuthHeaders() {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (API_KEY) {
+    headers['x-api-key'] = API_KEY;
+  }
+  return headers;
+}
 
 function stripExternalScripts(html: string) {
   return String(html).replace(/<script[^>]*\bsrc\s*=\s*['"][^'"]+['"][^>]*>\s*<\/script>/gi, '');
@@ -356,8 +616,13 @@ function executeDocScripts(scripts: HTMLScriptElement[], target: HTMLElement | n
       const code = old.textContent || '';
       const exec = () => {
         const sc = document.createElement('script');
-        if (old.type) sc.type = old.type;
-        sc.textContent = code;
+        const typeAttr = old.type || '';
+        if (typeAttr) sc.type = typeAttr;
+        if (typeAttr.includes('module')) {
+          sc.textContent = code;
+        } else {
+          sc.textContent = `(function(){\n${code}\n}).call(window);\n`;
+        }
         try {
           target?.appendChild(sc);
         } catch (err) {
@@ -420,15 +685,27 @@ function runWithPatchedDomReady(exec: () => void): void {
   }
 }
 
-function enterSite(doc: AppNormalizedDoc) {
+async function enterSite(doc: AppNormalizedDoc) {
   const anyDoc: any = doc;
-  if (anyDoc && typeof anyDoc.error === 'string') return showError(anyDoc.error);
-  if (anyDoc && anyDoc.kind === 'ndw_snippet_v1') return renderNdwSnippet(anyDoc as NdwSnippet);
-  if (anyDoc && anyDoc.kind === 'full_page_html' && typeof anyDoc.html === 'string' && anyDoc.html.trim()) return renderFullPage(anyDoc.html);
+  if (anyDoc && typeof anyDoc.error === 'string') {
+    showError(anyDoc.error);
+    return;
+  }
+  if (anyDoc && anyDoc.kind === 'ndw_snippet_v1') {
+    await runTransition(() => renderNdwSnippet(anyDoc as NdwSnippet));
+    return;
+  }
+  if (anyDoc && anyDoc.kind === 'full_page_html' && typeof anyDoc.html === 'string' && anyDoc.html.trim()) {
+    await runTransition(() => renderFullPage(anyDoc.html));
+    return;
+  }
   const comps = Array.isArray(anyDoc?.components) ? anyDoc.components : [];
   const first = comps.find((c: any) => c && c.props && typeof c.props.html === 'string' && c.props.html.trim());
-  if (!first) return showError('No renderable HTML found');
-  renderInline(first.props.html);
+  if (!first) {
+    showError('No renderable HTML found');
+    return;
+  }
+  await runTransition(() => renderInline(first.props.html));
 }
 
 export function renderDocForPreview(doc: AppNormalizedDoc) {
@@ -438,11 +715,11 @@ export function renderDocForPreview(doc: AppNormalizedDoc) {
   } catch (_) {
     // Ignore DOM errors in headless preview mode.
   }
-  enterSite(doc);
+  void enterSite(doc);
 }
 
 async function callGenerate(brief: string, seed: number) {
-  const resp = await fetch('/generate', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': API_KEY }, body: JSON.stringify({ brief, seed }) });
+  const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed }) });
   if (!resp.ok) {
     const text = await resp.text();
     return { error: `Generate failed (${resp.status}): ${text || resp.statusText}` };
@@ -464,12 +741,24 @@ function setGenerating(is: boolean) {
   });
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function closeShutter() {
-  return;
+  const shutter = document.getElementById('shutter');
+  if (!shutter) return;
+  shutter.classList.remove('shutter-open');
+  shutter.classList.add('shutter-closed');
+  await sleep(650);
 }
 
 async function openShutter() {
-  return;
+  const shutter = document.getElementById('shutter');
+  if (!shutter) return;
+  shutter.classList.remove('shutter-closed');
+  shutter.classList.add('shutter-open');
+  await sleep(650);
 }
 
 // Progressive Reveal: feature is fully disabled (kept as no-op for compatibility).
@@ -531,8 +820,8 @@ function setupLandingCues() {
   };
 
   window.addEventListener('scroll', onScroll, { passive: true });
-  hintTimer = window.setTimeout(() => hint?.classList.add('is-hidden'), 4500);
-  cueTimer = window.setTimeout(() => cue?.classList.add('is-hidden'), 5500);
+  hintTimer = window.setTimeout(() => hint?.classList.add('is-hidden'), 8000);
+  cueTimer = window.setTimeout(() => cue?.classList.add('is-hidden'), 10000);
 }
 
 // export function _resetMainEl() {
@@ -579,7 +868,7 @@ async function generateNew(e?: Event) {
   const btn = document.getElementById('toggleJsonBtn');
   if (panel && !panel.classList.contains('hidden')) {
     panel.classList.add('hidden');
-    if (btn) btn.textContent = 'Show JSON';
+    if (btn) btn.textContent = 'Peek under the hood';
   }
 
   const startTime = Date.now();
@@ -624,21 +913,23 @@ async function generateNew(e?: Event) {
     const isFullPage = page && page.kind === 'full_page_html' && typeof page.html === 'string' && page.html.trim();
 
     if (isFullPage) {
-      // Double-Buffering: Render to hidden buffer first
-      const buffer = document.getElementById('ndw-sandbox-buffer');
-      if (buffer) {
-        renderToTarget(page.html, buffer);
-        // Swap buffer to main
-        const target = resolveMainEl();
-        if (target) {
-          target.innerHTML = '';
-          target.appendChild(buffer.firstElementChild?.cloneNode(true) || document.createTextNode(''));
+      await runTransition(() => {
+        // Double-Buffering: Render to hidden buffer first
+        const buffer = document.getElementById('ndw-sandbox-buffer');
+        if (buffer) {
+          renderToTarget(page.html, buffer);
+          // Swap buffer to main
+          const target = resolveMainEl();
+          if (target) {
+            target.innerHTML = '';
+            target.appendChild(buffer.firstElementChild?.cloneNode(true) || document.createTextNode(''));
+          }
+        } else {
+          renderFullPage(page.html);
         }
-      } else {
-        renderFullPage(page.html);
-      }
+      });
     } else {
-      enterSite(page);
+      await enterSite(page);
     }
 
     if (!shutterOpened) {
@@ -647,12 +938,12 @@ async function generateNew(e?: Event) {
     }
   };
 
-  const renderFollowupPage = (page: any) => {
+  const renderFollowupPage = async (page: any) => {
     const isFullPage = page && page.kind === 'full_page_html' && typeof page.html === 'string' && page.html.trim();
     if (isFullPage) {
-      renderFullPage(page.html);
+      await runTransition(() => renderFullPage(page.html));
     } else {
-      enterSite(page);
+      await enterSite(page);
     }
     updateJsonOut(page);
   };
@@ -663,7 +954,7 @@ async function generateNew(e?: Event) {
       if (!firstPageSeen) {
         await renderFirstPage(page);
       } else {
-        renderFollowupPage(page);
+        await renderFollowupPage(page);
       }
     } else if (event === 'error') {
       showError(`Generation error: ${data.error}`);
@@ -696,7 +987,7 @@ async function generateNew(e?: Event) {
   try {
     const resp = await fetch('/generate/stream', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
+      headers: buildAuthHeaders(),
       body: JSON.stringify({ brief: '', seed }),
       signal
     });
@@ -813,6 +1104,13 @@ function renderToTarget(html: string, target: HTMLElement) {
 
 function ensureFloatingGenerate() {
   console.debug('[ndw] ensureFloatingGenerate called');
+  if (document.body.classList.contains('landing-mode')) {
+    const existingWrap = document.getElementById('floatingGenerateWrap');
+    if (existingWrap) {
+      try { existingWrap.remove(); } catch (_) { }
+    }
+    return;
+  }
   const existing = document.getElementById('floatingGenerateWrap');
   if (existing) existing.remove(); else {
     const oldBtn = document.getElementById('floatingGenerate');
@@ -859,7 +1157,7 @@ async function loadPrefetchSite(id: string) {
     // Clear tunnel if we are leaving landing (optional, or keep it for back nav)
     // For now we keep it in background but hidden by full page content
     
-    enterSite(page);
+    await enterSite(page);
     
     // Open shutter
     await openShutter();

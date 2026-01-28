@@ -2,7 +2,7 @@
 
 > **Generate a brand-new interactive experience with every click.** This project uses AI to create unique, interactive web pages and games on demand—no two generations are ever the same.
 
-**Live Demo:** [roulette-api.lesozzy5.workers.dev](https://roulette-api.lesozzy5.workers.dev)
+**Live Demo:** [non-deterministic-website.onrender.com](https://non-deterministic-website.onrender.com)
 
 ## What Is This?
 
@@ -12,7 +12,7 @@ Non-Deterministic Website is an experimental platform that leverages large langu
 - **Complete web pages** with layouts, styling, and interactive elements
 - **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
-The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. To maximize throughput, we use **Triple-Burst Streaming Generation**: a single request to Gemini generates three distinct websites in a stream, tripling our daily capacity within API limits. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
+The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. To maximize throughput, we use **Burst Streaming Generation**: a single request to Gemini generates **10** distinct websites in a stream, multiplying daily capacity within API limits. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
 
 ## Screenshots
 
@@ -73,20 +73,18 @@ graph TD
     M -->|Unique| N[Render in Browser]
     M -->|Duplicate| E
     N --> O[Show Generated Experience]
-    O --> P[Triple-Burst Refills Queue]
+    O --> P[Burst Refills Queue]
     P --> C
     D --> N
 
-    subgraph Triple-Burst Generation
-    P1[Request 3-Site Batch]
+    subgraph Burst Generation
+    P1[Request 10-Site Batch]
     P2[Streaming JSON Parser]
     P3[Enqueue Site #1]
-    P4[Enqueue Site #2]
-    P5[Enqueue Site #3]
+    P4[Enqueue Sites #2-#10]
     P1 --> P2
     P2 -->|Site 1 Complete| P3
-    P2 -->|Site 2 Complete| P4
-    P2 -->|Site 3 Complete| P5
+    P2 -->|More Sites Complete| P4
     end
     P ---> P1
 
@@ -105,7 +103,7 @@ graph TD
 | **Frontend UI**                    | `templates/index.html`<br/>`static/ts-src/app.ts` | Landing page, generation controls, rendering engine                                            |
 | **NDW Runtime**                    | `static/ts-src/ndw.ts`                            | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG           |
 | **API Backend**                    | `api/main.py`                                     | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints                         |
-| **LLM Client**                     | `api/llm_client.py`                               | Orchestrates Gemini **Triple-Burst** generation with OpenRouter and Groq fallbacks.            |
+| **LLM Client**                     | `api/llm_client.py`                               | Orchestrates Gemini **Burst** generation with OpenRouter and Groq fallbacks.                   |
 | **Prefetch Engine**                | `api/prefetch.py`                                 | Background queue that pre-generates experiences for instant delivery using a streaming parser. |
 | **Deduplication**                  | `api/dedupe.py`                                   | Content fingerprinting to prevent near-identical outputs                                       |
 | **Validators**                     | `api/validators.py`                               | JSON schema validation and normalization                                                       |
@@ -209,19 +207,20 @@ Configure behavior via environment variables:
 | Variable                      | Description                           | Default                                     |
 | ----------------------------- | ------------------------------------- | ------------------------------------------- |
 | `GROQ_API_KEY`                | Groq API authentication key           | (required)                                  |
-| `GROQ_MODEL`                  | Primary Groq model                    | `meta-llama/llama-4-scout-17b-16e-instruct` |
-| `GROQ_FALLBACK_MODEL`         | Backup model if primary fails         | `llama-3.1-8b-instant`                      |
+| `GROQ_MODEL`                  | Primary Groq model                    | `openai/gpt-oss-120b`                       |
+| `GROQ_FALLBACK_MODEL`         | Backup model if primary fails         | `qwen/qwen3-32b`                            |
 | `GROQ_MAX_TOKENS`             | Max output tokens for Groq            | `15000`                                     |
 | `OPENROUTER_API_KEY`          | OpenRouter API key (primary)          | (required for production)                   |
-| `OPENROUTER_MODEL`            | Primary OpenRouter model              | `google/gemma-3n-e2b-it:free`               |
-| `OPENROUTER_FALLBACK_MODEL_1` | First OpenRouter fallback             | `x-ai/grok-4-fast`                          |
+| `OPENROUTER_MODEL`            | Primary OpenRouter model              | `z-ai/glm-4.7-flash`                        |
+| `OPENROUTER_FALLBACK_MODEL_1` | First OpenRouter fallback             | `google/gemini-2.0-flash-exp:free`          |
 | `OPENROUTER_FALLBACK_MODEL_2` | Second OpenRouter fallback            | `deepseek/deepseek-chat-v3.1:free`          |
 | `FORCE_OPENROUTER_ONLY`       | Force skipping Groq fallback          | `false`                                     |
 | `LLM_TIMEOUT_SECS`            | Request timeout in seconds            | `75`                                        |
 | `GEMINI_GENERATION_MODEL`     | Primary Gemini generation model       | `gemini-3-flash-preview`                    |
-| `GEMINI_REVIEW_ENABLED`       | Enable Gemini-based compliance review | `false`                                     |
+| `GEMINI_REVIEW_ENABLED`       | Enable Gemini-based compliance review | `true`                                      |
 | `GEMINI_API_KEY`              | Google AI Studio API key              | (optional)                                  |
-| `GEMINI_REVIEW_MODEL`         | Gemini reviewer model slug            | `gemini-1.5-flash-latest`                   |
+| `GEMINI_REVIEW_MODEL`         | Gemini reviewer model slug            | `gemini-3-flash-preview`                    |
+| `OPENROUTER_REVIEW_MODEL`     | OpenRouter compliance fallback model  | `openai/gpt-5-nano`                         |
 
 ### Prefetch & Caching
 

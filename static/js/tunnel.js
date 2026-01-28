@@ -363,18 +363,18 @@ export class InfiniteTunnel {
         for (const segment of this.segments) {
             const segmentZ = segment.position.z;
             // Segment is behind camera - move to front
-        if (segmentZ > cameraZ + SEGMENT_DEPTH) {
-            const minZ = Math.min(...this.segments.map(s => s.position.z));
-            segment.position.z = minZ - SEGMENT_DEPTH;
-            this.populateCards(segment, Math.floor(Math.abs(segment.position.z) / SEGMENT_DEPTH));
+            if (segmentZ > cameraZ + SEGMENT_DEPTH) {
+                const minZ = Math.min(...this.segments.map(s => s.position.z));
+                segment.position.z = minZ - SEGMENT_DEPTH;
+                this.populateCards(segment, Math.floor(Math.abs(segment.position.z) / SEGMENT_DEPTH));
+            }
+            // Segment is too far ahead - move to back (reverse scroll)
+            if (segmentZ < cameraZ - tunnelLength - SEGMENT_DEPTH) {
+                const maxZ = Math.max(...this.segments.map(s => s.position.z));
+                segment.position.z = maxZ + SEGMENT_DEPTH;
+                this.populateCards(segment, Math.floor(Math.abs(segment.position.z) / SEGMENT_DEPTH));
+            }
         }
-        // Segment is too far ahead - move to back (reverse scroll)
-        if (segmentZ < cameraZ - tunnelLength - SEGMENT_DEPTH) {
-            const maxZ = Math.max(...this.segments.map(s => s.position.z));
-            segment.position.z = maxZ + SEGMENT_DEPTH;
-            this.populateCards(segment, Math.floor(Math.abs(segment.position.z) / SEGMENT_DEPTH));
-        }
-    }
     }
     // ───────────────────────────────────────────────────────────────────────────
     // Event Handlers
