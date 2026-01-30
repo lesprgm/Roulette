@@ -91,7 +91,7 @@ function ensureJsonOverlay() {
     if (btn && panel) {
         btn.addEventListener('click', () => {
             panel.classList.toggle('hidden');
-            btn.textContent = panel.classList.contains('hidden') ? 'Peek under the hood' : 'Hide JSON';
+            btn.textContent = panel.classList.contains('hidden') ? 'Peek under the hood' : 'Close the hood';
         });
     }
 }

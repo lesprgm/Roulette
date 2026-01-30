@@ -30,6 +30,9 @@ def _testing_stub_enabled() -> bool:
         return False
     if os.getenv("RUN_LIVE_LLM_TESTS", "0").lower() in {"1", "true", "yes", "on"}:
         return False
+    # If no providers are configured, don't hide failures behind a stub.
+    if not (OPENROUTER_API_KEY or GROQ_API_KEY or GEMINI_API_KEY):
+        return False
     if OPENROUTER_API_KEY != _ENV_OPENROUTER_API_KEY:
         return False
     if GROQ_API_KEY != _ENV_GROQ_API_KEY:
@@ -121,6 +124,14 @@ try:
     TEMPERATURE = float(os.getenv("TEMPERATURE", "1.5"))
 except Exception:
     TEMPERATURE = 1.5
+
+# Burst generation: number of sites requested from Gemini in one streaming call.
+# This must match the JSON schema and prompt instructions in generate_page_burst().
+try:
+    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "20"))
+except Exception:
+    BURST_SITE_COUNT = 20
+BURST_SITE_COUNT = max(1, min(BURST_SITE_COUNT, 50))
 
 # Token and timeout configuration
 # Defaults favor longer generations; adjust via .env if provider rejects
@@ -526,7 +537,7 @@ def _fallback_burst(
     brief: str,
     seed: int,
     user_key: Optional[str] = None,
-    target_docs: int = 10,
+    target_docs: int = 20,
     providers_override: Optional[List[str]] = None,
 ) -> Iterable[Dict[str, Any]]:
     """Generate multiple docs when burst streaming is unavailable."""
@@ -555,23 +566,31 @@ def generate_page_burst(
     user_key: Optional[str] = None,
     gemini_only: bool = False,
 ) -> Iterable[Dict[str, Any]]:
-    """Yield up to 10 sites from a single streaming burst."""
+    """Yield up to BURST_SITE_COUNT sites from a single Gemini streaming burst."""
     gemini_only = gemini_only or GEMINI_ONLY
-    if not GEMINI_API_KEY:
+    gemini_key = os.getenv("GEMINI_API_KEY", GEMINI_API_KEY).strip()
+    model = os.getenv("GEMINI_GENERATION_MODEL", GEMINI_GENERATION_MODEL).strip() or GEMINI_GENERATION_MODEL
+    stream_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
+
+    if not gemini_key:
         if gemini_only:
             yield {"error": "Gemini-only mode: GEMINI_API_KEY missing"}
             return
-        yield from _fallback_burst(brief, seed, user_key, target_docs=10)
+        yield from _fallback_burst(brief, seed, user_key, target_docs=BURST_SITE_COUNT)
         return
 
-    # Fetch 10 categories for the burst
-    category_notes = [_next_category_note(user_key) for _ in range(10)]
+    # Fetch categories for the burst
+    category_notes = [_next_category_note(user_key) for _ in range(BURST_SITE_COUNT)]
     target_docs = len(category_notes)
     matrix_b64 = _get_design_matrix_b64()
     
     parts = []
     if matrix_b64:
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+
+    assignments = "\n".join(
+        [f"SITE {i+1} Category: {category_notes[i]}" for i in range(len(category_notes))]
+    )
 
     prompt = f"""
 === VISION GROUNDING: DESIGN MATRIX ATTACHED ===
@@ -582,21 +601,12 @@ def generate_page_burst(
 ==============================================
 
 === MANDATORY CATEGORY ASSIGNMENTS (DO NOT IGNORE) ===
-SITE 1 Category: {category_notes[0]}
-SITE 2 Category: {category_notes[1]}
-SITE 3 Category: {category_notes[2]}
-SITE 4 Category: {category_notes[3]}
-SITE 5 Category: {category_notes[4]}
-SITE 6 Category: {category_notes[5]}
-SITE 7 Category: {category_notes[6]}
-SITE 8 Category: {category_notes[7]}
-SITE 9 Category: {category_notes[8]}
-SITE 10 Category: {category_notes[9]}
+{assignments}
 
 You MUST build each site following its assigned category.
 =========================================================
 
-You generate EXACTLY 10 unique, self-contained interactive web apps as a JSON array.
+You generate EXACTLY {target_docs} unique, self-contained interactive web apps as a JSON array.
 Each app must be a complete experience with high-quality design.
 Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '['.
 Every item MUST include a non-empty "html" field containing a complete <!doctype html> document.
@@ -644,16 +654,16 @@ Seed: {seed}
                     },
                     "required": ["kind", "html"]
                 },
-                "minItems": 10,
-                "maxItems": 10
+                "minItems": target_docs,
+                "maxItems": target_docs
             }
         },
     }
 
     try:
         resp = requests.post(
-            GEMINI_STREAM_ENDPOINT,
-            params={"key": GEMINI_API_KEY},
+            stream_endpoint,
+            params={"key": gemini_key},
             json=body,
             timeout=LLM_TIMEOUT_SECS,
             stream=True
@@ -828,7 +838,7 @@ Seed: {seed}
             brief,
             seed,
             user_key,
-            target_docs=10,
+            target_docs=BURST_SITE_COUNT,
             providers_override=["groq"],
         )
 
@@ -1719,7 +1729,9 @@ def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[
         ],
         "generationConfig": {
             "temperature": 0.0,
-            "maxOutputTokens": min(20000, 4096 * len(documents)),
+            # Batch reviews can be verbose when returning per-doc issues + optional corrected docs.
+            # Keep a high ceiling so a 20-item batch doesn't get truncated.
+            "maxOutputTokens": min(60000, 4096 * len(documents)),
             "responseMimeType": "application/json",
             "responseSchema": batch_review_schema,
         },

@@ -12,7 +12,7 @@ Non-Deterministic Website is an experimental platform that leverages large langu
 - **Complete web pages** with layouts, styling, and interactive elements
 - **Dynamic content** that adapts to user prompts or generates creative themes automatically
 
-The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. To maximize throughput, we use **Burst Streaming Generation**: a single request to Gemini generates **10** distinct websites in a stream, multiplying daily capacity within API limits. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
+The system ensures variety through **Vision-Grounded Prompting**: a multimodal design reference (Design Matrix) guides the LLM to choose between Professional, Playful, Brutalist, or Cozy aesthetics based on the theme. To maximize throughput, we use **Burst Streaming Generation**: a single request to Gemini generates **20** distinct websites in a stream, multiplying daily capacity within API limits. An **Interactive-First** hierarchy ensures that the generated app is always the centerpiece, minimizing scrolling and maximizing immediate engagement.
 
 ## Screenshots
 
@@ -78,10 +78,10 @@ graph TD
     D --> N
 
     subgraph Burst Generation
-    P1[Request 10-Site Batch]
+    P1[Request 20-Site Batch]
     P2[Streaming JSON Parser]
     P3[Enqueue Site #1]
-    P4[Enqueue Sites #2-#10]
+    P4[Enqueue Sites #2-#20]
     P1 --> P2
     P2 -->|Site 1 Complete| P3
     P2 -->|More Sites Complete| P4
@@ -232,7 +232,7 @@ Configure behavior via environment variables:
 | `PREFETCH_FILL_TO`       | Target queue size after refill              | `20`                    |
 | `DEDUPE_ENABLED`         | Enable duplicate detection                  | `true`                  |
 | `DEDUPE_RECENT_FILE`     | Deduplication database file                 | `cache/seen_pages.json` |
-| `PREFETCH_REVIEW_BATCH`  | Number of items generated per restock batch | `3`                     |
+| `PREFETCH_REVIEW_BATCH`  | Number of items reviewed per batch during prefetch filling/top-up | `20`                     |
 | `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup   | `0`                     |
 
 Prefetched experiences are saved as JSON files in `cache/prefetch`. Every `/generate`

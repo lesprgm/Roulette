@@ -222,13 +222,13 @@ if _REDIST_URL and _rr_cls and not os.getenv("PYTEST_CURRENT_TEST"):
         _rl_instance = None
 
 
-def _safe_rate_check(bucket: str, key: str, *, admin: bool = False) -> Tuple[bool, int, int]:
+def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
     """
     Return (allowed, remaining, reset_ts).
     Works with either the Redis limiter instance OR the in-process limiter module,
     and tolerates different function names across versions.
     """
-    if admin:
+    if is_admin_key(key):
         return True, 9999, int(time.time()) + 60
     use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
     if use_redis:
@@ -308,7 +308,7 @@ PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _
 PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
 if os.getenv("PYTEST_CURRENT_TEST"):
     PREFETCH_DELAY_MS = 0
-PREFETCH_REVIEW_BATCH = int(os.getenv("PREFETCH_REVIEW_BATCH", "3") or 3)
+PREFETCH_REVIEW_BATCH = int(os.getenv("PREFETCH_REVIEW_BATCH", "20") or 20)
 try:
     PREFETCH_MAX_WORKERS = int(os.getenv("PREFETCH_MAX_WORKERS", "2") or 2)
 except Exception:
@@ -884,7 +884,7 @@ def generate_endpoint(
 
     if not llm_available:
         if offline_allowed:
-            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
             log.info("rate_limit (offline) allowed=%s remaining=%s", allowed, remaining)
             if not allowed:
                 return JSONResponse(
@@ -912,7 +912,7 @@ def generate_endpoint(
             }
             return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
         if os.getenv("PYTEST_CURRENT_TEST"):
-            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
             log.info("rate_limit (pytest stub) allowed=%s remaining=%s", allowed, remaining)
             if not allowed:
                 return JSONResponse(
@@ -944,7 +944,7 @@ def generate_endpoint(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
     log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
@@ -1029,7 +1029,7 @@ def generate_stream(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
     log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
@@ -1195,7 +1195,7 @@ def prefetch_fill(
     Returns how many were added plus the new queue size.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
-    allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key, admin=is_admin_key(api_key))
+    allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key)
     if not allowed:
         log.info("prefetch.fill: rate limited client=%s", client_key)
         return JSONResponse(
@@ -1231,12 +1231,21 @@ def prefetch_fill(
         
         try:
             burst_docs: List[Dict[str, Any]] = []
-            for page in llm_generate_page_burst(
-                req.brief or "",
-                seed=seed,
-                user_key="prefetch",
-                gemini_only=prefetch_gemini_only,
-            ):
+            try:
+                burst_iter = llm_generate_page_burst(
+                    req.brief or "",
+                    seed=seed,
+                    user_key="prefetch",
+                    gemini_only=prefetch_gemini_only,
+                )
+            except TypeError:
+                # Back-compat for tests/mocks that don't accept gemini_only.
+                burst_iter = llm_generate_page_burst(
+                    req.brief or "",
+                    seed=seed,
+                    user_key="prefetch",
+                )
+            for page in burst_iter:
                 if isinstance(page, dict) and page.get("error"):
                     log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
                     break
@@ -1245,9 +1254,17 @@ def prefetch_fill(
 
             if burst_docs:
                 generated_docs.extend(burst_docs)
-                while len(generated_docs) >= PREFETCH_REVIEW_BATCH and generated_count < n:
-                    batch = generated_docs[:PREFETCH_REVIEW_BATCH]
-                    generated_docs = generated_docs[PREFETCH_REVIEW_BATCH:]
+                # Review in bounded chunks. Note that n may be smaller than a single burst:
+                # if PREFETCH_REVIEW_BATCH > n, we still batch at (n - generated_count).
+                while generated_count < n:
+                    desired = min(PREFETCH_REVIEW_BATCH, n - generated_count)
+                    if desired <= 0:
+                        break
+                    if len(generated_docs) < desired:
+                        break
+                    batch_size = desired
+                    batch = generated_docs[:batch_size]
+                    generated_docs = generated_docs[batch_size:]
                     approved = _apply_compliance_batch(batch, "prefetch.fill")
                     added_paths = _enqueue_prefetch_docs(approved, context="prefetch.fill", max_queue=target_size)
                     new_paths.extend(added_paths)
@@ -1304,7 +1321,7 @@ def preview(
     a barebones result. Protects with the same API key dependency.
     """
     client_key = extract_client_key(api_key, request.client.host if request and request.client else "anon")
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key, admin=is_admin_key(api_key))
+    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
     if not allowed:
         payload = _rate_limit_payload(reset_ts)
         return PlainTextResponse(

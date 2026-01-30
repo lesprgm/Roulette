@@ -101,8 +101,10 @@ export class InfiniteTunnel {
     // Initialization
     // ───────────────────────────────────────────────────────────────────────────
     async init() {
-        // Fetch previews from backend
-        await this.fetchPreviews();
+        // Render immediately with placeholders; swap to real previews once fetch completes.
+        this.previews = this.placeholderPreviews;
+        this.previewFingerprint = 'placeholder:init';
+        this.previewById = new Map(this.previews.map(preview => [preview.id, preview]));
         // Create tunnel segments
         for (let i = 0; i < NUM_SEGMENTS; i++) {
             const segment = this.createSegment(i);
@@ -112,6 +114,11 @@ export class InfiniteTunnel {
         }
         // Ensure scroll range for landing page
         this.ensureScrollRange();
+        // Kick off preview fetch in the background (don't block first paint).
+        void this.fetchPreviews().then((changed) => {
+            if (changed)
+                this.refreshCards();
+        });
         // Start preview refresh loop
         this.startRefreshLoop();
         // Start render loop

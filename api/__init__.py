@@ -1,10 +1,12 @@
 import os
+import sys
 from pathlib import Path
 
 
 def _load_dotenv_if_needed() -> None:
-	# Do not auto-load .env during pytest to keep tests offline
-	if os.getenv("PYTEST_CURRENT_TEST"):
+	# Do not auto-load .env during pytest to keep tests deterministic/offline.
+	# PYTEST_CURRENT_TEST is only set while a test is running, so also check sys.modules.
+	if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
 		return
 	env_path = Path(".env")
 	if not env_path.exists():

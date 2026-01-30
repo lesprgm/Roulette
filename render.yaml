@@ -58,6 +58,8 @@ services:
         sync: false
       - key: GEMINI_MAX_OUTPUT_TOKENS
         value: '140000'
+      - key: BURST_SITE_COUNT
+        value: '20'
       - key: COMPLIANCE_FAIL_OPEN
         value: '1'
       - key: COMPLIANCE_PROVIDER
@@ -81,4 +83,4 @@ services:
       - key: GEMINI_GENERATION_MODEL
         value: gemini-3-flash-preview
       - key: PREFETCH_REVIEW_BATCH
-        value: '3'
+        value: '20'
