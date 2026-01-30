@@ -117,6 +117,14 @@ def _log_startup_checks() -> None:
         elif not str(prefetch_dir).startswith(str(cache_mount.resolve(strict=False))):
             log.warning("startup.check: PREFETCH_DIR=%s is not on Render disk %s", prefetch_dir, cache_mount)
 
+    # Prefetch storage backend (Redis vs file)
+    try:
+        from api import prefetch as _prefetch_mod
+        backend = "redis" if getattr(_prefetch_mod, "_redis_enabled", lambda: False)() else "file"
+        log.info("startup.check: prefetch backend=%s", backend)
+    except Exception:
+        log.info("startup.check: prefetch backend=unknown")
+
 
 
 @asynccontextmanager
