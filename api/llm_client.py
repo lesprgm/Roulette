@@ -23,6 +23,92 @@ from api.llm_prompts import (
     _review_schema,
 )
 
+def _openrouter_repair_to_schema(
+    raw_text: str,
+    schema: Dict[str, Any],
+    *,
+    name: str,
+    label: str,
+    max_tokens: int = 16000,
+) -> Optional[Dict[str, Any]]:
+    """Best-effort JSON repair via OpenRouter Structured Outputs.
+
+    Used when Gemini returns truncated/unparseable JSON for compliance review. We ask a
+    separate model to *only* emit a schema-valid JSON object.
+    """
+    if COMPLIANCE_GEMINI_ONLY:
+        return None
+    if not OPENROUTER_API_KEY:
+        return None
+    model = (os.getenv("OPENROUTER_REPAIR_MODEL", "").strip() or OPENROUTER_REVIEW_MODEL or OPENROUTER_MODEL).strip()
+    if not model:
+        return None
+    t = (raw_text or "").strip()
+    if not t:
+        return None
+    # Keep prompts bounded; repair is about structure, not full fidelity.
+    if len(t) > 120_000:
+        t = t[:80_000] + "\n\n...<snip>...\n\n" + t[-40_000:]
+
+    prompt = (
+        "You are a JSON repair/canonicalization tool.\n"
+        "You will be given a possibly truncated or malformed JSON-ish response.\n"
+        "Your job: output ONE valid JSON object that conforms EXACTLY to the given JSON Schema.\n"
+        "- Output JSON only. No markdown. No explanations.\n"
+        "- Preserve indices/meaning when present; do not invent new indices.\n"
+        "- If parts are missing, use conservative defaults that satisfy the schema.\n\n"
+        "RAW INPUT (may be invalid/truncated):\n"
+        f"{t}\n"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "max_tokens": max(1024, min(int(max_tokens), 60000)),
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "schema": schema,
+                "strict": True,
+            },
+        },
+    }
+    try:
+        resp = requests.post(OPENROUTER_ENDPOINT, headers=headers, json=body, timeout=max(LLM_TIMEOUT_SECS, 120))
+    except Exception as exc:
+        logging.warning("OpenRouter repair request error (%s): %r", label, exc)
+        return None
+    if resp.status_code != 200:
+        try:
+            msg = resp.text[:400]
+        except Exception:
+            msg = str(resp.status_code)
+        logging.warning("OpenRouter repair HTTP %s (%s): %s", resp.status_code, label, msg)
+        return None
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        logging.warning("OpenRouter repair non-JSON HTTP body (%s): %r", label, exc)
+        return None
+    text = _openrouter_extract_content(payload)
+    if not text or not isinstance(text, str):
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        try:
+            parsed = _json_from_text(text)
+        except Exception:
+            logging.warning("OpenRouter repair response unparsable (%s): %s", label, text[:200])
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
 
 def _testing_stub_enabled() -> bool:
     """Return True when pytest is running and keys match the original environment values."""
@@ -1552,6 +1638,16 @@ def _call_gemini_review(doc: Dict[str, Any], brief: str, category_note: str) -> 
             review = None
     if not isinstance(review, dict):
         logging.warning("Gemini review response unparsable: %s", text[:200])
+        repaired = _openrouter_repair_to_schema(
+            text,
+            _review_schema(),
+            name="compliance_review",
+            label="gemini_review_repair",
+            max_tokens=OPENROUTER_REVIEW_MAX_TOKENS or 4096,
+        )
+        if isinstance(repaired, dict):
+            logging.info("Gemini review repaired via OpenRouter")
+            return repaired
         return None
     return review
 
@@ -1799,9 +1895,33 @@ def _call_gemini_review_batch(documents: List[Dict[str, Any]]) -> Optional[List[
                     data = json.loads(repaired)
                 except Exception:
                     logging.warning("Gemini batch review response unparsable: %s", text[:200])
+                    repaired_obj = _openrouter_repair_to_schema(
+                        text,
+                        _batch_review_schema(),
+                        name="compliance_review_batch",
+                        label="gemini_batch_review_repair",
+                        max_tokens=max(OPENROUTER_REVIEW_MAX_TOKENS, 16000),
+                    )
+                    if isinstance(repaired_obj, dict):
+                        repaired_list = repaired_obj.get("results") or repaired_obj.get("reviews")
+                        if isinstance(repaired_list, list):
+                            logging.info("Gemini batch review repaired via OpenRouter")
+                            return repaired_list
                     return None
             else:
                 logging.warning("Gemini batch review response unparsable: %s", text[:200])
+                repaired_obj = _openrouter_repair_to_schema(
+                    text,
+                    _batch_review_schema(),
+                    name="compliance_review_batch",
+                    label="gemini_batch_review_repair",
+                    max_tokens=max(OPENROUTER_REVIEW_MAX_TOKENS, 16000),
+                )
+                if isinstance(repaired_obj, dict):
+                    repaired_list = repaired_obj.get("results") or repaired_obj.get("reviews")
+                    if isinstance(repaired_list, list):
+                        logging.info("Gemini batch review repaired via OpenRouter")
+                        return repaired_list
                 return None
     if isinstance(data, dict):
         data = data.get("results") or data.get("reviews")
