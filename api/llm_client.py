@@ -665,9 +665,22 @@ def generate_page_burst(
         yield from _fallback_burst(brief, seed, user_key, target_docs=BURST_SITE_COUNT)
         return
 
-    # Fetch categories for the burst
+    # Fetch categories and softly bias vibe distribution for the burst
     category_notes = [_next_category_note(user_key) for _ in range(BURST_SITE_COUNT)]
     target_docs = len(category_notes)
+    vibes = ["Professional", "Playful", "Brutalist", "Cozy"]
+    vibe_weights = {
+        "Professional": 0.25,
+        "Playful": 0.30,
+        "Brutalist": 0.20,
+        "Cozy": 0.25,
+    }
+    rng = random.Random(seed or 0)
+    vibe_pool = rng.choices(
+        vibes,
+        weights=[vibe_weights[v] for v in vibes],
+        k=target_docs,
+    )
     matrix_b64 = _get_design_matrix_b64()
     
     parts = []
@@ -675,21 +688,24 @@ def generate_page_burst(
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
 
     assignments = "\n".join(
-        [f"SITE {i+1} Category: {category_notes[i]}" for i in range(len(category_notes))]
+        [
+            f"SITE {i+1} Category: {category_notes[i]} | Vibe: {vibe_pool[i]}"
+            for i in range(len(category_notes))
+        ]
     )
 
     prompt = f"""
 === VISION GROUNDING: DESIGN MATRIX ATTACHED ===
 1. Analyze the attached 'UI Design Matrix'. 
-2. Classify the brief into one of the 4 vibes (Professional, Playful, Brutalist, Cozy).
-3. Extract colors from the 'Color Universe' strip.
-4. Build the apps matching the aesthetics of your selected vibe.
+2. Extract colors from the 'Color Universe' strip.
+3. Build the apps matching the aesthetics of the ASSIGNED vibe.
 ==============================================
 
 === MANDATORY CATEGORY ASSIGNMENTS (DO NOT IGNORE) ===
 {assignments}
 
-You MUST build each site following its assigned category.
+You MUST build each site following its assigned category AND assigned vibe.
+Ensure all assigned vibes are visibly distinct (typography, layout, palette, mood).
 =========================================================
 
 You generate EXACTLY {target_docs} unique, self-contained interactive web apps as a JSON array.

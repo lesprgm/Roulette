@@ -557,6 +557,11 @@ def _enqueue_prefetch_docs(
         if not handle:
             continue
         stored.append(handle)
+    if stored:
+        try:
+            counter.increment(len(stored))
+        except Exception:
+            pass
     return stored
 
 
