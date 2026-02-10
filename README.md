@@ -18,31 +18,72 @@ The system ensures variety through **Vision-Grounded Prompting**: a multimodal d
 
 <div align="center">
 
-### Example Generated Experiences
+### v1.5 Landing Page
+
+<table>
+  <tr>
+    <td width="100%" align="center">
+      <img src="screenshots/v1.5/landing%20page.png" alt="v1.5 Landing Page" width="100%"/>
+      <br/>
+      <em>Landing Page</em>
+    </td>
+  </tr>
+</table>
+
+### v1.5 Generated Websites
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <img src="screenshots/demo1.png" alt="Generated Page Example 1" width="100%"/>
+      <img src="screenshots/v1.5/demo4.png" alt="v1.5 Generated Website 4" width="100%"/>
       <br/>
-      <em>Generated Page - Removed Game Category</em>
+      <em>Generated Website</em>
     </td>
     <td width="50%" align="center">
-      <img src="screenshots/demo2.png" alt="Generated Interactive Experience 2" width="100%"/>
+      <img src="screenshots/v1.5/demo1.png" alt="v1.5 Generated Website 1" width="100%"/>
       <br/>
-      <em>Generated Interactive Experience</em>
+      <em>Generated Website</em>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="screenshots/demo3.png" alt="Generated Experience 3" width="100%"/>
+      <img src="screenshots/v1.5/demo2.png" alt="v1.5 Generated Website 2" width="100%"/>
       <br/>
-      <em>Generated Experience</em>
+      <em>Generated Website</em>
     </td>
     <td width="50%" align="center">
-      <img src="screenshots/demo4.png" alt="Generated Experience 4" width="100%"/>
+      <img src="screenshots/v1.5/demo3.png" alt="v1.5 Generated Website 3" width="100%"/>
       <br/>
-      <em>Generated Experience</em>
+      <em>Generated Website</em>
+    </td>
+  </tr>
+</table>
+
+### v1 Generated Websites
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/v1/demo1.png" alt="v1 Generated Website 1" width="100%"/>
+      <br/>
+      <em>Generated Website</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/v1/demo2.png" alt="v1 Generated Website 2" width="100%"/>
+      <br/>
+      <em>Generated Website</em>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/v1/demo3.png" alt="v1 Generated Website 3" width="100%"/>
+      <br/>
+      <em>Generated Website</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/v1/demo4.png" alt="v1 Generated Website 4" width="100%"/>
+      <br/>
+      <em>Generated Website</em>
     </td>
   </tr>
 </table>
@@ -393,7 +434,9 @@ non-deterministic-website/
 ├── templates/
 │   └── index.html         # Landing page
 ├── tests/                 # Test suite
-├── screenshots/           # Demo images
+├── screenshots/           # Demo images by version
+│   ├── v1.5/             # Latest screenshots
+│   └── v1/               # Original release screenshots
 └── package.json           # Node dependencies
 ```
 
