@@ -3,6 +3,7 @@ venv/
 __pycache__/
 .pytest_cache/
 *.pyc
+*.tsbuildinfo
 
 # Node
 node_modules/
@@ -17,6 +18,7 @@ package-lock.json
 # Editors/IDE
 .vscode/
 .idea/
+.wrangler/
 
 # Env / secrets
 .env
@@ -27,6 +29,7 @@ package-lock.json
 dist/
 build/
 .cache/
+coverage/
  
 # Tailwind generated CSS
 static/tailwind.css
@@ -34,3 +37,7 @@ tailwindcss
 
 #Cache files
 cache/
+
+# Generated review/eval artifacts
+artifacts/evals/
+artifacts/playwright/

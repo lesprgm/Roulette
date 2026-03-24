@@ -13,6 +13,7 @@
     "lint:fix": "eslint --fix \"static/ts-src/**/*.{ts,tsx}\"",
     "format": "prettier --write .",
     "test:frontend": "vitest run",
+    "test:browser": "python3 -m pytest tests/test_browser_smoke.py -q",
     "build": "npm run build:vendor && npm run build:css && npm run build:ts",
     "watch": "(npm run watch:css & npm run watch:ts)"
   },
