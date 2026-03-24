@@ -4,8 +4,8 @@
   --ndw-sub: #475569;
   --ndw-accent: #6366f1;
   /* Indigo */
-  --ndw-font-display: 'Outfit', system-ui, sans-serif;
-  --ndw-font-body: 'Inter', system-ui, sans-serif;
+  --ndw-font-display: var(--ndw-font-display-orbit);
+  --ndw-font-body: var(--ndw-font-body-clean);
 }
 
 * {
@@ -74,6 +74,14 @@ body.landing-mode .hero-wrap {
   visibility: hidden;
 }
 
+body.ndw-eval-hide-chrome .hero-wrap,
+body.ndw-eval-hide-chrome .scroll-cue,
+body.ndw-eval-hide-chrome #scrollCue {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
 .hero-title {
   font-family: var(--ndw-font-display);
   font-size: clamp(4rem, 10vw, 8rem);
@@ -127,6 +135,248 @@ body.landing-mode .hero-wrap {
 .hero-hint.is-hidden {
   opacity: 0;
   transform: translateY(6px);
+}
+
+.landing-fallback {
+  margin-top: 1.5rem;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.landing-fallback[hidden] {
+  display: none;
+}
+
+.landing-fallback-copy {
+  margin: 0;
+  font: 500 0.78rem/1.35 var(--ndw-font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(15, 23, 42, 0.54);
+}
+
+.landing-fallback-btn {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  background: rgba(248, 250, 252, 0.7);
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  font: 600 0.9rem/1 var(--ndw-font-body);
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+  transition: transform 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.landing-fallback-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(15, 23, 42, 0.28);
+}
+
+.landing-fallback-btn:focus-visible {
+  outline: 2px dashed rgba(15, 23, 42, 0.7);
+  outline-offset: 3px;
+}
+
+.ndw-sites-panel {
+  position: fixed;
+  top: 4rem;
+  right: 0.75rem;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.ndw-sites-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 168px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.35);
+  backdrop-filter: none;
+  color: #f8fafc;
+  font: 500 12px/1 var(--ndw-font-body);
+  white-space: nowrap;
+}
+
+.ndw-sites-mode-mount {
+  width: auto;
+}
+
+.ndw-mode-stack {
+  width: auto;
+}
+
+#floatingGenerateWrap {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 1.5rem;
+  z-index: 55;
+}
+
+#generationModeWrap {
+  width: 100%;
+}
+
+.ndw-mode-menu {
+  position: relative;
+  width: auto;
+}
+
+.ndw-mode-chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 168px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: 500 12px/1 var(--ndw-font-body);
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.35);
+  backdrop-filter: none;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.ndw-mode-chip:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(148, 163, 184, 0.48);
+}
+
+.ndw-mode-chip:focus-visible {
+  outline: 2px dashed rgba(148, 163, 184, 0.75);
+  outline-offset: 3px;
+}
+
+.ndw-mode-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.65rem);
+  min-width: 220px;
+  padding: 0.9rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(18px);
+}
+
+.ndw-mode-popover[hidden] {
+  display: none;
+}
+
+.ndw-mode-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ndw-mode-option {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: rgba(248, 250, 252, 0.95);
+  color: #0f172a;
+  border-radius: 14px;
+  padding: 0.75rem 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+}
+
+.ndw-mode-option:hover {
+  transform: translateY(-1px);
+  border-color: rgba(99, 102, 241, 0.34);
+}
+
+.ndw-mode-option.is-active {
+  border-color: rgba(79, 70, 229, 0.46);
+  background: linear-gradient(135deg, rgba(224, 231, 255, 0.98), rgba(238, 242, 255, 0.98));
+}
+
+.ndw-mode-option-label {
+  display: block;
+  font: 700 0.83rem/1.1 var(--ndw-font-body);
+  letter-spacing: 0.02em;
+}
+
+.ndw-mode-option-note {
+  display: block;
+  margin-top: 0.28rem;
+  font: 500 0.73rem/1.35 var(--ndw-font-body);
+  color: rgba(15, 23, 42, 0.62);
+}
+
+.ndw-mode-option-mark {
+  font: 700 0.72rem/1 var(--ndw-font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(49, 46, 129, 0.84);
+}
+
+.ndw-mode-copy {
+  margin: 0.8rem 0 0;
+  font: 500 0.73rem/1.45 var(--ndw-font-body);
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.ndw-test-preview-dock {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  max-width: 260px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.ndw-test-preview-dock[hidden] {
+  display: none;
+}
+
+.ndw-test-preview-dock button {
+  appearance: none;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: rgba(248, 250, 252, 0.92);
+  border-radius: 12px;
+  padding: 0.65rem 0.75rem;
+  color: #0f172a;
+  font: 600 0.78rem/1.2 var(--ndw-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ndw-test-preview-dock button:hover {
+  border-color: rgba(99, 102, 241, 0.4);
 }
 
 .scroll-cue {
@@ -329,6 +579,31 @@ body:hover #cursor-glow {
   width: 4rem;
   height: 4rem;
   cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .ndw-sites-panel {
+    top: 0.75rem;
+    right: 0.75rem;
+    left: auto;
+  }
+
+  #floatingGenerateWrap {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    bottom: 0.75rem;
+  }
+
+  .ndw-mode-chip {
+    min-width: 168px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .ndw-mode-popover {
+    min-width: 200px;
+  }
 }
 
 .ndw-button.button>button {

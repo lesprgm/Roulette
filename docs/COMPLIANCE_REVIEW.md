@@ -8,7 +8,7 @@ Roulette can run a “review” step that checks and optionally corrects generat
    - Used when an individual generation needs review/correction.
 2. **Batch review**
    - Used for burst followups and queue fills to reduce provider calls.
-   - Batch size is controlled by `PREFETCH_REVIEW_BATCH` (default 3).
+   - Batch size is controlled by `PREFETCH_REVIEW_BATCH` (default 20).
 
 ## Why Review Exists
 
@@ -37,4 +37,3 @@ Fail-open is useful because reviewer providers (Gemini/OpenRouter) can return 50
 - Keep the batch size small (3–5) to reduce truncation risk.
 - Consider a cheaper fallback reviewer (OpenRouter) when Gemini review is down.
 - Treat review as a guardrail, not a hard dependency, unless you are willing to drop content aggressively.
-
