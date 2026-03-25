@@ -176,7 +176,7 @@ def test_stream_endpoint_premium_emits_single_page(monkeypatch):
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Stream</body></html>"}
     monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
-    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: page)
+    monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: page)
 
     r = client.post("/generate/stream", json={"brief": "", "seed": 12, "quality": "premium"}, headers=API_HEADERS)
     assert r.status_code == 200
