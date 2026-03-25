@@ -7,7 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from contextlib import asynccontextmanager
@@ -17,31 +17,42 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
 from api.auth import require_api_key, optional_api_key, extract_client_key, keys_required, is_admin_key
-from api import counter, dedupe
+from api import counter, dedupe, premium_credits
 from api import prefetch
+from api.preflight import annotate_doc as annotate_preflight_doc
+from api.preflight import has_blocking_issues as preflight_has_blocking_issues
+from api.preflight import preflight_doc
+from api.quality import extract_review_metrics, score_page_doc
 
 _REVIEW_QUEUE_LOCK = threading.Lock()
 PrefetchHandle = str
 _PREFETCH_REVIEW_QUEUE: Deque[Tuple[List[PrefetchHandle], int]] = deque()
 _REVIEW_WORKER: Optional[threading.Thread] = None
 _REVIEW_MAX_ATTEMPTS = 3
+_PREMIUM_TOPUP_LOCK = threading.Lock()
 
 try:
     from api.llm_client import (
         generate_page as llm_generate_page,
+        generate_page_premium as llm_generate_page_premium,
         generate_page_burst as llm_generate_page_burst,
+        premium_available as llm_premium_available,
         status as llm_status,
         probe as llm_probe,
         run_compliance_batch,
     )
 except Exception:
     llm_generate_page = None
+    llm_generate_page_premium = None
 
     def llm_status() -> Dict[str, Any]:
         return {"provider": None, "model": None, "has_token": False, "using": "stub"}
 
     def llm_probe() -> Dict[str, Any]:
         return {"ok": False, "error": "Model or token not configured", "using": "stub"}
+
+    def llm_premium_available() -> bool:
+        return False
 
     def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
         return None
@@ -205,6 +216,7 @@ class GenerateRequest(BaseModel):
     brief: str = Field("", description="Short description of the app to create; may be empty to let the model choose")
     seed: Optional[int] = Field(default=None, description="Optional PRNG seed")
     model_version: Optional[str] = Field(default=None, description="Optional model name override")
+    quality: Literal["fast", "premium"] = Field(default="fast", description="Generation quality mode")
 
 
 class ValidateRequest(BaseModel):
@@ -319,6 +331,11 @@ if PREFETCH_MAX_WORKERS < 1:
 PREFETCH_PREVIEW_CACHE_TTL = float(os.getenv("PREFETCH_PREVIEW_CACHE_TTL", "2") or 2)
 _PREFETCH_PREVIEW_CACHE: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
 _PREFETCH_PREVIEW_LOCK = threading.Lock()
+PREMIUM_QUEUE_ENABLED = os.getenv("PREMIUM_QUEUE_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+PREMIUM_LOW_WATER = int(os.getenv("PREMIUM_LOW_WATER", "3") or 3)
+PREMIUM_FILL_TO = int(os.getenv("PREMIUM_FILL_TO", "10") or 10)
+PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "1") or 1)
+PREMIUM_TOPUP_ENABLED = os.getenv("PREMIUM_TOPUP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 
 
 def _prefetch_topup_enabled() -> bool:
@@ -327,6 +344,75 @@ def _prefetch_topup_enabled() -> bool:
         return False
     v = os.getenv("PREFETCH_TOPUP_ENABLED", "1").lower()
     return v in {"1", "true", "yes", "on"}
+
+
+def _premium_queue_enabled() -> bool:
+    return PREMIUM_QUEUE_ENABLED
+
+
+def _inspect_premium_quota(key: str) -> Optional[Tuple[bool, int, int]]:
+    if is_admin_key(key):
+        return True, 9999, int(time.time()) + 60
+    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
+    if use_redis:
+        try:
+            if hasattr(_rl_instance, "inspect"):
+                return _rl_instance.inspect("premium", key)
+        except Exception:
+            pass
+    if _rl_mod and hasattr(_rl_mod, "inspect"):
+        try:
+            return _rl_mod.inspect("premium", key)
+        except Exception:
+            pass
+    return None
+
+
+def _safe_premium_quota_check(key: str) -> Tuple[bool, int, int]:
+    inspected = _inspect_premium_quota(key)
+    if inspected is not None:
+        return inspected
+    return _safe_rate_check("premium", key)
+
+
+def _consume_premium_quota(key: str) -> Tuple[bool, int, int]:
+    if is_admin_key(key):
+        return True, 9999, int(time.time()) + 60
+    if premium_credits.consume(key):
+        inspected = _inspect_premium_quota(key)
+        if inspected is not None:
+            _allowed, remaining, reset_ts = inspected
+            return True, remaining, reset_ts
+        return True, 0, int(time.time()) + 60
+    return _safe_rate_check("premium", key)
+
+
+def _refund_premium_quota(key: str) -> Tuple[bool, int, int]:
+    if is_admin_key(key):
+        return True, 9999, int(time.time()) + 60
+    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
+    if use_redis:
+        try:
+            if hasattr(_rl_instance, "refund"):
+                return _rl_instance.refund("premium", key)
+        except Exception:
+            pass
+    if _rl_mod and hasattr(_rl_mod, "refund"):
+        try:
+            return _rl_mod.refund("premium", key)
+        except Exception:
+            pass
+    premium_credits.grant(key, 1)
+    inspected = _inspect_premium_quota(key)
+    if inspected is not None:
+        _allowed, remaining, reset_ts = inspected
+        return True, remaining + premium_credits.peek(key), reset_ts
+    return True, premium_credits.peek(key), int(time.time()) + 60
+
+
+def _require_admin_or_dev(api_key: str) -> None:
+    if keys_required() and not is_admin_key(api_key):
+        raise HTTPException(status_code=403, detail="Admin API key required")
 
 
 def _prefill_prefetch_queue() -> None:
@@ -539,6 +625,12 @@ def _apply_compliance_batch(docs: List[Dict[str, Any]], context: str) -> List[Di
             doc = corrected
             if isinstance(meta, dict):
                 doc["_prefetch"] = meta
+        issues = preflight_doc(doc)
+        if preflight_has_blocking_issues(issues):
+            log.info("%s: preflight rejected index=%d", context, idx)
+            continue
+        if issues:
+            doc = annotate_preflight_doc(doc, issues)
         doc["review"] = review
         approved.append(doc)
     return approved
@@ -549,6 +641,7 @@ def _enqueue_prefetch_docs(
 ) -> List[PrefetchHandle]:
     if not docs:
         return []
+    docs = _rank_prefetch_docs(docs)
     stored: List[PrefetchHandle] = []
     for idx, doc in enumerate(docs):
         if max_queue is not None and prefetch.size() >= max_queue:
@@ -557,12 +650,221 @@ def _enqueue_prefetch_docs(
         if not handle:
             continue
         stored.append(handle)
-    if stored:
-        try:
-            counter.increment(len(stored))
-        except Exception:
-            pass
     return stored
+
+
+def _enqueue_premium_docs(
+    docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None
+) -> List[PrefetchHandle]:
+    if not docs or not _premium_queue_enabled():
+        return []
+    docs = _rank_prefetch_docs(docs)
+    stored: List[PrefetchHandle] = []
+    for doc in docs:
+        if max_queue is not None and prefetch.size("premium") >= max_queue:
+            break
+        handle = prefetch.enqueue(doc, lane="premium")
+        if not handle:
+            continue
+        stored.append(handle)
+    return stored
+
+
+def _premium_seed(base_seed: int, offset: int) -> int:
+    seed = (int(base_seed or 0) + ((offset + 1) * 7919)) % 1_000_000_007
+    return seed or (offset + 1)
+
+
+def _generate_premium_batch_candidates(
+    brief: str,
+    *,
+    batch_size: int,
+    seed: int,
+    user_key: str,
+    context: str,
+) -> List[Dict[str, Any]]:
+    if not llm_generate_page_premium:
+        return []
+    docs: List[Dict[str, Any]] = []
+    for idx in range(max(1, int(batch_size or 1))):
+        doc = llm_generate_page_premium(brief or "", seed=_premium_seed(seed, idx), user_key=user_key)
+        if isinstance(doc, dict) and not doc.get("error"):
+            docs.append(doc)
+    if not docs:
+        return []
+    return _apply_compliance_batch(docs, context)
+
+
+def _generate_single_premium_doc(
+    brief: str,
+    *,
+    seed: int,
+    user_key: str,
+    context: str,
+) -> Optional[Dict[str, Any]]:
+    if not llm_generate_page_premium:
+        return None
+    doc = llm_generate_page_premium(brief or "", seed=seed, user_key=user_key)
+    if not isinstance(doc, dict) or doc.get("error"):
+        return None
+    approved = _apply_compliance_batch([doc], context)
+    if not approved:
+        return None
+    ranked = _rank_prefetch_docs(approved)
+    return ranked[0] if ranked else None
+
+
+def _premium_queue_target_size(current: int) -> int:
+    return max(PREMIUM_FILL_TO, current)
+
+
+def _top_up_premium_queue(brief: str = "", min_fill: int = PREMIUM_FILL_TO) -> None:
+    if not _premium_queue_enabled() or not PREMIUM_TOPUP_ENABLED:
+        return
+    if not llm_generate_page_premium or not llm_premium_available():
+        return
+    if not _PREMIUM_TOPUP_LOCK.acquire(blocking=False):
+        return
+    try:
+        current = prefetch.size("premium")
+        target = max(int(min_fill or PREMIUM_FILL_TO), _premium_queue_target_size(current))
+        attempts = 0
+        max_attempts = max(1, target * 2)
+        while prefetch.size("premium") < target and attempts < max_attempts:
+            attempts += 1
+            seed = (int(time.time() * 1000) + attempts) % 1_000_000_007
+            approved = _generate_premium_batch_candidates(
+                brief,
+                batch_size=PREMIUM_BATCH_SIZE,
+                seed=seed,
+                user_key="premium-prefetch",
+                context="premium.top_up",
+            )
+            if not approved:
+                continue
+            _enqueue_premium_docs(approved, context="premium.top_up", max_queue=target)
+    except Exception:
+        log.exception("premium.top_up: unexpected error")
+    finally:
+        _PREMIUM_TOPUP_LOCK.release()
+
+
+def _serve_or_fill_premium_batch(
+    brief: str,
+    *,
+    seed: int,
+    user_key: str,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> Dict[str, Any]:
+    approved = _generate_premium_batch_candidates(
+        brief,
+        batch_size=PREMIUM_BATCH_SIZE,
+        seed=seed,
+        user_key=user_key,
+        context="premium.generate",
+    )
+    if not approved:
+        return {"error": "Premium generation failed"}
+    ranked = _rank_prefetch_docs(approved)
+    first = ranked[0]
+    leftovers = ranked[1:]
+    if leftovers:
+        _enqueue_premium_docs(leftovers, context="premium.generate", max_queue=PREMIUM_FILL_TO)
+    if background_tasks and _premium_queue_enabled() and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+        background_tasks.add_task(_top_up_premium_queue, brief or "", PREMIUM_FILL_TO)
+    return first
+
+
+def _stream_premium_first_page(
+    brief: str,
+    *,
+    seed: int,
+    user_key: str,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> Dict[str, Any]:
+    first = _generate_single_premium_doc(
+        brief,
+        seed=seed,
+        user_key=user_key,
+        context="premium.stream.first",
+    )
+    if not first:
+        return {"error": "Premium generation failed"}
+    if background_tasks and _premium_queue_enabled():
+        if prefetch.size("premium") < PREMIUM_FILL_TO:
+            background_tasks.add_task(_top_up_premium_queue, brief or "", PREMIUM_FILL_TO)
+    return first
+
+
+def _prefetch_diversity_bucket(doc: Dict[str, Any]) -> tuple:
+    metrics = extract_review_metrics(doc)
+    flags = metrics["quality_flags"]
+    layout = metrics["layout_metrics"]
+    colors = metrics["color_metrics"]
+    region_bucket = min(int(layout["region_count"]), 4)
+    color_bucket = min(int(colors["color_count"]) // 2, 4)
+    return (
+        doc.get("kind"),
+        bool(layout["canvas_or_three"]),
+        bool(layout["immersive_stage"]),
+        region_bucket,
+        color_bucket,
+        bool(flags["motion"]),
+        bool(flags["interaction"]),
+        bool(flags["design_kit"]),
+        bool(flags["centered_card"]),
+    )
+
+
+def _prefetch_candidate_score(doc: Dict[str, Any]) -> int:
+    quality = score_page_doc(doc)
+    metrics = quality.get("metrics") or extract_review_metrics(doc)
+    flags = metrics["quality_flags"]
+    layout = metrics["layout_metrics"]
+    colors = metrics["color_metrics"]
+    score = int(quality.get("score", 0))
+    score += min(int(colors["color_count"]), 6)
+    if layout["immersive_stage"]:
+        score += 8
+    if layout["canvas_or_three"]:
+        score += 4
+    if flags["motion"]:
+        score += 4
+    if flags["interaction"]:
+        score += 3
+    if flags["design_kit"]:
+        score += 3
+    if flags["centered_card"]:
+        score -= 10
+    return score
+
+
+def _rank_prefetch_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not docs:
+        return []
+    ranked: List[Tuple[int, tuple, int, Dict[str, Any]]] = []
+    seen_signatures: Set[str] = set()
+    for idx, doc in enumerate(docs):
+        if not isinstance(doc, dict):
+            continue
+        sig = dedupe.signature_for_doc(doc)
+        if sig and sig in seen_signatures:
+            continue
+        if sig:
+            seen_signatures.add(sig)
+        ranked.append((_prefetch_candidate_score(doc), _prefetch_diversity_bucket(doc), idx, doc))
+    ranked.sort(key=lambda item: (-item[0], item[2]))
+
+    primary: List[Dict[str, Any]] = []
+    spill: List[Dict[str, Any]] = []
+    seen_buckets: Set[tuple] = set()
+    for _score, bucket, _idx, doc in ranked:
+        if bucket in seen_buckets:
+            spill.append(doc)
+            continue
+        seen_buckets.add(bucket)
+        primary.append(doc)
+    return primary + spill
 
 
 def _review_prefetched_docs(handles: List[PrefetchHandle]) -> List[PrefetchHandle]:
@@ -623,6 +925,16 @@ def _review_prefetched_docs(handles: List[PrefetchHandle]) -> List[PrefetchHandl
                     doc = corrected
                     if isinstance(meta, dict):
                         doc["_prefetch"] = meta
+                issues = preflight_doc(doc)
+                if preflight_has_blocking_issues(issues):
+                    log.info("prefetch.review: removing preflight-blocked doc file=%s", path.name)
+                    try:
+                        path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+                if issues:
+                    doc = annotate_preflight_doc(doc, issues)
                 docs[idx] = doc
                 doc["review"] = review
                 try:
@@ -866,12 +1178,26 @@ def get_prefetch_previews(limit: int = 20) -> List[Dict[str, Any]]:
     return items
 
 
+@app.get("/api/premium/previews", response_model=List[QueuePreview])
+def get_premium_previews(
+    limit: int = 20,
+    api_key: str = Depends(optional_api_key),
+) -> List[Dict[str, Any]]:
+    """Return recent premium queue entries for operator/debug inspection."""
+    _require_admin_or_dev(api_key)
+    return prefetch.peek(limit=limit, lane="premium")
+
+
 @app.get("/api/prefetch/{item_id}")
 def get_prefetch_entry(item_id: str) -> Dict[str, Any]:
     """Fetch a specific prefetch queue entry by token for rendering."""
     entry = prefetch.take(item_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Prefetch entry not found or already served.")
+    try:
+        counter.increment(1)
+    except Exception:
+        pass
     return entry
 
 
@@ -883,8 +1209,10 @@ def generate_endpoint(
     api_key: str = Depends(optional_api_key),
 ):
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
+    premium_requested = req.quality == "premium"
     llm_info = llm_status()
     llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
+    premium_ready = bool(llm_generate_page_premium is not None and llm_premium_available())
     offline_allowed = os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1", "true", "yes", "on"}
 
     if not llm_available:
@@ -958,6 +1286,49 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
+    if premium_requested:
+        if not premium_ready:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Premium mode requires GEMINI_API_KEY"},
+                headers=_rate_limit_headers(remaining, reset_ts),
+            )
+        premium_allowed, premium_remaining, premium_reset_ts = _consume_premium_quota(client_key)
+        if not premium_allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "premium rate limit exceeded",
+                    "reset": premium_reset_ts,
+                    "retry_after_seconds": max(0, premium_reset_ts - int(time.time())),
+                    "message": "Premium daily limit reached. Try again later.",
+                },
+                headers=_rate_limit_headers(premium_remaining, premium_reset_ts, limited=True),
+            )
+        try:
+            page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
+            if page:
+                if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+                    background_tasks.add_task(_top_up_premium_queue, req.brief or "", PREMIUM_FILL_TO)
+            else:
+                page = _serve_or_fill_premium_batch(
+                    req.brief or "",
+                    seed=req.seed or 0,
+                    user_key=client_key,
+                    background_tasks=background_tasks,
+                )
+        except Exception:
+            _refund_premium_quota(client_key)
+            raise
+        if isinstance(page, dict) and not page.get("error"):
+            try:
+                counter.increment(1)
+            except Exception:
+                pass
+        else:
+            premium_allowed, premium_remaining, premium_reset_ts = _refund_premium_quota(client_key)
+        return JSONResponse(page, headers=_rate_limit_headers(premium_remaining, premium_reset_ts))
+
     served_from_prefetch = False
     page = prefetch.dequeue()
     if page is not None:
@@ -990,12 +1361,11 @@ def generate_endpoint(
         return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
 
     # Queue empty: do a burst and return the FIRST site that finishes
-    log.info("prefetch.generate: queue empty; initiating ad-hoc burst")
+    log.info("prefetch.generate: queue empty; invoking shared fast generator")
     try:
-        burst_iter = llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key)
-        page = next(burst_iter, {"error": "No pages generated"})
+        page = llm_generate_page(req.brief or "", seed=req.seed or 0, user_key=client_key, run_review=False)
     except Exception as e:
-        log.exception("Ad-hoc burst failure")
+        log.exception("Shared fast generation failure")
         page = {"error": str(e)}
 
     if isinstance(page, dict) and not page.get("error"):
@@ -1019,8 +1389,10 @@ def generate_stream(
     NDJSON streaming endpoint: emits a couple of JSON lines.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
+    premium_requested = req.quality == "premium"
     llm_info = llm_status()
     llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
+    premium_ready = bool(llm_generate_page_premium is not None and llm_premium_available())
 
     if not llm_available and os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() not in {"1", "true", "yes", "on"} and not os.getenv("PYTEST_CURRENT_TEST"):
         def _iter_error() -> Iterable[str]:
@@ -1046,6 +1418,49 @@ def generate_stream(
     def _iter() -> Iterable[str]:
         meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
         yield json.dumps(meta) + "\n"
+
+        if premium_requested:
+            if not premium_ready:
+                yield json.dumps({"event": "error", "data": {"error": "Premium mode requires GEMINI_API_KEY"}}) + "\n"
+                return
+            premium_allowed, premium_remaining, premium_reset_ts = _consume_premium_quota(client_key)
+            if not premium_allowed:
+                yield json.dumps({
+                    "event": "error",
+                    "data": {
+                        "error": "premium rate limit exceeded",
+                        "message": "Premium daily limit reached. Try again later.",
+                        "reset": premium_reset_ts,
+                        "retry_after_seconds": max(0, premium_reset_ts - int(time.time())),
+                    },
+                }) + "\n"
+                return
+            try:
+                page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
+                if page:
+                    if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+                        background_tasks.add_task(_top_up_premium_queue, req.brief or "", PREMIUM_FILL_TO)
+                else:
+                    page = _stream_premium_first_page(
+                        req.brief or "",
+                        seed=req.seed or 0,
+                        user_key=client_key,
+                        background_tasks=background_tasks,
+                    )
+            except Exception:
+                _refund_premium_quota(client_key)
+                yield json.dumps({"event": "error", "data": {"error": "Premium generation failed"}}) + "\n"
+                return
+            if isinstance(page, dict) and not page.get("error"):
+                try:
+                    counter.increment(1)
+                except Exception:
+                    pass
+                yield json.dumps({"event": "page", "data": page}) + "\n"
+            else:
+                _refund_premium_quota(client_key)
+                yield json.dumps({"event": "error", "data": page or {"error": "Premium generation failed"}}) + "\n"
+            return
 
         if not llm_available:
             if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
@@ -1123,7 +1538,19 @@ def generate_stream(
                     time.sleep(PREFETCH_DELAY_MS / 1000.0)
             except Exception:
                 pass
+            if isinstance(page, dict) and not page.get("error"):
+                try:
+                    counter.increment(1)
+                except Exception:
+                    pass
+            try:
+                if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
+                    target = _prefetch_target_size(prefetch.size())
+                    background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
+            except Exception:
+                pass
             yield json.dumps({"event": "page", "data": page}) + "\n"
+            return
         else:
             # Queue empty: do a burst, stream ONLY the first page, batch-review & enqueue the rest.
             log.info("prefetch.generate_stream: queue empty; initiating ad-hoc burst")
@@ -1133,11 +1560,11 @@ def generate_stream(
             try:
                 for burst_page in llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key):
                     if isinstance(burst_page, dict) and not burst_page.get("error"):
-                        try:
-                            counter.increment(1)
-                        except Exception:
-                            pass
                         if not first_sent:
+                            try:
+                                counter.increment(1)
+                            except Exception:
+                                pass
                             yield json.dumps({"event": "page", "data": burst_page}) + "\n"
                             first_sent = True
                         else:
@@ -1160,14 +1587,6 @@ def generate_stream(
                 yield json.dumps({"event": "error", "data": {"error": str(e)}}) + "\n"
             return
 
-        try:
-            if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
-                target = _prefetch_target_size(prefetch.size())
-                background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
-        except Exception:
-            pass
-        yield json.dumps({"event": "page", "data": page}) + "\n"
-
     headers = _rate_limit_headers(remaining, reset_ts)
     return StreamingResponse(_iter(), media_type="application/x-ndjson", headers=headers)
 
@@ -1179,7 +1598,22 @@ def prefetch_status() -> Dict[str, Any]:
         qsize = prefetch.size()
     except Exception:
         qsize = 0
-    return {"size": qsize, "dir": str(prefetch.PREFETCH_DIR), "backend": prefetch.backend()}
+    try:
+        premium_qsize = prefetch.size("premium")
+    except Exception:
+        premium_qsize = 0
+    return {
+        "size": qsize,
+        "premium_size": premium_qsize,
+        "premium_queue_enabled": _premium_queue_enabled(),
+        "premium_low_water": PREMIUM_LOW_WATER,
+        "premium_fill_to": PREMIUM_FILL_TO,
+        "premium_batch_size": PREMIUM_BATCH_SIZE,
+        "premium_topup_enabled": PREMIUM_TOPUP_ENABLED,
+        "dir": str(prefetch.PREFETCH_DIR),
+        "premium_dir": str(getattr(prefetch, "PREMIUM_PREFETCH_DIR", prefetch.PREFETCH_DIR)),
+        "backend": prefetch.backend(),
+    }
 
 
 ## (Deprecated startup handler removed; logic moved to lifespan above)
@@ -1307,10 +1741,25 @@ def validate_endpoint(req: ValidateRequest):
             422 and {"detail":{"valid":false,"errors":[...]}} on failure.
     """
     valid, errors = _validate_with_jsonschema(req.page)
+    preflight_issues = preflight_doc(req.page)
+    preflight_errors = [
+        {
+            "path": item.get("field", "(preflight)"),
+            "message": item.get("message", "invalid"),
+            "severity": item.get("severity", "warn"),
+        }
+        for item in preflight_issues
+        if isinstance(item, dict)
+    ]
+    if preflight_has_blocking_issues(preflight_issues):
+        valid = False
+        errors = errors + preflight_errors
     detail = {"valid": valid}
     if not valid:
         detail["errors"] = errors
         return JSONResponse(status_code=422, content={"detail": detail})
+    if preflight_errors:
+        detail["warnings"] = preflight_errors
     return {"detail": detail}
 
 

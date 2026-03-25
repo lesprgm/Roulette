@@ -8,12 +8,17 @@ import time
 from typing import Any, Dict, Optional, Tuple, List, Set
 import requests
 from api import dedupe
+from api.design_kit import DESIGN_KIT_MANIFEST, compact_design_kit_manifest, compact_fast_design_kit_manifest
 from api.llm_parsing import (
     _extract_completed_objects_from_array,
     _json_from_text,
     _normalize_doc,
     _repair_json_loose,
 )
+from api.preflight import annotate_doc as _annotate_preflight_doc
+from api.preflight import first_js_syntax_error as _first_js_syntax_error
+from api.preflight import has_blocking_issues as _preflight_has_blocking_issues
+from api.preflight import preflight_doc as _preflight_doc
 from api.llm_prompts import (
     _batch_review_schema,
     _build_batch_review_prompt,
@@ -22,6 +27,7 @@ from api.llm_prompts import (
     _gemini_review_schema,
     _review_schema,
 )
+from api.quality import PREMIUM_SCORE_THRESHOLD, score_page_doc
 
 def _openrouter_repair_to_schema(
     raw_text: str,
@@ -234,9 +240,9 @@ if _openrouter_max_tokens_raw:
 else:
     OPENROUTER_MAX_TOKENS = None
 try:
-    LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "75"))
+    LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "105"))
 except Exception:
-    LLM_TIMEOUT_SECS = 75
+    LLM_TIMEOUT_SECS = 105
 try:
     GROQ_MAX_TOKENS = int(os.getenv("GROQ_MAX_TOKENS", str(LLM_MAX_TOKENS)))
 except Exception:
@@ -310,12 +316,25 @@ def status() -> Dict[str, Any]:
             "testing": True,
             "reviewer": reviewer,
         }
+    fallback_providers = _fast_fallback_providers()
+    if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
+        return {
+            "provider": "gemini",
+            "model": GEMINI_GENERATION_MODEL,
+            "has_token": True,
+            "using": "gemini-fast",
+            "fast_primary": "gemini-burst",
+            "fast_fallbacks": fallback_providers,
+            "reviewer": reviewer,
+        }
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
         return {
             "provider": "openrouter",
             "model": OPENROUTER_MODEL,
             "has_token": bool(OPENROUTER_API_KEY),
-            "using": "openrouter",
+            "using": "openrouter-fallback",
+            "fast_primary": "fallback-only",
+            "fast_fallbacks": fallback_providers,
             "reviewer": reviewer,
         }
     if GROQ_API_KEY:
@@ -323,7 +342,9 @@ def status() -> Dict[str, Any]:
             "provider": "groq",
             "model": GROQ_MODEL,
             "has_token": True,
-            "using": "groq",
+            "using": "groq-fallback",
+            "fast_primary": "fallback-only",
+            "fast_fallbacks": fallback_providers,
             "reviewer": reviewer,
         }
     return {
@@ -338,11 +359,126 @@ def status() -> Dict[str, Any]:
 def probe() -> Dict[str, Any]:
     if _testing_stub_enabled():
         return {"ok": False, "using": "stub", "testing": True}
+    if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
+        return {"ok": True, "using": "gemini-fast"}
     if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
-        return {"ok": bool(OPENROUTER_API_KEY), "using": "openrouter"}
+        return {"ok": bool(OPENROUTER_API_KEY), "using": "openrouter-fallback"}
     if GROQ_API_KEY:
-        return {"ok": True, "using": "groq"}
+        return {"ok": True, "using": "groq-fallback"}
     return {"ok": False, "using": "stub"}
+
+
+def premium_available() -> bool:
+    return bool(GEMINI_API_KEY)
+
+
+def _attach_quality_score(doc: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    if not isinstance(doc, dict) or doc.get("error"):
+        return doc
+    quality = score_page_doc(doc)
+    out = dict(doc)
+    debug = out.get("ndw_debug")
+    if not isinstance(debug, dict):
+        debug = {}
+    debug["generation_mode"] = mode
+    debug["quality_score"] = quality
+    out["ndw_debug"] = debug
+    return out
+
+
+def _call_fast_gemini_page(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the first valid Gemini burst page for fast mode, or None."""
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        burst_iter = generate_page_burst(brief, seed, user_key=user_key, gemini_only=True)
+        page = next(burst_iter, None)
+    except Exception as exc:
+        logging.warning("Gemini fast path failed before first page: %r", exc)
+        return None
+    if not isinstance(page, dict) or page.get("error"):
+        return None
+    return page
+
+
+def _fast_fallback_providers(providers_override: Optional[List[str]] = None) -> List[str]:
+    providers: List[str] = []
+    explicit = [p for p in (providers_override or []) if p in {"openrouter", "groq"}]
+    if explicit:
+        candidates = explicit
+    else:
+        candidates = []
+        if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
+            candidates.append("openrouter")
+        if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
+            candidates.append("groq")
+    for provider in candidates:
+        if provider == "openrouter" and (OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY):
+            providers.append("openrouter")
+        elif provider == "groq" and GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
+            providers.append("groq")
+    return providers
+
+
+def _call_fast_fallback_page(
+    brief: str,
+    seed: int,
+    category_note: str,
+    *,
+    providers_override: Optional[List[str]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    providers = _fast_fallback_providers(providers_override)
+    for provider in providers:
+        logging.warning("llm attempting fallback provider=%s", provider)
+        if provider == "openrouter":
+            doc = _call_openrouter_for_page(brief, seed, category_note)
+        else:
+            doc = _call_groq_for_page(brief, seed, category_note)
+        if doc:
+            logging.warning("llm chosen fallback provider=%s", provider)
+            return doc, provider
+    return None, None
+
+
+def _explicit_gemini_requested(providers_override: Optional[List[str]]) -> bool:
+    if FORCE_OPENROUTER_ONLY:
+        return False
+    if not providers_override:
+        return True
+    return "gemini" in providers_override
+
+
+def _fetch_fast_candidate(
+    brief: str,
+    seed: int,
+    category_note: str,
+    *,
+    user_key: Optional[str] = None,
+    providers_override: Optional[List[str]] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    route_labels: List[str] = []
+    if _explicit_gemini_requested(providers_override):
+        route_labels.append("gemini-burst")
+    route_labels.extend(_fast_fallback_providers(providers_override))
+    logging.warning("llm fast_route=%s force_openrouter_only=%s", route_labels, FORCE_OPENROUTER_ONLY)
+
+    if _explicit_gemini_requested(providers_override):
+        logging.warning("llm attempting provider=gemini-burst")
+        doc = _call_fast_gemini_page(brief, seed, user_key=user_key)
+        if doc:
+            logging.warning("llm chosen provider=gemini-burst")
+            return doc, "gemini-burst"
+
+    return _call_fast_fallback_page(
+        brief,
+        seed,
+        category_note,
+        providers_override=providers_override,
+    )
 
 
 def generate_page(
@@ -377,44 +513,15 @@ def generate_page(
     while attempts < max_attempts:
         attempts += 1
         doc: Optional[Dict[str, Any]] = None
-        providers: list[str] = []
-        if providers_override:
-            for p in providers_override:
-                if p == "openrouter" and (OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY):
-                    providers.append("openrouter")
-                elif p == "groq" and GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-                    providers.append("groq")
-                elif p == "gemini" and GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY:
-                    providers.append("gemini")
-        if not providers:
-            if OPENROUTER_API_KEY or FORCE_OPENROUTER_ONLY:
-                providers.append("openrouter")
-            if GROQ_API_KEY and not FORCE_OPENROUTER_ONLY:
-                providers.append("groq")
-            # GEMINI is RESERVED for burst generation (generate_page_burst)
-            # to maximize the 3x generation per request quota.
-            # It is only used here as an absolute last resort if others are failing.
-            if GEMINI_API_KEY and not FORCE_OPENROUTER_ONLY and not providers:
-                providers.append("gemini")
-        
-        logging.warning("llm providers_order=%s force_openrouter_only=%s", providers, FORCE_OPENROUTER_ONLY)
-        for p in providers:
-            logging.warning("llm attempting provider=%s", p)
-            if p == "groq":
-                doc = _call_groq_for_page(brief_str, seed_val, category_note)
-            elif p == "openrouter":
-                doc = _call_openrouter_for_page(brief_str, seed_val, category_note)
-            elif p == "gemini":
-                doc = _call_gemini_for_page(brief_str, seed_val, category_note)
-            if doc:
-                logging.warning("llm chosen provider=%s", p)
-                break
+        doc, _provider = _fetch_fast_candidate(
+            brief_str,
+            seed_val,
+            category_note,
+            user_key=user_key,
+            providers_override=providers_override,
+        )
         if not doc:
             logging.warning("All providers failed; returning error doc.")
-            return {"error": "Model generation failed"}
-
-        if not doc:
-            logging.warning("Model call failed or returned invalid JSON; returning error doc.")
             return {"error": "Model generation failed"}
 
         skip_dedupe = bool(os.getenv("PYTEST_CURRENT_TEST"))
@@ -453,6 +560,14 @@ def generate_page(
             if review_data:
                 doc = dict(doc)
                 doc["review"] = review_data
+        preflight_issues = _preflight_doc(doc)
+        if preflight_issues:
+            doc = _annotate_preflight_doc(doc, preflight_issues)
+        if _preflight_has_blocking_issues(preflight_issues):
+            logging.info("Preflight rejected doc; retrying another generation (attempt %d)", attempts)
+            doc = None
+            seed_val = (seed_val + 7919) % 10_000_019
+            continue
         final_sig = ""
         if not skip_dedupe:
             final_sig = dedupe.signature_for_doc(doc)
@@ -464,8 +579,75 @@ def generate_page(
                 continue
         if final_sig:
             dedupe.add(final_sig)
-        return doc
+        return _attach_quality_score(doc, "fast")
     return doc or {"error": "Model generation failed"}
+
+
+def generate_page_premium(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    auto_cues = {"", "auto", "random", "surprise me"}
+    brief_str = (brief or "").strip()
+    if brief_str.lower() in auto_cues:
+        brief_str = ""
+    seed_val = int(seed or 0) or random.randint(1, 10_000_000)
+
+    if _testing_stub_enabled():
+        return _attach_quality_score(
+            _call_testing_stub(brief_str, seed_val, "PREMIUM MODE TEST STUB"),
+            "premium",
+        )
+    if not GEMINI_API_KEY:
+        return {"error": "Premium mode requires GEMINI_API_KEY"}
+
+    plan = _call_gemini_premium_plan(brief_str, seed_val, user_key)
+    if not isinstance(plan, dict):
+        return {"error": "Premium planner failed"}
+
+    best_doc: Optional[Dict[str, Any]] = None
+    best_score = -1
+    retry_note = ""
+    for _attempt in range(2):
+        raw_doc = _call_gemini_premium_build(brief_str, seed_val, plan, retry_note=retry_note)
+        if not isinstance(raw_doc, dict):
+            retry_note = (
+                "The previous build was invalid or empty. Keep the same plan, "
+                "but simplify brittle code and make first paint more visually obvious."
+            )
+            continue
+        try:
+            doc = _normalize_doc(raw_doc)
+        except Exception as exc:
+            logging.warning("Premium build normalization failed: %r", exc)
+            retry_note = (
+                "The previous build failed normalization. Keep the same plan, but return one clean "
+                "renderable doc with a complete html field and valid JSON only."
+            )
+            continue
+
+        preflight_issues = _preflight_doc(doc)
+        if preflight_issues:
+            doc = _annotate_preflight_doc(doc, preflight_issues)
+        scored = _attach_quality_score(doc, "premium")
+        debug = dict(scored.get("ndw_debug") or {})
+        debug["premium_plan"] = plan
+        scored["ndw_debug"] = debug
+        score = int(debug.get("quality_score", {}).get("score", 0))
+        if score > best_score:
+            best_doc = scored
+            best_score = score
+
+        if not _preflight_has_blocking_issues(preflight_issues) and score >= PREMIUM_SCORE_THRESHOLD:
+            return scored
+
+        retry_note = (
+            "Keep the same plan, but improve reliability and visual depth. Fix any blocked selectors or cleanup issues. "
+            "Avoid a generic centered card, make the hero more distinctive, and use the selected local design-kit assets more clearly."
+        )
+
+    return best_doc or {"error": "Premium generation failed"}
 
 
 def _call_testing_stub(brief: str, seed: int, category_note: str) -> Dict[str, Any]:
@@ -492,43 +674,8 @@ def _get_design_matrix_b64() -> Optional[str]:
         return None
 
 
-def _call_gemini_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
-    """Call Gemini for page generation."""
-    matrix_b64 = _get_design_matrix_b64()
-    
-    vision_note = ""
-    parts = []
-    
-    if matrix_b64:
-        vision_note = """
-=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
-1. Analyze the attached 'UI Design Matrix'. 
-2. Classify the brief into one of the 4 vibes (Professional, Playful, Brutalist, Cozy).
-3. YOU MUST USE COLORS FROM THE 'Color Universe' strip. Sampling these exact hex values is MANDATORY.
-4. Build the app matching the aesthetics of your selected vibe. FAILURE TO MATCH VIBE COLORS WILL RESULT IN REJECTION.
-==============================================
-"""
-        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
-
-    prompt = f"""
-{vision_note}
-=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
-{category_note}
-You MUST build ONLY the category specified above. Do NOT build any other category.
-=======================================================
-
-You generate exactly one self-contained interactive web app per request.
-Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '{{'.
-The JSON MUST include a non-empty "html" field containing the complete <!doctype html> document.
-
-Brief: {brief}
-Seed: {seed}
-
-{_PAGE_SHAPE_HINT}
-"""
-    parts.insert(0, {"text": prompt})
-    
-    response_schema = {
+def _build_page_response_schema() -> Dict[str, Any]:
+    return {
         "type": "object",
         "properties": {
             "kind": {"type": "string"},
@@ -556,25 +703,46 @@ Seed: {seed}
         },
         "required": ["kind", "html"],
     }
+
+
+def _vision_grounding_note() -> str:
+    return """
+=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
+1. Analyze the attached UI Design Matrix.
+2. Use it as a reference for composition, palette energy, and atmosphere.
+3. The matrix still includes the classic lenses Professional, Playful, Brutalist, Cozy; you may borrow from them,
+   but the assignment axes below are the actual source of truth.
+4. Prefer colors and contrast relationships that feel sampled from the matrix rather than generic defaults.
+==============================================
+""".strip()
+
+
+def _call_gemini_structured(
+    parts: List[Dict[str, Any]],
+    schema: Dict[str, Any],
+    *,
+    temperature: Optional[float] = None,
+    max_output_tokens: Optional[int] = None,
+    endpoint: Optional[str] = None,
+) -> Optional[Any]:
     body = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "temperature": TEMPERATURE,
-            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+            "temperature": TEMPERATURE if temperature is None else temperature,
+            "maxOutputTokens": max_output_tokens or GEMINI_MAX_OUTPUT_TOKENS,
             "responseMimeType": "application/json",
-            "responseSchema": response_schema,
+            "responseSchema": schema,
         },
     }
-
     try:
         resp = requests.post(
-            GEMINI_GENERATION_ENDPOINT,
+            endpoint or GEMINI_GENERATION_ENDPOINT,
             params={"key": GEMINI_API_KEY},
             json=body,
-            timeout=LLM_TIMEOUT_SECS
+            timeout=LLM_TIMEOUT_SECS,
         )
-    except Exception as e:
-        logging.warning("Gemini generation request error: %r", e)
+    except Exception as exc:
+        logging.warning("Gemini structured request error: %r", exc)
         return None
 
     if resp.status_code != 200:
@@ -582,7 +750,7 @@ Seed: {seed}
             msg = resp.text[:400]
         except Exception:
             msg = str(resp.status_code)
-        logging.warning("Gemini generation HTTP %s: %s", resp.status_code, msg)
+        logging.warning("Gemini structured HTTP %s: %s", resp.status_code, msg)
         return None
 
     try:
@@ -590,9 +758,156 @@ Seed: {seed}
         text = _extract_gemini_text(data)
         if not text:
             return None
-        return _normalize_doc(_json_from_text(text))
-    except Exception as e:
-        logging.warning("Gemini generation extraction error: %r", e)
+        try:
+            return json.loads(text)
+        except Exception:
+            return _json_from_text(text)
+    except Exception as exc:
+        logging.warning("Gemini structured extraction error: %r", exc)
+        return None
+
+
+def _build_fast_page_prompt(brief: str, seed: int, assignment_note: str) -> str:
+    return f"""
+{_vision_grounding_note()}
+=== FAST MODE ASSIGNMENT ===
+{assignment_note}
+Follow the assignment axes exactly. Do not collapse back into a generic centered card.
+================================
+
+You generate exactly one self-contained interactive web app per request.
+Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '{{'.
+The JSON MUST include a non-empty "html" field containing the complete <!doctype html> document.
+
+Brief: {brief}
+Seed: {seed}
+
+{_PAGE_SHAPE_HINT}
+"""
+
+
+def _build_fast_burst_prompt(brief: str, seed: int, assignments_text: str, target_docs: int) -> str:
+    return f"""
+{_vision_grounding_note()}
+=== FAST MODE ASSIGNMENTS ===
+{assignments_text}
+Each site MUST follow its own assignment axes. Keep the sites visibly distinct in layout, motion grammar, and tone.
+================================
+
+You generate EXACTLY {target_docs} unique, self-contained interactive web apps as a JSON array.
+Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '['.
+Every item MUST include a non-empty "html" field containing a complete <!doctype html> document.
+
+Brief: {brief}
+Seed: {seed}
+
+{_PAGE_SHAPE_HINT}
+"""
+
+
+def _build_premium_plan_prompt(brief: str, seed: int) -> str:
+    return f"""
+{_vision_grounding_note()}
+Plan one premium interactive web experience.
+Return JSON only matching the provided schema.
+
+Brief: {brief or 'Surprise me with a bold concept.'}
+Seed: {seed}
+
+Goals:
+- Choose one strong art direction instead of averaging multiple styles.
+- Use the local design kit manifest below. Select concrete keys from it.
+- Your output must explicitly choose palette_key, layout_key, motion_preset, overlay_key, display_font_key, and body_font_key.
+- Pick one signature interaction and one signature motion system.
+- Favor depth, atmosphere, and intentional hierarchy over generic product UI.
+- Avoid a single centered card unless the chosen layout explicitly calls for it.
+
+Local design kit manifest:
+{compact_design_kit_manifest()}
+"""
+
+
+def _build_premium_page_prompt(
+    brief: str,
+    seed: int,
+    plan: Dict[str, Any],
+    retry_note: str = "",
+) -> str:
+    retry_block = f"\nRetry note:\n- {retry_note}\n" if retry_note else ""
+    return f"""
+{_vision_grounding_note()}
+Build one premium interactive web experience.
+Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '{{'.
+Return a single renderable document. `full_page_html` is strongly preferred.
+
+Brief: {brief or 'Surprise me with a bold concept.'}
+Seed: {seed}
+
+Approved premium plan (follow exactly):
+{json.dumps(plan, indent=2)}
+
+Local design kit manifest:
+{compact_design_kit_manifest()}
+
+Premium build requirements:
+- Use at least one local design-kit asset or font selection from the approved plan.
+- A visible first paint is mandatory. The page must look alive before interaction.
+- Deliver one signature motion moment such as parallax drift, layered reveal, kinetic meter motion, or a restrained Three.js scene.
+- Keep controls readable and intentional; do not revert to a generic marketing-site shell.
+- If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
+- If you use overlays, reference `/static/design-kit/overlays/...` paths exactly.
+{retry_block}
+
+{OUTPUT_FORMATS}
+
+{HARD_RUNTIME_RULES}
+
+{PREMIUM_STYLE_GUIDANCE}
+"""
+
+
+def _call_gemini_premium_plan(
+    brief: str,
+    seed: int,
+    user_key: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    del user_key
+    matrix_b64 = _get_design_matrix_b64()
+    parts: List[Dict[str, Any]] = [{"text": _build_premium_plan_prompt(brief, seed)}]
+    if matrix_b64:
+        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+    out = _call_gemini_structured(parts, PREMIUM_PLAN_SCHEMA, temperature=0.8, max_output_tokens=4096)
+    return out if isinstance(out, dict) else None
+
+
+def _call_gemini_premium_build(
+    brief: str,
+    seed: int,
+    plan: Dict[str, Any],
+    *,
+    retry_note: str = "",
+) -> Optional[Dict[str, Any]]:
+    matrix_b64 = _get_design_matrix_b64()
+    parts: List[Dict[str, Any]] = [{"text": _build_premium_page_prompt(brief, seed, plan, retry_note)}]
+    if matrix_b64:
+        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+    out = _call_gemini_structured(parts, _build_page_response_schema(), temperature=1.0)
+    return out if isinstance(out, dict) else None
+
+
+def _call_gemini_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
+    """Call Gemini for page generation."""
+    matrix_b64 = _get_design_matrix_b64()
+    parts: List[Dict[str, Any]] = [{"text": _build_fast_page_prompt(brief, seed, category_note)}]
+    if matrix_b64:
+        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
+    out = _call_gemini_structured(parts, _build_page_response_schema())
+    if not isinstance(out, dict):
+        return None
+    try:
+        return _normalize_doc(out)
+    except Exception as exc:
+        logging.warning("Gemini generation normalization error: %r", exc)
         return None
 
 
@@ -665,60 +980,18 @@ def generate_page_burst(
         yield from _fallback_burst(brief, seed, user_key, target_docs=BURST_SITE_COUNT)
         return
 
-    # Fetch categories and softly bias vibe distribution for the burst
     category_notes = [_next_category_note(user_key) for _ in range(BURST_SITE_COUNT)]
     target_docs = len(category_notes)
-    vibes = ["Professional", "Playful", "Brutalist", "Cozy"]
-    vibe_weights = {
-        "Professional": 0.25,
-        "Playful": 0.30,
-        "Brutalist": 0.20,
-        "Cozy": 0.25,
-    }
-    rng = random.Random(seed or 0)
-    vibe_pool = rng.choices(
-        vibes,
-        weights=[vibe_weights[v] for v in vibes],
-        k=target_docs,
-    )
     matrix_b64 = _get_design_matrix_b64()
     
-    parts = []
+    parts: List[Dict[str, Any]] = []
     if matrix_b64:
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
 
-    assignments = "\n".join(
-        [
-            f"SITE {i+1} Category: {category_notes[i]} | Vibe: {vibe_pool[i]}"
-            for i in range(len(category_notes))
-        ]
+    assignments = "\n\n".join(
+        f"SITE {i + 1}\n{category_notes[i]}" for i in range(len(category_notes))
     )
-
-    prompt = f"""
-=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
-1. Analyze the attached 'UI Design Matrix'. 
-2. Extract colors from the 'Color Universe' strip.
-3. Build the apps matching the aesthetics of the ASSIGNED vibe.
-==============================================
-
-=== MANDATORY CATEGORY ASSIGNMENTS (DO NOT IGNORE) ===
-{assignments}
-
-You MUST build each site following its assigned category AND assigned vibe.
-Ensure all assigned vibes are visibly distinct (typography, layout, palette, mood).
-=========================================================
-
-You generate EXACTLY {target_docs} unique, self-contained interactive web apps as a JSON array.
-Each app must be a complete experience with high-quality design.
-Output valid JSON only. No backticks. No explanations. The first non-whitespace character MUST be '['.
-Every item MUST include a non-empty "html" field containing a complete <!doctype html> document.
-
-Brief: {brief}
-Seed: {seed}
-
-{_PAGE_SHAPE_HINT}
-"""
-    parts.insert(0, {"text": prompt})
+    parts.insert(0, {"text": _build_fast_burst_prompt(brief, seed, assignments, target_docs)})
     
     body = {
         "contents": [{"parts": parts}],
@@ -728,37 +1001,10 @@ Seed: {seed}
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {"type": "string"},
-                        "title": {"type": "string"},
-                        "html": {"type": "string"},
-                        "css": {"type": "string"},
-                        "js": {"type": "string"},
-                        "components": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "type": {"type": "string"},
-                                    "props": {
-                                        "type": "object",
-                                        "properties": {
-                                            "html": {"type": "string"},
-                                            "height": {"type": "number"}
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                    },
-                    "required": ["kind", "html"]
-                },
+                "items": _build_page_response_schema(),
                 "minItems": target_docs,
-                "maxItems": target_docs
-            }
+                "maxItems": target_docs,
+            },
         },
     }
 
@@ -869,7 +1115,14 @@ Seed: {seed}
                     logging.warning("Gemini stream skipped invalid doc: %r", exc)
                     last_obj_count += 1
                     continue
-                yield doc
+                preflight_issues = _preflight_doc(doc)
+                if _preflight_has_blocking_issues(preflight_issues):
+                    logging.warning("Gemini stream skipped preflight-blocked doc (%d issues)", len(preflight_issues))
+                    last_obj_count += 1
+                    continue
+                if preflight_issues:
+                    doc = _annotate_preflight_doc(doc, preflight_issues)
+                yield _attach_quality_score(doc, "fast")
                 last_obj_count += 1
                 yielded_docs += 1
                 if yielded_docs >= target_docs:
@@ -895,11 +1148,22 @@ Seed: {seed}
                     if isinstance(recovered, list):
                         for item in recovered:
                             try:
-                                recovered_docs.append(_normalize_doc(item))
+                                doc = _normalize_doc(item)
+                                issues = _preflight_doc(doc)
+                                if _preflight_has_blocking_issues(issues):
+                                    continue
+                                if issues:
+                                    doc = _annotate_preflight_doc(doc, issues)
+                                recovered_docs.append(_attach_quality_score(doc, "fast"))
                             except Exception as exc:
                                 logging.warning("Gemini stream tolerant parse normalize error: %r", exc)
                     elif isinstance(recovered, dict):
-                        recovered_docs.append(_normalize_doc(recovered))
+                        doc = _normalize_doc(recovered)
+                        issues = _preflight_doc(doc)
+                        if not _preflight_has_blocking_issues(issues):
+                            if issues:
+                                doc = _annotate_preflight_doc(doc, issues)
+                            recovered_docs.append(_attach_quality_score(doc, "fast"))
                 except Exception as exc:
                     logging.warning("Gemini stream tolerant parse failed: %r", exc)
             if recovered_docs:
@@ -948,21 +1212,7 @@ Seed: {seed}
 def _call_groq_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call Groq (OpenAI-compatible) and parse a page dict; None on failure."""
     temperature = TEMPERATURE
-
-    prompt = f"""
-=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
-{category_note}
-You MUST build ONLY the category specified above. Do NOT build any other category.
-=======================================================
-
-You generate exactly one self-contained interactive web app per request.
-Output valid JSON only. No backticks. No explanations.
-
-Brief (may be empty → you choose a theme): {brief}
-Seed: {seed}
-
-{_PAGE_SHAPE_HINT}
-"""
+    prompt = _build_fast_page_prompt(brief, seed, category_note)
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -1075,270 +1325,291 @@ Seed: {seed}
 
 
 
-_PAGE_SHAPE_HINT = """
+OUTPUT_FORMATS = """
+FORMATS (prefer #2 for most outputs):
+1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}  Use only when a compact widget is clearly the best fit.
+2. {"kind":"full_page_html","html":"<!doctype html>..."}  Preferred. Include complete head/body and inline CSS/JS.
+3. {"components":[{"id":"hero","type":"custom","props":{"html":"...","height":360}}]}  Only when multiple iframe-style islands are unavoidable.
+4. For immersive 3D or WebGL concepts, use full_page_html with `<script type="module">import * as THREE from 'three'; ...</script>`.
+""".strip()
 
-FORMATS (prefer #2 for websites/quizzes; only use snippets/components when absolutely necessary):
-1. {"kind":"ndw_snippet_v1","title":"...","background":{"style":"css","class":""},"css":"...","html":"...","js":"..."}  ← only use when a self-contained widget fits within the host page.
-2. {"kind":"full_page_html","html":"<!doctype html>..."}  ← preferred shape; include complete <head>, <body>, semantic sections, and inline CSS/JS.
-3. {"components":[{"id":"hero","type":"custom","props":{"html":"...","height":360}}]}  ← only when multiple iframe-style embeds are unavoidable; ensure each component supplies props.html and props.height (px number).
+FAST_STYLE_GUIDANCE = """
+FAST BUILD GUIDANCE:
+- Start from the assigned layout, background token, motion token, and font pair before inventing extras.
+- Ship a visible first paint immediately with a strong hero composition and one signature interaction.
+- Avoid the generic centered-card shell and avoid falling back to bland dashboard chrome.
+- Use layered surfaces, strong contrast, and at least two visual regions or one immersive full-viewport stage.
+- Lucide is available globally. Use `<i data-lucide="icon-name"></i>` instead of raw SVG icon markup when you need icons.
+""".strip()
 
-DESIGN QUALITY (MANDATORY — every output must feel premium):
-- Use a cohesive color palette (3-5 colors max, harmonious). Avoid default browser grays.
-- Apply modern CSS: border-radius: 12px+ on cards/buttons, subtle box-shadows, gradient backgrounds.
-- Use generous whitespace (padding: 24px+, margin between sections, breathing room).
-- Add micro-animations: hover effects (scale, color shift), smooth transitions (0.2s ease), subtle motion. Prefer GSAP for complex motion.
-- Typography: vary font-weights (400/500/700), proper line-height (1.5+), clear hierarchy (h1 > h2 > p).
-- Avoid flat, unstyled elements. Every button, card, and input should look intentionally designed.
-- Color contrast: always pair dark text with light backgrounds (or vice versa). NEVER use medium-on-medium colors. Contrast must meet WCAG AA standards (4.5:1).
-- PREMIUM ICONOGRAPHY: Lucide icons are provided globally. Use `<i data-lucide="icon-name"></i>` (e.g. `house`, `settings`, `check`) for all UI icons. Avoid raw SVGs.
-- ICON STYLING: Make icons feel premium by applying Tailwind classes:
-    - Color: Use `text-[color:var(--accent-500)]` or `text-slate-500` to match the theme.
-    - Stroke: Adjust weight for elegance (e.g., `stroke-[1.5]` for thin/refined or `stroke-[2.5]` for bold).
-    - Containers: Wrap icons in a small, soft-colored div (e.g., `bg-[color:var(--accent-50)] p-2 rounded-lg`) for a standalone 'SaaS' look.
-- INITIAL VISUAL STATE (MANDATORY): The experience must NEVER be blank/empty on load. Provide ambient motion, floating particles, or a beautiful 'Click to Start' splash screen immediately. Don't wait for user input to show visual evidence of the theme.
-- PREMIUM INTROS: Use GSAP (provided) for a staggered entrance animation of the UI elements.
-- No "Tone-on-Tone": Never use pink text on a pink background, even if they are different shades, unless the contrast is extremely high.
+PREMIUM_STYLE_GUIDANCE = """
+PREMIUM BUILD GUIDANCE:
+- Treat the approved plan as a creative director's brief.
+- Use the selected layout, palette, motion preset, and overlay intentionally.
+- Favor cinematic depth, layered parallax, responsive canvases, or restrained Three.js over flat static UI.
+- Preserve clarity: strong hierarchy, readable controls, and no tone-on-tone text.
+""".strip()
 
+HARD_RUNTIME_RULES = """
 GENERAL RULES:
-- STRICT: No external scripts or styles via CDN (e.g., no <script src="https://...">). GSAP 3.12, Tailwind CSS, and Lucide Icons are already provided globally. Use them directly without re-importing. No external fonts/images/fetch.
-- Tailwind runtime is local; do not include any <script src> tags or CDN imports in output.
-- Output HTML without stray prefixes; host injects it directly.
-- Provide clear instructions in the HTML (outside canvas).
-- Rotate palettes: declare CSS custom properties or utility classes so each experience chooses colors that fit the theme (light, pastel, dark, neon).
-- Use the provided examples as inspiration and feel free to remix their spirit, but avoid repeating the exact same names or layouts verbatim run after run.
-- Keep the entire experience around 3000 tokens so responses stay snappy; prefer concise layouts, reusable utility classes, and focused copy.
-- Every interactive element referenced in JS must already exist in the DOM with matching IDs/classes before scripts run.
-- CONTROL CONSISTENCY: UI buttons and keyboard shortcuts (e.g., Spacebar) MUST trigger the exact same function. Do not duplicate logic with slight variations.
+- STRICT: No external scripts or styles via CDN. No external fonts/images/fetch. No iframes or document.write.
+- Tailwind runtime is local; do not include CDN imports. GSAP and Lucide are already provided globally.
+- Three.js is available locally in module scripts via `import * as THREE from 'three'`. Never import remote modules.
+- Use the ID `ndw-content` for the main app container when you need a primary stage.
+- Every interactive element referenced in JS must already exist in the DOM before scripts run.
+- CONTROL CONSISTENCY: buttons and keyboard shortcuts must trigger the same function, not near-duplicates.
+- If you create requestAnimationFrame loops, timers, observers, or Three.js renderers outside NDW.loop, call `NDW.registerCleanup(() => { ... })`.
 
-LAYOUT STRATEGY (CHOOSE ONE BEST FIT FOR THE CONCEPT):
-Do not default to a centered card every time.
-A) CONTENT-FIRST (Preferred): Large interactive area in the center, minimal header at the top.
-B) SPLIT SCREEN: Best for "Input -> Output" tools (e.g., config on left, live preview on right).
-C) BENTO GRID: Best for dashboards or multi-step tools. (Grid of cards).
-D) FULL PAGE HERO: Best for immersive art or experiences. (Content spans full viewport).
+DO NOT:
+- Do not use inline event handlers (`onclick=""`, etc.) or global window timers.
+- Do not reference external fonts, CDNs, or fetch remote data.
+- Do not leave empty containers or placeholder text like TODO.
+- Do not create duplicate IDs or register duplicate NDW.onPointer/onKey handlers inside loops.
 
-HIERARCHY & IMPACT (MANDATORY):
-- The INTERACTIVE APP is the star. It must be visible immediately. Use the ID `ndw-content` for the main app container.
-- Header (Title/Category) must be COMPACT and CENTERED at the top. Never use a giant splash screen/hero that pushes the content below the fold.
-- Focus on "Visual Evidence": If it's a calculator, show a dial. If it's a generator, show a beautifully styled card.
+SELF QA:
+1. Pretend to click every button and verify the described behavior occurs.
+2. Verify headings, instructions, and controls are visible on first paint.
+3. Ensure result text never becomes `undefined`.
+4. Check contrast and readability. No white-on-white, black-on-black, or muddy medium-on-medium text.
+""".strip()
 
-BASE HTML BLUEPRINT (ADAPT LAYOUT):
-<main id="ndw-shell" class="min-h-screen text-slate-900" style="--bg-100:#f8fafc;--bg-300:#e0f2fe;--accent-500:#2563eb;--text-900:#0f172a;background:linear-gradient(135deg,var(--bg-100),var(--bg-300));">
-  <!-- Compact Centered Header -->
-  <header class="pt-8 pb-4 text-center">
-    <p class="text-[10px] uppercase tracking-[0.4em] text-[color:var(--accent-500)]">[[category]]</p>
-    <h1 class="text-xl font-semibold">[[headline]]</h1>
-  </header>
-
-  <section class="mx-auto max-w-6xl px-4 pb-12"> 
-    <div id="ndw-content" class="min-h-[50vh] transition-all duration-500">
-        [[YOUR UNIQUE INTERACTIVE LAYOUT HERE]]
-    </div>
-  </section>
-</main>
-NOTE: Replace CSS variables using the 'Color Universe' from the Matrix.
-
-SNIPPET RUNTIME (NDW SDK CHEAT SHEET):
+NDW_SDK_CHEAT_SHEET = """
+NDW SDK CHEAT SHEET
 === FRAME LOOP ===
 NDW.loop((dt) => { ... })  // dt = milliseconds since last frame. Required for games/animations.
 
 === INPUT ===
-NDW.isPressed("ArrowUp")  // true only on first frame of keypress (rising edge)
-NDW.isDown("ArrowLeft")   // true while key is held
+NDW.isPressed("ArrowUp")
+NDW.isDown("ArrowLeft")
 NDW.jump()    // alias: ArrowUp, Space, W
-NDW.shot()    // alias: X, Z, mouse click  
+NDW.shot()    // alias: X, Z, mouse click
 NDW.action()  // alias: Enter, Space, mouse click
-NDW.pointer   // { x, y, down } - mouse/touch position relative to canvas
+NDW.pointer   // { x, y, down } - mouse/touch pointer state
 
 === AUDIO ===
-NDW.audio.playTone(freq, durationMs, type, gain)  // e.g., playTone(440, 100, 'sine', 0.1)
+NDW.audio.playTone(freq, durationMs, type, gain)
 
-=== JUICE (visual feedback) ===
-NDW.juice.shake(intensity, durationMs)  // e.g., shake(5, 200) for screen shake
-NDW.particles.spawn({x, y, count, spread, color, size, life})  // spawn particles
-NDW.particles.update(dt, ctx)  // call in loop to render particles
+=== JUICE ===
+NDW.juice.shake(intensity, durationMs)
+NDW.particles.spawn({x, y, count, spread, color, size, life})
+NDW.particles.update(dt, ctx)
 
 === CANVAS ===
 const canvas = NDW.makeCanvas({parent: document.getElementById('ndw-content'), width: 800, height: 600});
-// returns {ctx, dpr, clear()} - DPI-aware by default
 
 === MATH ===
-NDW.utils.dist(x1, y1, x2, y2)      // distance between points
-NDW.utils.angle(x1, y1, x2, y2)     // angle in radians
-NDW.utils.overlaps(objA, objB)      // AABB/Circle collision detection
-NDW.utils.lerp(a, b, t)             // linear interpolation
-NDW.utils.clamp(v, min, max)        // clamp value to range
-NDW.utils.rng(seed)                 // seeded random number generator
+NDW.utils.dist(x1, y1, x2, y2)
+NDW.utils.angle(x1, y1, x2, y2)
+NDW.utils.overlaps(objA, objB)
+NDW.utils.lerp(a, b, t)
+NDW.utils.clamp(v, min, max)
+NDW.utils.rng(seed)
 
 === PERSISTENCE ===
-NDW.utils.store.get("key")          // get from localStorage
-NDW.utils.store.set("key", value)   // save to localStorage
+NDW.utils.store.get("key")
+NDW.utils.store.set("key", value)
 
-=== HANDLERS (register ONCE outside loop) ===
+=== HANDLERS ===
 NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
 NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
+NDW.registerCleanup(() => { /* cancel timers, dispose renderers, remove observers */ });
 
 JS GUARDRAILS:
-- Wrap DOM queries inside DOMContentLoaded if scripts appear before the HTML (`document.addEventListener('DOMContentLoaded', () => { ... });`).
-- Declare every variable with `const`/`let`; no implicit globals. Initialize counters/arrays with sensible defaults before using them.
-- Avoid setInterval/setTimeout for animation; use NDW.loop and the provided `dt`.
-- Remove unused listeners on reset paths and ensure buttons update text without referencing undefined nodes.
+- Wrap DOM queries inside DOMContentLoaded if scripts appear before the HTML.
+- Declare every variable with const/let.
+- Avoid setInterval/setTimeout for animation; use NDW.loop and dt.
+- Keep physics frame-independent by using velocity * (dt / 1000).
+""".strip()
 
-CONTROLS & INPUT REFERENCE (canvas categories only):
-- Keyboard discrete: NDW.onKey((e) => { if (e.key === 'ArrowUp') jump(); });
-- Keyboard continuous: if (NDW.isDown('ArrowLeft')) x -= speed * (dt/1000);
-- Mouse/touch: NDW.onPointer((e) => { if (e.down) shoot(e.x, e.y); });
-- Mouse held: if (NDW.isDown('mouse')) dragObject();
+FAST_DESIGN_KIT_GUIDANCE = f"""
+FAST DESIGN-KIT MANIFEST:
+{compact_fast_design_kit_manifest()}
+- Select exactly one assigned background_token and exactly one assigned motion_token.
+- If you use the font pair, include `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
+- If you use the overlay implied by the background_token, reference `/static/design-kit/overlays/...` exactly.
+""".strip()
 
-DO NOT:
-- Do not use inline event handlers (`onclick=""`, etc.) or global window timers.
-- Do not reference external fonts, CDNs, or fetch remote data. No iframes or document.write.
-- Do not leave empty containers (e.g., an `#ndw-app` with no children) or placeholder text like "TODO".
-- Do not create duplicate IDs or register multiple identical NDW.onPointer/onKey handlers inside loops.
-- Do not build a different category than the one explicitly assigned above. Follow the CATEGORY ASSIGNMENT exactly.
+_PAGE_SHAPE_HINT = "\n\n".join(
+    [OUTPUT_FORMATS, FAST_STYLE_GUIDANCE, FAST_DESIGN_KIT_GUIDANCE, HARD_RUNTIME_RULES, NDW_SDK_CHEAT_SHEET]
+)
 
-SELF QA BEFORE RETURNING:
-1. Pretend to click every button/toggle and ensure the described behaviour occurs; fix mismatched selectors.
-2. Verify headings, instructions, and controls are visible on first paint (no hidden `display:none` wrappers).
-3. For quizzes/tools, ensure result text updates and reset flows always set meaningful copy (never `undefined`).
-4. Check that colors are harmonious and contrast is readable. No white-on-white or black-on-black.
+PREMIUM_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "layout_archetype": {"type": "string", "enum": ["split_lens", "stage_focus", "bento_magazine", "immersive_poster"]},
+        "motion_archetype": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["motion_presets"].keys())},
+        "visual_density": {"type": "string", "enum": ["airy", "layered", "dense"]},
+        "interaction_model": {"type": "string", "enum": ["pointer_reactive", "scroll_story", "tool_driven", "playful_loop"]},
+        "rendering_mode": {"type": "string", "enum": ["dom", "canvas", "three", "hybrid"]},
+        "tone": {"type": "string", "enum": ["luminous", "editorial", "playful", "brutalist_softened", "cinematic"]},
+        "signature_interaction": {"type": "string"},
+        "hero_treatment": {"type": "string"},
+        "palette_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["palettes"].keys())},
+        "layout_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["layouts"].keys())},
+        "motion_preset": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["motion_presets"].keys())},
+        "overlay_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["overlays"].keys())},
+        "display_font_key": {"type": "string", "enum": ["display_orbit", "display_editorial", "display_grotesk"]},
+        "body_font_key": {"type": "string", "enum": ["body_clean", "body_soft"]},
+        "three_scene_key": {"type": "string", "enum": ["glass_orbit", "particle_ribbon", "terrain_glow"]},
+        "art_direction": {"type": "string", "minLength": 12, "maxLength": 180},
+    },
+    "required": [
+        "layout_archetype",
+        "motion_archetype",
+        "visual_density",
+        "interaction_model",
+        "rendering_mode",
+        "tone",
+        "signature_interaction",
+        "hero_treatment",
+        "palette_key",
+        "layout_key",
+        "motion_preset",
+        "overlay_key",
+        "display_font_key",
+        "body_font_key",
+        "three_scene_key",
+        "art_direction",
+    ],
+}
 
-CANONICAL CANVAS TEMPLATE:
-const stage = document.createElement('section');
-stage.className = 'mx-auto my-6 w-full max-w-4xl rounded-xl bg-white/85 backdrop-blur p-6 shadow-lg ring-1 ring-slate-200/70';
-document.getElementById('ndw-app')?.appendChild(stage);
+_FAST_ASSIGNMENT_PRESETS = [
+    {
+        "heading": "FAST ASSIGNMENT (1/6): stage_focus + parallax_drift",
+        "layout_archetype": "stage_focus",
+        "motion_archetype": "parallax_drift",
+        "visual_density": "layered",
+        "interaction_model": "pointer_reactive",
+        "rendering_mode": "dom",
+        "tone": "luminous",
+        "palette_key": "solar_pop",
+        "layout_key": "stage_focus",
+        "overlay_key": "noise_grid",
+        "motion_preset": "parallax_drift",
+        "background_token": "aurora_stage",
+        "display_font_key": "display_orbit",
+        "body_font_key": "body_clean",
+        "hero_direction": "Build one large luminous stage with a floating control rail instead of stacked cards.",
+        "interaction_signature": "Let the pointer tilt or shift layered planes while one hero control changes the scene.",
+    },
+    {
+        "heading": "FAST ASSIGNMENT (2/6): split_lens + kinetic_meter",
+        "layout_archetype": "split_lens",
+        "motion_archetype": "kinetic_meter",
+        "visual_density": "airy",
+        "interaction_model": "tool_driven",
+        "rendering_mode": "hybrid",
+        "tone": "editorial",
+        "palette_key": "mint_signal",
+        "layout_key": "split_lens",
+        "overlay_key": "mesh_wave",
+        "motion_preset": "kinetic_meter",
+        "background_token": "paper_mesh",
+        "display_font_key": "display_editorial",
+        "body_font_key": "body_soft",
+        "hero_direction": "Use an asymmetrical split with one dramatic content pane and one precise utility pane.",
+        "interaction_signature": "Expose one kinetic dial, meter, or slider that visibly animates the composition.",
+    },
+    {
+        "heading": "FAST ASSIGNMENT (3/6): immersive_poster + orbital_float",
+        "layout_archetype": "immersive_poster",
+        "motion_archetype": "orbital_float",
+        "visual_density": "dense",
+        "interaction_model": "playful_loop",
+        "rendering_mode": "canvas",
+        "tone": "playful",
+        "palette_key": "acid_arcade",
+        "layout_key": "immersive_poster",
+        "overlay_key": "orbital_dots",
+        "motion_preset": "orbital_float",
+        "background_token": "festival_dust",
+        "display_font_key": "display_orbit",
+        "body_font_key": "body_soft",
+        "hero_direction": "Favor a poster-like full-viewport composition with bold type and floating ornaments.",
+        "interaction_signature": "Make one playful loop or hover reaction feel central to the page identity.",
+    },
+    {
+        "heading": "FAST ASSIGNMENT (4/6): bento_magazine + stagger_reveal",
+        "layout_archetype": "bento_magazine",
+        "motion_archetype": "stagger_reveal",
+        "visual_density": "layered",
+        "interaction_model": "tool_driven",
+        "rendering_mode": "dom",
+        "tone": "editorial",
+        "palette_key": "rose_oxide",
+        "layout_key": "bento_magazine",
+        "overlay_key": "diagonal_hatch",
+        "motion_preset": "stagger_reveal",
+        "background_token": "rose_fog",
+        "display_font_key": "display_editorial",
+        "body_font_key": "body_clean",
+        "hero_direction": "Use a magazine rhythm with uneven blocks, not equal cards in a neat dashboard.",
+        "interaction_signature": "Introduce one reveal-driven panel, filter, or expandable editorial detail.",
+    },
+    {
+        "heading": "FAST ASSIGNMENT (5/6): stage_focus + tilt_pointer",
+        "layout_archetype": "stage_focus",
+        "motion_archetype": "tilt_pointer",
+        "visual_density": "airy",
+        "interaction_model": "pointer_reactive",
+        "rendering_mode": "three",
+        "tone": "cinematic",
+        "palette_key": "midnight_luxe",
+        "layout_key": "stage_focus",
+        "overlay_key": "contour_lines",
+        "motion_preset": "tilt_pointer",
+        "background_token": "night_grid",
+        "display_font_key": "display_grotesk",
+        "body_font_key": "body_clean",
+        "hero_direction": "Keep the page dark, glossy, and stage-led, with one dominant scene and compact controls.",
+        "interaction_signature": "Make pointer motion, camera tilt, or lighting response the main interactive flourish.",
+    },
+    {
+        "heading": "FAST ASSIGNMENT (6/6): split_lens + scroll_shutter",
+        "layout_archetype": "split_lens",
+        "motion_archetype": "scroll_shutter",
+        "visual_density": "dense",
+        "interaction_model": "scroll_story",
+        "rendering_mode": "hybrid",
+        "tone": "brutalist_softened",
+        "palette_key": "lavender_fog",
+        "layout_key": "split_lens",
+        "overlay_key": "grain_speckle",
+        "motion_preset": "scroll_shutter",
+        "background_token": "lacquer_shadow",
+        "display_font_key": "display_grotesk",
+        "body_font_key": "body_soft",
+        "hero_direction": "Use a blunt split layout with tension between a dramatic stage and compact narrative blocks.",
+        "interaction_signature": "Let scrolling or one manual scrubber trigger the signature transition.",
+    },
+]
 
-const canvas = NDW.makeCanvas({ parent: stage, width: 960, height: 560 });
-const ctx = canvas.ctx;
-const rand = NDW.utils.rng(seed);
-let state = { x: ctx.width / 2, vx: 0 };
 
-NDW.onKey((e) => {
-     if (e.key === 'ArrowLeft') state.vx = -1;
-     if (e.key === 'ArrowRight') state.vx = 1;
-});
-
-NDW.loop((dt) => {
-     const seconds = dt / 1000;
-     const width = ctx.width;
-     const height = ctx.height;
-     state.x = Math.max(20, Math.min(width - 20, state.x + state.vx * seconds * 200));
-     ctx.clearRect(0, 0, width, height);
-     ctx.fillStyle = '#10b981';
-     ctx.fillRect(state.x - 20, height - 60, 40, 40);
-});
-
-OUTPUT CHECKLIST:
-✓ Valid JSON in format #1, #2, or #3
-✓ Title present (if snippet) and used; or omit cleanly
-✓ All vars initialized; listeners bound before use
-✓ Canvas flows: clearRect each frame, use dt parameter, no manual timers
-✓ Websites/Quizzes: multi-section DOM layout, accessible labels, no canvas usage
-✓ No undefined refs or missing elements
-✓ Premium design: rounded corners, shadows, gradients, micro-animations
-4. Check that colors are harmonious and contrast is readable. No white-on-white or black-on-black. No "blending" font colors with backgrounds.
-✓ Varied Layout: Did not just use a centered card if a sidebar or grid was better.
-✓ Hard Readability: Font colors do not "blend" into the background. Text is sharp and high-contrast.
+def _format_fast_assignment(preset: Dict[str, str]) -> str:
+    return f"""{preset['heading']}
+- layout_archetype: {preset['layout_archetype']}
+- motion_archetype: {preset['motion_archetype']}
+- visual_density: {preset['visual_density']}
+- interaction_model: {preset['interaction_model']}
+- rendering_mode: {preset['rendering_mode']}
+- tone: {preset['tone']}
+- palette_key: {preset['palette_key']}
+- layout_key: {preset['layout_key']}
+- background_token: {preset['background_token']}
+- motion_token: {preset['motion_preset']}
+- overlay_key: {preset['overlay_key']}
+- display_font_key: {preset['display_font_key']}
+- body_font_key: {preset['body_font_key']}
+- hero_direction: {preset['hero_direction']}
+- interaction_signature: {preset['interaction_signature']}
+Use these assignment axes as the main source of diversity.
+Use exactly the assigned background_token and motion_token as the default visual system.
+If useful, reference `/static/design-kit/fonts.css` and `/static/design-kit/overlays/...` local assets.
 """
 
+
 _CATEGORY_ROTATION_NOTES = [
-    ("CATEGORY ASSIGNMENT (1/5): Interactive Entertainment / Web Toy",
-     """CATEGORY ASSIGNMENT (1/5): You MUST build an Interactive Entertainment / Web Toy.
-
-Focus on playful, unexpected interactions that delight users.
-SHOW, DON'T TELL: Do not just write a paragraph of text. Create a toy.
-Example inspirations (remix freely but make them VISUAL):
-- gravity flip stages, whispering pixel terrariums, sparkle vortex dodgers
-- mirror maze click escapes, bubble pop orchestras, neon vine twisters
-- marshmallow catapults, echo button choirs, kaleidoscope cursor trails
-- confetti explosion buttons, rainbow trail painters, mood ring simulators
-- click-to-bloom flower gardens, bouncing ball physics toys, pixel pet companions
-- sound board mixers, emoji rain makers, firework launchers
-- color palette spinners, particle fountain creators, hypnotic spiral generators
-- fidget spinner simulators, satisfying click counters, zen sand gardens
-- bubble wrap poppers, domino chain reactions, magnetic poetry boards
-
-Use expressive HTML/CSS and light JS—no heavy physics engines—and stay whimsical.
-AVOID: Just a button that updates a number."""),
-
-    ("CATEGORY ASSIGNMENT (2/5): Utility Micro-Tool",
-     """CATEGORY ASSIGNMENT (2/5): You MUST build a Utility Micro-Tool solving one focused task.
-     
-SHOW, DON'T TELL: A calculator should show a real-time graph or visual indicator, not just a number result.
-Example inspirations (remix freely):
-- pet age dashboards (show a growing pet icon), is-it-Friday checkers (giant neon banner)
-- caffeine half-life calculators (show decay graph curve), sleep debt trackers (visual battery meter)
-- tip calculators (visual split-the-bill pie chart), unit converters (visual size comparison)
-- countdown timers (circular progress rings), reading time estimators (animated progress bar)
-- password strength checkers (animated un/lock meter), color contrast validators (live preview cards)
-- groceries expense splitters (visual stack of coins), savings goal trackers (filling a jar)
-- habit streak counters (commit graph grid), focus session timers (visually shrinking circle)
-- quick decision makers (spin-the-wheel animation)
-
-Deliver clear inputs AND RICH VISUAL RESULTS. No plain text results."""),
-    
-    ("CATEGORY ASSIGNMENT (3/5): Playable Simple Game",
-     """CATEGORY ASSIGNMENT (3/5): You MUST build a Playable Simple Game.
-
-Use the NDW SDK for frame-independent logic:
-- NDW.loop((dt) => { ... }) for the game loop (dt = milliseconds)
-- NDW.isPressed("ArrowUp") or NDW.jump() for single-hit input (jumping, shooting)
-- NDW.isDown("ArrowLeft") for continuous input (movement)
-- NDW.audio.playTone(440, 100) for sound effects
-- NDW.juice.shake(5, 200) for screen shake on hits
-- NDW.particles.spawn({x, y, count: 10}) for explosions
-- NDW.makeCanvas({parent: document.getElementById('ndw-content'), width: 800, height: 600})
-
-Example inspirations (remix freely):
-- Snake (collect apples, grow longer, avoid self)
-- Breakout/Pong (paddle controls, ball physics)
-- Flappy Bird (tap to jump, avoid pipes)
-- Asteroid shooter (rotate, thrust, shoot)
-- Endless runner (jump over obstacles, collect coins)
-- Clicker/idle games (upgrade buttons, progress bars)
-- Memory matching (flip cards, find pairs)
-- Reaction time testers (click when color changes)
-- Maze navigators (arrow key movement)
-- Falling blocks (Tetris-style)
-
-MUST HAVE: Score display, game over state, restart button, sound on key actions."""),
-    
-    ("CATEGORY ASSIGNMENT (4/5): Interactive Art",
-     """CATEGORY ASSIGNMENT (4/5): You MUST build Interactive Art with NDW.makeCanvas.
-     
-Initialize arrays with NDW.utils.rng(seed), create visible motion within 1 second.
-Read NDW.pointer inside the loop while handlers stay outside.
-
-Example inspirations (remix palettes and motion patterns):
-- prism cascade skylines, nebula ink tides, starlit bloom ribbons
-- chroma wind tunnels, velvet glitch tapestries, lumen ripple seas
-- aurora borealis waves, fractal tree growers, particle swarm dances
-- geometric shape morphers, color field blenders, noise flow visualizers
-- constellation connectors, rain drop simulators, firefly jar scenes
-- ocean wave generators, smoke trail painters, crystal growth animations
-- galaxy spiral spinners, mandala pattern drawers, sound wave visualizers
-- terrain heightmap explorers, voronoi cell mosaics, reaction diffusion patterns
-- gravity well simulators, magnetic field lines, electromagnetic wave pulses
-
-Include an HTML caption describing the piece."""),
-    
-    ("CATEGORY ASSIGNMENT (5/5): Quizzes / Learning Cards",
-     """CATEGORY ASSIGNMENT (5/5): You MUST build Quizzes / Learning Cards.
-     
-GAMIFY IT: Use semantic sections, progress bars, streaks, and confetti on correct answers.
-Example inspirations (remix freely):
-- campus lore lightning rounds (speed timer, flashcard style)
-- mythic creature deducers (visual clues reveal the answer)
-- flag identification quizzes (large colorful flags)
-- periodic table testers (highlighting grid)
-- movie quote guessers (kinetic typography)
-- historical event timelines (a draggable timeline slider)
-- geography boundary drawers, space fact verifiers
-- coding concept flash cards (syntax highlighting card flip)
-- personality type sorters (interactive sliders for traits)
-
-Prefer rich HTML layouts—no canvas—and keep everything accessible.
-AVOID: A simple list of radio buttons. Make it interactive."""),
+    (preset["heading"], _format_fast_assignment(preset)) for preset in _FAST_ASSIGNMENT_PRESETS
 ]
 
 _category_lock = threading.Lock()
@@ -1363,27 +1634,10 @@ def _next_category_note(user_key: Optional[str] = None) -> str:
     logging.info("llm category_assignment=%s index=%d key=%s", heading, idx + 1, key)
     return note
 
-# Removed Gemini provider support completely
-
-
 def _call_openrouter_for_page(brief: str, seed: int, category_note: str = "") -> Optional[Dict[str, Any]]:
     """Call OpenRouter Chat Completions and parse a page dict; None on failure."""
     temperature = TEMPERATURE
-
-    prompt = f"""
-=== MANDATORY CATEGORY ASSIGNMENT (DO NOT IGNORE) ===
-{category_note}
-You MUST build ONLY the category specified above. Do NOT build any other category.
-=======================================================
-
-You generate exactly one self-contained interactive web app per request.
-Output valid JSON only. No backticks. No explanations.
-
-Brief (may be empty → you choose a theme): {brief}
-Seed: {seed}
-
-{_PAGE_SHAPE_HINT}
-"""
+    prompt = _build_fast_page_prompt(brief, seed, category_note)
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
