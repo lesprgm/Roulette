@@ -70,6 +70,35 @@ def test_prefetch_entry_custom_flow(isolated_queue):
     assert full_doc["category"] == "unit-test"
 
 
+def test_prefetch_entry_increments_counter_on_serve(monkeypatch, isolated_queue):
+    pf = isolated_queue
+    assert pf.enqueue(_make_doc("Counter Test"))
+
+    from api import main as main_mod
+
+    counts = []
+    monkeypatch.setattr(main_mod.counter, "increment", lambda n=1: counts.append(n) or 1)
+
+    previews = client.get("/api/prefetch/previews").json()
+    item = next(p for p in previews if p.get("title") == "Counter Test")
+    resp_detail = client.get(f"/api/prefetch/{item['id']}")
+    assert resp_detail.status_code == 200
+    assert counts == [1]
+
+
+def test_premium_previews_endpoint_returns_premium_lane(isolated_queue):
+    pf = isolated_queue
+    assert pf.enqueue(_make_doc("Fast Preview"), lane="fast")
+    assert pf.enqueue(_make_doc("Premium Preview"), lane="premium")
+
+    response = client.get("/api/premium/previews")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert any(item.get("title") == "Premium Preview" for item in data)
+    assert all(item.get("title") != "Fast Preview" for item in data)
+
+
 def test_prefetch_entry_not_found(isolated_queue):
     response = client.get("/api/prefetch/file:does-not-exist.json")
     assert response.status_code == 404

@@ -90,16 +90,74 @@ def test_llm_generate_returns_error_on_call_failure(monkeypatch):
     assert isinstance(out, dict) and "error" in out
 
 
+def test_generate_page_prefers_gemini_fast_before_fallback(monkeypatch):
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
+    monkeypatch.setattr(
+        llm_client,
+        "_call_fast_gemini_page",
+        lambda brief, seed, user_key=None: {"kind": "full_page_html", "html": "<!doctype html><html><body>Gemini Fast</body></html>"},
+    )
+    monkeypatch.setattr(
+        llm_client,
+        "_call_openrouter_for_page",
+        lambda brief, seed, category_note=None: (_ for _ in ()).throw(AssertionError("fallback should not run")),
+    )
+
+    out = llm_client.generate_page("any", seed=123)
+    assert out.get("kind") == "full_page_html"
+    assert "Gemini Fast" in out.get("html", "")
+
+
+def test_generate_page_falls_back_after_gemini_fast_failure(monkeypatch):
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
+    monkeypatch.setattr(llm_client, "GEMINI_REVIEW_ENABLED", False)
+    monkeypatch.setattr(llm_client, "_call_fast_gemini_page", lambda brief, seed, user_key=None: None)
+    monkeypatch.setattr(
+        llm_client,
+        "_call_openrouter_for_page",
+        lambda brief, seed, category_note=None: {"kind": "full_page_html", "html": "<!doctype html><html><body>Fallback</body></html>"},
+    )
+
+    out = llm_client.generate_page("any", seed=55)
+    assert out.get("kind") == "full_page_html"
+    assert "Fallback" in out.get("html", "")
+
+
+def test_status_prefers_gemini_fast_when_available(monkeypatch):
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "gemini-key")
+    monkeypatch.setattr(llm_client, "OPENROUTER_API_KEY", "openrouter-key")
+    monkeypatch.setattr(llm_client, "GROQ_API_KEY", "groq-key")
+    monkeypatch.setattr(llm_client, "FORCE_OPENROUTER_ONLY", False)
+    monkeypatch.setattr(llm_client, "_gemini_review_active", lambda: False)
+    monkeypatch.setattr(llm_client, "_openrouter_review_active", lambda: False)
+
+    status = llm_client.status()
+    assert status["provider"] == "gemini"
+    assert status["using"] == "gemini-fast"
+    assert "openrouter" in status["fast_fallbacks"]
+
+
 def test_generate_endpoint_returns_llm_page_when_available(monkeypatch):
     # Force API layer to think LLM is available
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda: None)
     monkeypatch.setattr(main_mod.prefetch, "size", lambda: 0)
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>OK</body></html>"}
-    def mock_burst(brief, seed, user_key=None): yield page
-    monkeypatch.setattr(main_mod, "llm_generate_page_burst", mock_burst)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=False: page)
+    monkeypatch.setattr(
+        main_mod,
+        "llm_generate_page_burst",
+        lambda brief, seed, user_key=None: (_ for _ in ()).throw(AssertionError("queue-empty fast should use shared fast helper")),
+    )
 
     r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200

@@ -15,8 +15,10 @@ API_HEADERS = {"x-api-key": "demo_123"}
 @pytest.fixture()
 def isolated_prefetch(monkeypatch, tmp_path):
     pf_dir = tmp_path / "pfq"
+    premium_pf_dir = tmp_path / "premium-pfq"
     seen_file = tmp_path / "seen.json"
     monkeypatch.setenv("PREFETCH_DIR", str(pf_dir))
+    monkeypatch.setenv("PREMIUM_PREFETCH_DIR", str(premium_pf_dir))
     monkeypatch.setenv("DEDUPE_RECENT_FILE", str(seen_file))
     monkeypatch.setenv("PREFETCH_TOPUP_ENABLED", "0")
 
@@ -63,6 +65,24 @@ def test_prefetch_enqueue_dequeue_basic(isolated_prefetch):
     assert isinstance(out1, dict) and isinstance(out2, dict)
     assert out3 is None
     assert pf.size() == 0
+
+
+def test_premium_prefetch_lane_isolated_from_fast(isolated_prefetch):
+    pf = isolated_prefetch
+    fast_doc = _make_custom_doc("<div>fast</div>", skeleton_seed="fast")
+    premium_doc = _make_custom_doc("<div>premium</div>", skeleton_seed="premium")
+    assert pf.enqueue(fast_doc, lane="fast")
+    assert pf.enqueue(premium_doc, lane="premium")
+    assert pf.size("fast") == 1
+    assert pf.size("premium") == 1
+    out_fast = pf.dequeue("fast")
+    out_premium = pf.dequeue("premium")
+    assert isinstance(out_fast, dict)
+    assert isinstance(out_premium, dict)
+    assert "fast" in json.dumps(out_fast)
+    assert "premium" in json.dumps(out_premium)
+    assert pf.dequeue("fast") is None
+    assert pf.dequeue("premium") is None
 
 
 def test_prefetch_fill_enqueues_unique(monkeypatch, isolated_prefetch):
@@ -115,10 +135,14 @@ def test_generate_uses_prefetch_first(monkeypatch, isolated_prefetch):
     assert pf.enqueue(docA)
     assert pf.enqueue(docB)
 
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "openrouter", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     sentinel = _make_custom_doc("<div>LLM-Fallback</div>", skeleton_seed="sentinel")
-    def _burst_fallback(brief, seed, user_key=None): yield sentinel
-    monkeypatch.setattr(main_mod, "llm_generate_page_burst", _burst_fallback)
+    monkeypatch.setattr(main_mod, "llm_generate_page", lambda brief, seed, user_key=None, run_review=False: sentinel)
+    monkeypatch.setattr(
+        main_mod,
+        "llm_generate_page_burst",
+        lambda brief, seed, user_key=None: (_ for _ in ()).throw(AssertionError("queue-empty fast should use shared fast helper")),
+    )
     client = TestClient(app)
 
     r1 = client.post("/generate", json={"brief": "", "seed": 1}, headers=API_HEADERS)
@@ -220,6 +244,45 @@ def test_top_up_prefetch_parallel_workers(monkeypatch, isolated_prefetch):
     assert reviewed == 4
 
 
+def test_rank_prefetch_docs_prioritizes_richer_pages_and_diversity(monkeypatch):
+    from api import main as main_mod
+
+    rich_dom = {
+        "kind": "full_page_html",
+        "html": """
+        <!doctype html><html><body style="background:linear-gradient(#020617,#1d4ed8)">
+          <main id="ndw-content">
+            <section>Stage</section>
+            <section>Rail</section>
+            <img alt="" src="/static/design-kit/overlays/noise-grid.svg"/>
+            <script>requestAnimationFrame(()=>{});window.addEventListener('pointermove',()=>{});</script>
+          </main>
+        </body></html>
+        """,
+    }
+    rich_canvas = {
+        "kind": "full_page_html",
+        "html": """
+        <!doctype html><html><body style="background:radial-gradient(circle,#0f172a,#020617)">
+          <main id="ndw-content" style="min-height:100vh">
+            <canvas id="scene"></canvas>
+            <section>Scene controls</section>
+            <script>const canvas=document.getElementById('scene');requestAnimationFrame(()=>{});</script>
+          </main>
+        </body></html>
+        """,
+    }
+    centered_card = {
+        "kind": "full_page_html",
+        "html": "<!doctype html><html><body><main class='min-h-screen flex items-center justify-center'><section class='mx-auto max-w-md'>Card</section></main></body></html>",
+    }
+
+    ranked = main_mod._rank_prefetch_docs([centered_card, rich_dom, rich_canvas])
+    assert ranked[0] in [rich_dom, rich_canvas]
+    assert ranked[1] in [rich_dom, rich_canvas]
+    assert ranked[-1] == centered_card
+
+
 def test_prefetch_fill_requires_llm_without_offline(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod
@@ -254,11 +317,17 @@ def test_prefetch_status_endpoint(monkeypatch, isolated_prefetch):
 
     # Seed queue with one doc
     assert pf.enqueue(_make_custom_doc("<div>status-1</div>"))
+    assert pf.enqueue(_make_custom_doc("<div>premium-status</div>", skeleton_seed="premium-status"), lane="premium")
     client = TestClient(app)
     r = client.get("/prefetch/status")
     assert r.status_code == 200
     body = r.json()
     assert body.get("size") == 1
+    assert body.get("premium_size") == 1
+    assert body.get("premium_queue_enabled") is True
+    assert body.get("premium_low_water") >= 0
+    assert body.get("premium_fill_to") >= body.get("premium_low_water")
+    assert body.get("premium_batch_size") >= 1
     expected_dir = os.getenv("PREFETCH_DIR")
     assert isinstance(body.get("dir"), str) and body["dir"] == expected_dir
 
@@ -303,3 +372,52 @@ def test_generate_triggers_background_topup_when_low(monkeypatch, isolated_prefe
             break
         time.sleep(0.05)
     assert pf.size() >= target
+
+
+def test_premium_batch_serves_first_and_enqueues_leftovers(monkeypatch, isolated_prefetch):
+    from api import main as main_mod
+
+    pf = isolated_prefetch
+    monkeypatch.setattr(main_mod, "prefetch", pf)
+    monkeypatch.setattr(main_mod, "PREMIUM_BATCH_SIZE", 3)
+    monkeypatch.setattr(main_mod, "PREMIUM_FILL_TO", 10)
+
+    docs = [
+        _make_custom_doc("<div>premium-1</div>", skeleton_seed="premium-1"),
+        _make_custom_doc("<div>premium-2</div>", skeleton_seed="premium-2"),
+        _make_custom_doc("<div>premium-3</div>", skeleton_seed="premium-3"),
+    ]
+    doc_iter = iter(docs)
+    monkeypatch.setattr(main_mod, "llm_generate_page_premium", lambda brief, seed, user_key=None: next(doc_iter))
+    monkeypatch.setattr(main_mod, "_apply_compliance_batch", lambda items, context: items)
+
+    served = main_mod._serve_or_fill_premium_batch("", seed=9, user_key="student")
+
+    assert served == docs[0]
+    assert pf.size("premium") == 2
+
+
+def test_top_up_premium_queue_uses_premium_lane(monkeypatch, isolated_prefetch):
+    from api import main as main_mod
+
+    pf = isolated_prefetch
+    monkeypatch.setattr(main_mod, "prefetch", pf)
+    monkeypatch.setattr(main_mod, "PREMIUM_BATCH_SIZE", 2)
+    monkeypatch.setattr(main_mod, "PREMIUM_FILL_TO", 3)
+    monkeypatch.setattr(main_mod, "PREMIUM_TOPUP_ENABLED", True)
+    monkeypatch.setattr(main_mod, "PREMIUM_QUEUE_ENABLED", True)
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+
+    responses = iter([
+        _make_custom_doc("<div>premium-a</div>", skeleton_seed="premium-a"),
+        _make_custom_doc("<div>premium-b</div>", skeleton_seed="premium-b"),
+        _make_custom_doc("<div>premium-c</div>", skeleton_seed="premium-c"),
+        _make_custom_doc("<div>premium-d</div>", skeleton_seed="premium-d"),
+    ])
+    monkeypatch.setattr(main_mod, "llm_generate_page_premium", lambda brief, seed, user_key=None: next(responses))
+    monkeypatch.setattr(main_mod, "_apply_compliance_batch", lambda items, context: items)
+
+    main_mod._top_up_premium_queue("", min_fill=3)
+
+    assert pf.size("premium") == 3
+    assert pf.size("fast") == 0

@@ -1,7 +1,7 @@
 import json
 from fastapi.testclient import TestClient
 
-from api.main import app
+from api.main import app, GenerateRequest
 
 client = TestClient(app)
 
@@ -18,10 +18,14 @@ def test_llm_status_shape():
     r = client.get("/llm/status")
     assert r.status_code == 200
     body = r.json()
-    # Provider may be 'groq' or 'openrouter' depending on env
-    assert body.get("provider") in ("groq", "openrouter", None)
+    assert body.get("provider") in ("groq", "openrouter", "gemini", None)
     assert "using" in body
     assert "has_token" in body
+
+
+def test_generate_request_defaults_to_fast():
+    req = GenerateRequest()
+    assert req.quality == "fast"
 
 
 def test_validate_success():
@@ -146,3 +150,135 @@ def test_rate_limit(monkeypatch):
         assert "seconds" in j["message"].lower()
     finally:
         rl.MAX_REQUESTS = old_max
+
+
+def test_generate_endpoint_premium_bypasses_prefetch(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    queued = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Queue</body></html>"}
+    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: queued if lane == "premium" else None)
+    monkeypatch.setattr(main_mod.prefetch, "size", lambda lane=None: 2)
+    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("premium queue should serve first")))
+
+    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    assert r.status_code == 200
+    assert r.json() == queued
+
+
+def test_stream_endpoint_premium_emits_single_page(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Stream</body></html>"}
+    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
+    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: page)
+
+    r = client.post("/generate/stream", json={"brief": "", "seed": 12, "quality": "premium"}, headers=API_HEADERS)
+    assert r.status_code == 200
+    lines = [json.loads(ln) for ln in r.text.strip().splitlines() if ln.strip()]
+    assert lines[0]["event"] == "meta"
+    page_events = [line for line in lines if line.get("event") == "page"]
+    assert len(page_events) == 1
+    assert page_events[0]["data"] == page
+
+
+def test_stream_fast_prefetch_and_followups_increment_only_served_page(monkeypatch):
+    from api import main as main_mod
+
+    increments = []
+    queued = {"kind": "full_page_html", "html": "<!doctype html><html><body>Queued Fast</body></html>"}
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: queued if lane is None else None)
+    monkeypatch.setattr(main_mod.prefetch, "size", lambda lane=None: 2)
+    monkeypatch.setattr(main_mod.counter, "increment", lambda n=1: increments.append(n) or 1)
+
+    r = client.post("/generate/stream", json={"brief": "", "seed": 12, "quality": "fast"}, headers=API_HEADERS)
+    assert r.status_code == 200
+    lines = [json.loads(ln) for ln in r.text.strip().splitlines() if ln.strip()]
+    page_events = [line for line in lines if line.get("event") == "page"]
+    assert len(page_events) == 1
+    assert page_events[0]["data"] == queued
+    assert increments == [1]
+
+
+def test_generate_endpoint_premium_quota_exhaustion(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (False, 0, 9999999999))
+
+    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    assert r.status_code == 429
+    assert "premium" in r.json()["error"]
+
+
+def test_generate_endpoint_premium_empty_queue_batches(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
+    page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Batch First</body></html>"}
+    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: page)
+
+    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    assert r.status_code == 200
+    assert r.json() == page
+
+
+def test_generate_endpoint_premium_refunds_quota_on_failed_batch(monkeypatch):
+    from api import main as main_mod
+
+    refunds = []
+    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
+    monkeypatch.setattr(main_mod, "_refund_premium_quota", lambda key: refunds.append(key) or (True, 5, 9999999999))
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
+    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: {"error": "Premium generation failed"})
+
+    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["error"] == "Premium generation failed"
+    assert len(refunds) == 1
+
+
+def test_consume_premium_quota_uses_credit_before_limiter(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.setattr(main_mod.premium_credits, "consume", lambda key: True)
+    monkeypatch.setattr(main_mod, "_inspect_premium_quota", lambda key: (False, 0, 9999999999))
+    monkeypatch.setattr(
+        main_mod,
+        "_safe_rate_check",
+        lambda bucket, key: (_ for _ in ()).throw(AssertionError("limiter should not increment when a credit is available")),
+    )
+
+    allowed, remaining, reset_ts = main_mod._consume_premium_quota("demo_123")
+    assert allowed is True
+    assert remaining == 0
+    assert reset_ts == 9999999999
+
+
+def test_refund_premium_quota_grants_credit_when_backend_refund_missing(monkeypatch):
+    from api import main as main_mod
+
+    granted = []
+    monkeypatch.setattr(main_mod, "_rl_instance", None)
+    monkeypatch.setattr(main_mod, "_rl_mod", object())
+    monkeypatch.setattr(main_mod.premium_credits, "grant", lambda key, amount=1: granted.append((key, amount)) or amount)
+    monkeypatch.setattr(main_mod.premium_credits, "peek", lambda key: 1)
+    monkeypatch.setattr(main_mod, "_inspect_premium_quota", lambda key: (False, 0, 9999999999))
+
+    allowed, remaining, reset_ts = main_mod._refund_premium_quota("demo_123")
+    assert allowed is True
+    assert remaining == 1
+    assert reset_ts == 9999999999
+    assert granted == [("demo_123", 1)]

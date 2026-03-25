@@ -16,5 +16,12 @@ def test_index_includes_tunnel_scaffold():
     assert "landing-mode" in html
     assert "min-height: 10000vh" not in html
     assert 'type="importmap"' in html
-    assert "three@0.160.0" in html
-    assert "es-module-shims" in html
+    assert '"three": "/static/vendor/three.module.js"' in html
+
+
+def test_index_keeps_landing_configuration_free():
+    with open("templates/index.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    assert 'id="landingGenerate"' not in html
+    assert "Premium: slower, better art direction." not in html
+    assert 'id="landingFallback"' in html

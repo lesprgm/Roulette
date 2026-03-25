@@ -14,18 +14,15 @@ def reload_llm_client():
 def test_category_note_cycles_per_user(reload_llm_client):
     llm_client = reload_llm_client
     notes = []
-    for _ in range(7):  # cycle more than once
+    cycle_len = len(llm_client._CATEGORY_ROTATION_NOTES)
+    for _ in range(cycle_len + 2):
         notes.append(llm_client._next_category_note("user-a"))
-    assert len(notes) == 7
-    # First five notes should be unique and match order
-    assert notes[:5] == [n for _, n in llm_client._CATEGORY_ROTATION_NOTES]
-    # Sixth note should repeat first, seventh repeat second
-    assert notes[5] == notes[0]
-    assert notes[6] == notes[1]
-    # A different user should start from the first category again
+    assert len(notes) == cycle_len + 2
+    assert notes[:cycle_len] == [n for _, n in llm_client._CATEGORY_ROTATION_NOTES]
+    assert notes[cycle_len] == notes[0]
+    assert notes[cycle_len + 1] == notes[1]
     other_notes = [llm_client._next_category_note("user-b") for _ in range(2)]
     assert other_notes == [n for _, n in llm_client._CATEGORY_ROTATION_NOTES[:2]]
-    # Global fallback still works
     assert llm_client._next_category_note() in [n for _, n in llm_client._CATEGORY_ROTATION_NOTES]
 
 
