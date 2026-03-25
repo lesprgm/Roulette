@@ -2,6 +2,13 @@ const _w = window;
 const bodyEl = document.body;
 let mainEl = null;
 const SANDBOX_SCOPE = '#ndw-sandbox';
+const QUALITY_STORAGE_KEY = 'ndw_generation_quality';
+const QUERY_PARAMS = new URLSearchParams(window.location.search);
+const NDW_TEST_MODE = QUERY_PARAMS.has('ndw_test');
+const NDW_TEST_DEBUG_PREVIEWS = NDW_TEST_MODE && QUERY_PARAMS.has('ndw_test_debug');
+let generationQuality = loadGenerationQuality();
+let qualityDismissBound = false;
+let previewStatusBound = false;
 function resolveMainEl() {
     if (!mainEl) {
         const el = document.getElementById('appMain');
@@ -9,6 +16,269 @@ function resolveMainEl() {
             mainEl = el;
     }
     return mainEl;
+}
+function loadGenerationQuality() {
+    try {
+        const stored = window.localStorage.getItem(QUALITY_STORAGE_KEY);
+        return stored === 'premium' ? 'premium' : 'fast';
+    }
+    catch (_) {
+        return 'fast';
+    }
+}
+function getGenerationQuality() {
+    return generationQuality;
+}
+function setGenerationQuality(next) {
+    generationQuality = next;
+    try {
+        window.localStorage.setItem(QUALITY_STORAGE_KEY, next);
+    }
+    catch (_) {
+        // ignore storage errors
+    }
+    syncQualityControls();
+}
+function qualityModeLabel(mode) {
+    return mode === 'premium' ? 'Mode: Premium' : 'Mode: Fast';
+}
+function buildModeToggleMarkup() {
+    const activeMode = getGenerationQuality();
+    return `
+    <div class="ndw-mode-stack" data-ndw-quality-toggle="1">
+      <div class="ndw-mode-menu">
+        <button
+          type="button"
+          class="ndw-mode-chip"
+          data-ndw-mode-toggle="1"
+          aria-haspopup="dialog"
+          aria-expanded="false"
+        >
+          <span data-ndw-mode-label="1">${qualityModeLabel(activeMode)}</span>
+        </button>
+        <div
+          class="ndw-mode-popover"
+          data-ndw-mode-popover="1"
+          role="dialog"
+          aria-label="Generation mode"
+          hidden
+        >
+          <div class="ndw-mode-options" role="radiogroup" aria-label="Generation quality">
+            <button
+              type="button"
+              class="ndw-mode-option${activeMode === 'fast' ? ' is-active' : ''}"
+              data-quality-mode="fast"
+              role="radio"
+              aria-checked="${activeMode === 'fast' ? 'true' : 'false'}"
+            >
+              <span>
+                <span class="ndw-mode-option-label">Fast</span>
+                <span class="ndw-mode-option-note">Instant queue-friendly regenerate</span>
+              </span>
+              <span class="ndw-mode-option-mark" data-ndw-mode-mark="fast">${activeMode === 'fast' ? 'Selected' : ''}</span>
+            </button>
+            <button
+              type="button"
+              class="ndw-mode-option${activeMode === 'premium' ? ' is-active' : ''}"
+              data-quality-mode="premium"
+              role="radio"
+              aria-checked="${activeMode === 'premium' ? 'true' : 'false'}"
+            >
+              <span>
+                <span class="ndw-mode-option-label">Premium</span>
+                <span class="ndw-mode-option-note">More art direction, slower response</span>
+              </span>
+              <span class="ndw-mode-option-mark" data-ndw-mode-mark="premium">${activeMode === 'premium' ? 'Selected' : ''}</span>
+            </button>
+          </div>
+          <p class="ndw-mode-copy">Premium is slower and more art directed.</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function buildFloatingGenerateMarkup() {
+    return `
+    <div class="ndw-button button" aria-label="Generate">
+      <button id="floatingGenerate" name="checkbox" type="button" aria-label="Generate"></button>
+      <span></span><span></span><span></span><span></span>
+    </div>
+  `;
+}
+function setModePopoverOpen(toggle, open) {
+    const trigger = toggle.querySelector('[data-ndw-mode-toggle="1"]');
+    const popover = toggle.querySelector('[data-ndw-mode-popover="1"]');
+    if (!trigger || !popover)
+        return;
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    popover.hidden = !open;
+}
+function closeQualityPopovers(except) {
+    const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]'));
+    toggles.forEach(toggle => {
+        if (except && toggle === except)
+            return;
+        setModePopoverOpen(toggle, false);
+    });
+}
+function bindQualityControls(root = document) {
+    const toggles = Array.from(root.querySelectorAll('[data-ndw-quality-toggle="1"]'));
+    toggles.forEach(toggle => {
+        if (toggle.__ndwBound)
+            return;
+        toggle.__ndwBound = true;
+        const modeToggle = toggle.querySelector('[data-ndw-mode-toggle="1"]');
+        const popover = toggle.querySelector('[data-ndw-mode-popover="1"]');
+        const buttons = Array.from(toggle.querySelectorAll('[data-quality-mode]'));
+        modeToggle?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const isOpen = modeToggle.getAttribute('aria-expanded') === 'true';
+            closeQualityPopovers(toggle);
+            setModePopoverOpen(toggle, !isOpen);
+        });
+        popover?.addEventListener('click', (event) => {
+            event.stopPropagation();
+        });
+        buttons.forEach(button => {
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const next = button.dataset.qualityMode === 'premium' ? 'premium' : 'fast';
+                setGenerationQuality(next);
+                setModePopoverOpen(toggle, false);
+            });
+        });
+    });
+    if (!qualityDismissBound) {
+        qualityDismissBound = true;
+        document.addEventListener('click', (event) => {
+            const target = event.target;
+            const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]'));
+            toggles.forEach(toggle => {
+                if (target && toggle.contains(target))
+                    return;
+                setModePopoverOpen(toggle, false);
+            });
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                closeQualityPopovers();
+            }
+        });
+        window.addEventListener('storage', (event) => {
+            if (event.key !== QUALITY_STORAGE_KEY)
+                return;
+            generationQuality = event.newValue === 'premium' ? 'premium' : 'fast';
+            syncQualityControls();
+        });
+    }
+    syncQualityControls();
+}
+function syncQualityControls() {
+    const next = getGenerationQuality();
+    const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]'));
+    toggles.forEach(toggle => {
+        const label = toggle.querySelector('[data-ndw-mode-label="1"]');
+        if (label)
+            label.textContent = qualityModeLabel(next);
+        const buttons = Array.from(toggle.querySelectorAll('[data-quality-mode]'));
+        buttons.forEach(button => {
+            const active = button.dataset.qualityMode === next;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-checked', active ? 'true' : 'false');
+            const mark = button.querySelector(`[data-ndw-mode-mark="${button.dataset.qualityMode || ''}"]`);
+            if (mark) {
+                mark.textContent = active ? 'Selected' : '';
+            }
+        });
+    });
+}
+function setLandingFallbackVisible(visible) {
+    const fallback = document.getElementById('landingFallback');
+    if (!fallback)
+        return;
+    fallback.hidden = !visible;
+    fallback.setAttribute('aria-hidden', visible ? 'false' : 'true');
+}
+function renderTestPreviewDock(previews) {
+    const dock = document.getElementById('ndwTestPreviewDock');
+    if (!dock)
+        return;
+    if (!NDW_TEST_DEBUG_PREVIEWS) {
+        dock.hidden = true;
+        dock.setAttribute('aria-hidden', 'true');
+        dock.innerHTML = '';
+        return;
+    }
+    const livePreviews = previews.filter(preview => !String(preview.id || '').startsWith('placeholder:')).slice(0, 4);
+    if (!livePreviews.length) {
+        dock.hidden = true;
+        dock.setAttribute('aria-hidden', 'true');
+        dock.innerHTML = '';
+        return;
+    }
+    dock.hidden = false;
+    dock.setAttribute('aria-hidden', 'false');
+    dock.innerHTML = livePreviews
+        .map(preview => `<button type="button" data-test-preview-id="${preview.id}">${preview.title}</button>`)
+        .join('');
+}
+function bindPreviewStatusEvents() {
+    if (previewStatusBound)
+        return;
+    previewStatusBound = true;
+    const recoveryBtn = document.getElementById('landingRecoveryBtn');
+    if (recoveryBtn && !recoveryBtn.__ndwBound) {
+        recoveryBtn.addEventListener('click', generateNew);
+        recoveryBtn.__ndwBound = true;
+    }
+    const dock = document.getElementById('ndwTestPreviewDock');
+    if (dock && !dock.__ndwBound) {
+        dock.addEventListener('click', (event) => {
+            const target = event.target;
+            const button = target?.closest('[data-test-preview-id]');
+            if (!button)
+                return;
+            const id = button.dataset.testPreviewId;
+            if (id) {
+                void loadPrefetchSite(id);
+            }
+        });
+        dock.__ndwBound = true;
+    }
+    window.addEventListener('ndw:preview-status', (event) => {
+        const detail = event.detail || {};
+        const previews = Array.isArray(detail.previews) ? detail.previews : [];
+        setLandingFallbackVisible(Boolean(document.body.classList.contains('landing-mode') && !detail.hasLivePreviews));
+        renderTestPreviewDock(previews);
+    });
+}
+async function primeTestPreviewStatus() {
+    try {
+        const resp = await fetch('/api/prefetch/previews?limit=6', { cache: 'no-store' });
+        if (!resp.ok)
+            throw new Error(`preview status failed: ${resp.status}`);
+        const previews = await resp.json();
+        const livePreviews = Array.isArray(previews) ? previews : [];
+        window.dispatchEvent(new CustomEvent('ndw:preview-status', {
+            detail: {
+                hasLivePreviews: livePreviews.length > 0,
+                count: livePreviews.length,
+                previews: livePreviews,
+            },
+        }));
+    }
+    catch (error) {
+        console.warn('[ndw] test preview priming failed', error);
+        window.dispatchEvent(new CustomEvent('ndw:preview-status', {
+            detail: {
+                hasLivePreviews: false,
+                count: 0,
+                previews: [],
+            },
+        }));
+    }
 }
 function parseRgb(color) {
     const match = color.match(/rgba?\(([^)]+)\)/);
@@ -120,6 +390,48 @@ export function __ndwTestResetTransitions() {
     hasRenderedOnce = false;
     transitionInFlight = false;
 }
+export function __ndwTestGetGenerationQuality() {
+    return getGenerationQuality();
+}
+export function __ndwTestSetGenerationQuality(next) {
+    setGenerationQuality(next);
+}
+export function __ndwTestSetBodyMode(mode) {
+    document.body.classList.toggle('landing-mode', mode === 'landing');
+    document.body.classList.toggle('generated-mode', mode === 'generated');
+}
+export function __ndwTestEnsureFloatingGenerate() {
+    ensureFloatingGenerate();
+}
+export async function __ndwTestRenderEvalDoc(doc, options = {}) {
+    if (!NDW_TEST_MODE) {
+        throw new Error('Eval render hook is only available in ndw_test mode.');
+    }
+    if (options.hideChrome === false) {
+        document.body.classList.remove('ndw-eval-hide-chrome');
+    }
+    else {
+        document.body.classList.add('ndw-eval-hide-chrome');
+    }
+    updateJsonOut(doc);
+    hideHeroOverlay();
+    hideLandingElements();
+    await enterSite(doc);
+    await sleep(Math.max(0, Number(options.settleMs ?? 0)));
+    const hero = document.querySelector('.hero-wrap');
+    const heroHidden = !hero || getComputedStyle(hero).display === 'none' || hero.classList.contains('is-hidden');
+    return {
+        ok: !Boolean(doc?.error),
+        title: document.title,
+        generatedMode: document.body.classList.contains('generated-mode'),
+        heroHidden,
+    };
+}
+function installEvalHook() {
+    if (!NDW_TEST_MODE)
+        return;
+    _w.__ndwEvalRenderDoc = (doc, options) => __ndwTestRenderEvalDoc(doc, options || {});
+}
 function ensureTransitionStyles() {
     if (document.getElementById('ndw-transition-styles'))
         return;
@@ -192,23 +504,40 @@ function getAccentColor() {
     }
     return '#facc15';
 }
+function cleanupCurrentWorld() {
+    if (_w.NDW?._cleanup) {
+        try {
+            _w.NDW._cleanup();
+        }
+        catch (err) {
+            console.warn('[ndw] cleanup error:', err);
+        }
+    }
+    document.querySelectorAll('script[data-ndw-world-script="1"]').forEach(el => el.remove());
+    document.querySelectorAll('style[data-ndw-sandbox="1"]').forEach(el => el.remove());
+    document.getElementById('ndwSnippetError')?.remove();
+}
 async function runTransition(renderFn) {
     const target = resolveMainEl();
     if (!target) {
+        cleanupCurrentWorld();
         renderFn();
         hasRenderedOnce = true;
         return;
     }
     if (transitionInFlight) {
+        cleanupCurrentWorld();
         renderFn();
         return;
     }
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        cleanupCurrentWorld();
         renderFn();
         hasRenderedOnce = true;
         return;
     }
     if (!hasRenderedOnce) {
+        cleanupCurrentWorld();
         renderFn();
         hasRenderedOnce = true;
         return;
@@ -228,6 +557,7 @@ async function runTransition(renderFn) {
     target.style.transform = 'scale(1)';
     target.style.filter = 'none';
     try {
+        cleanupCurrentWorld();
         renderFn();
     }
     catch (err) {
@@ -324,7 +654,14 @@ function ensureControlStyles() {
 #jsonOverlay button{background:rgba(15,23,42,0.92);color:#f8fafc;padding:6px 10px;border-radius:6px;border:1px solid rgba(148,163,184,0.4);font:500 12px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 4px 12px rgba(15,23,42,0.35);cursor:pointer;}
 #jsonOverlay button:hover{background:rgba(30,41,59,0.95);}
 #jsonPanel{background:#ffffff;border:1px solid rgba(148,163,184,0.35);border-radius:10px;box-shadow:0 20px 40px rgba(15,23,42,0.2);}
-#floatingGenerateWrap{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:9999;}
+#floatingGenerateWrap{position:fixed !important;left:50% !important;right:auto !important;bottom:24px !important;top:auto !important;transform:translateX(-50%) !important;z-index:9999 !important;width:auto !important;}
+body.ndw-eval-hide-chrome #jsonOverlay,
+body.ndw-eval-hide-chrome #floatingGenerateWrap,
+body.ndw-eval-hide-chrome #sitesCounterFloating,
+body.ndw-eval-hide-chrome #landingFallback,
+body.ndw-eval-hide-chrome #ndwTestPreviewDock,
+body.ndw-eval-hide-chrome .hero-wrap,
+body.ndw-eval-hide-chrome #scrollCue{display:none !important;}
 `;
     document.head.appendChild(style);
 }
@@ -337,6 +674,8 @@ export function initApp() {
     console.debug('[ndw] app init; readyState=', document.readyState);
     ensureControlStyles();
     ensureJsonOverlay();
+    installEvalHook();
+    bindPreviewStatusEvents();
     ensureFloatingGenerate();
     ensureSitesCounterOverlay();
     refreshSitesCounter();
@@ -654,8 +993,8 @@ export function renderDocForPreview(doc) {
     }
     void enterSite(doc);
 }
-async function callGenerate(brief, seed) {
-    const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed }) });
+async function callGenerate(brief, seed, quality) {
+    const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed, quality }) });
     if (!resp.ok) {
         const text = await resp.text();
         return { error: `Generate failed (${resp.status}): ${text || resp.statusText}` };
@@ -663,9 +1002,12 @@ async function callGenerate(brief, seed) {
     return resp.json();
 }
 function setGenerating(is) {
-    const coreBtns = [document.getElementById('landingGenerate'), document.getElementById('floatingGenerate')].filter(Boolean);
-    const inlineBtns = Array.from(document.querySelectorAll('[data-gen-button="1"]'));
-    [...coreBtns, ...inlineBtns].forEach(b => {
+    const controls = [
+        document.getElementById('floatingGenerate'),
+        document.getElementById('landingRecoveryBtn'),
+        ...Array.from(document.querySelectorAll('[data-gen-button="1"], [data-ndw-mode-toggle="1"], [data-quality-mode]')),
+    ].filter(Boolean);
+    controls.forEach(b => {
         if (is) {
             b.setAttribute('aria-busy', 'true');
             b.classList.add('opacity-50', 'pointer-events-none');
@@ -715,6 +1057,8 @@ export function hideLandingElements() {
         if (el)
             el.remove();
     });
+    setLandingFallbackVisible(false);
+    renderTestPreviewDock([]);
     const tunnelContainer = document.getElementById('tunnel-container');
     if (tunnelContainer)
         tunnelContainer.style.display = 'none';
@@ -738,6 +1082,11 @@ function setupLandingCues() {
     if (!hint && !cue)
         return;
     _w.__ndwLandingCues = true;
+    if (NDW_TEST_MODE) {
+        hint?.classList.remove('is-hidden');
+        cue?.classList.remove('is-hidden');
+        return;
+    }
     let hintTimer;
     let cueTimer;
     const hideAll = () => {
@@ -779,21 +1128,13 @@ async function generateNew(e) {
     if (e)
         e.preventDefault();
     const seed = Math.floor(Math.random() * 1e9);
+    const quality = document.body.classList.contains('landing-mode') ? 'fast' : getGenerationQuality();
     const jsonOut = document.getElementById('jsonOut');
     if (jsonOut)
         jsonOut.textContent = '';
     _w.__ndwGenerating = true;
     _w.__ndwTimedOut = false;
     setGenerating(true);
-    // Cleanup previous site's resources before rendering new content
-    if (_w.NDW?._cleanup) {
-        try {
-            _w.NDW._cleanup();
-        }
-        catch (e) {
-            console.warn('[ndw] cleanup error:', e);
-        }
-    }
     if (mainEl)
         mainEl.innerHTML = '';
     await closeShutter();
@@ -807,7 +1148,7 @@ async function generateNew(e) {
     const startTime = Date.now();
     const MIN_DELAY = 3000; // 3s optimistic opening fallback
     const PATIENCE_DELAY = 5000; // 5s: Update spinner text
-    const DEADMAN_DELAY = 80000; // 80s: Give up
+    const DEADMAN_DELAY = 112000; // 112s: Give up
     let deadman;
     let optimisticTimer;
     let patienceTimer;
@@ -912,10 +1253,11 @@ async function generateNew(e) {
         }, DEADMAN_DELAY);
     };
     try {
+        showSpinner(quality === 'premium' ? 'Art directing your next world…' : 'Generating…');
         const resp = await fetch('/generate/stream', {
             method: 'POST',
             headers: buildAuthHeaders(),
-            body: JSON.stringify({ brief: '', seed }),
+            body: JSON.stringify({ brief: '', seed, quality }),
             signal
         });
         if (!resp.ok)
@@ -985,7 +1327,7 @@ async function generateNew(e) {
         console.error('[ndw] stream error', err);
         if (!_w.__ndwTimedOut && !firstPageSeen) {
             try {
-                const fallback = await callGenerate('', seed);
+                const fallback = await callGenerate('', seed, quality);
                 if (fallback && !fallback.error) {
                     await renderFirstPage(fallback);
                 }
@@ -1038,40 +1380,46 @@ function ensureFloatingGenerate() {
     console.debug('[ndw] ensureFloatingGenerate called');
     if (document.body.classList.contains('landing-mode')) {
         const existingWrap = document.getElementById('floatingGenerateWrap');
+        const existingMode = document.getElementById('generationModeWrap');
         if (existingWrap) {
             try {
                 existingWrap.remove();
             }
             catch (_) { }
         }
-        return;
-    }
-    const existing = document.getElementById('floatingGenerateWrap');
-    if (existing)
-        existing.remove();
-    else {
-        const oldBtn = document.getElementById('floatingGenerate');
-        if (oldBtn) {
-            const parent = oldBtn.closest('#floatingGenerateWrap') || oldBtn.parentElement || oldBtn;
+        if (existingMode) {
             try {
-                parent.remove();
+                existingMode.remove();
             }
             catch (_) { }
         }
+        return;
     }
-    const wrap = document.createElement('div');
-    wrap.id = 'floatingGenerateWrap';
-    wrap.className = 'fixed left-1/2 -translate-x-1/2 bottom-6 z-50';
-    wrap.innerHTML = `<div class="ndw-button button" aria-label="Generate"><button id="floatingGenerate" name="checkbox" type="button" aria-label="Generate"></button><span></span><span></span><span></span><span></span></div>`;
-    document.body.appendChild(wrap);
+    document.getElementById('floatingGenerateWrap')?.remove();
+    document.getElementById('generationModeWrap')?.remove();
+    ensureSitesCounterOverlay();
+    const generateWrap = document.createElement('div');
+    generateWrap.id = 'floatingGenerateWrap';
+    generateWrap.innerHTML = buildFloatingGenerateMarkup();
+    document.body.appendChild(generateWrap);
+    const modeWrap = document.createElement('div');
+    modeWrap.id = 'generationModeWrap';
+    modeWrap.innerHTML = buildModeToggleMarkup();
+    const modeMount = document.getElementById('sitesCounterModeMount');
+    if (modeMount) {
+        modeMount.appendChild(modeWrap);
+    }
+    else {
+        document.body.appendChild(modeWrap);
+    }
     document.getElementById('floatingGenerate')?.addEventListener('click', generateNew);
+    bindQualityControls(modeWrap);
 }
-import { InfiniteTunnel } from './tunnel.js';
-// ... existing code ...
 let tunnel = null;
 async function initTunnel() {
     const container = document.getElementById('tunnel-container');
     if (container && !tunnel) {
+        const { InfiniteTunnel } = await import('./tunnel.js');
         tunnel = new InfiniteTunnel(container);
         tunnel.setOnCardClick((id) => loadPrefetchSite(id));
         await tunnel.init();
@@ -1135,6 +1483,7 @@ function hideHeroOverlay() {
     if (!hero)
         return;
     hero.classList.add('is-hidden');
+    setLandingFallbackVisible(false);
     document.body.classList.remove('landing-mode');
     document.body.classList.add('generated-mode');
 }
@@ -1147,14 +1496,15 @@ function showHeroOverlay() {
     document.body.classList.remove('generated-mode');
 }
 function renderLanding() {
-    const btn = document.getElementById('landingGenerate');
-    if (btn && !btn.__ndwBound) {
-        btn.addEventListener('click', generateNew);
-        btn.__ndwBound = true;
-        console.debug('[ndw] landingGenerate bound');
+    setLandingFallbackVisible(false);
+    renderTestPreviewDock([]);
+    if (NDW_TEST_MODE) {
+        void primeTestPreviewStatus();
     }
-    // Initialize 3D Tunnel
-    initTunnel().catch(e => console.error('[ndw] Tunnel init failed', e));
+    else {
+        // Initialize 3D Tunnel
+        initTunnel().catch(e => console.error('[ndw] Tunnel init failed', e));
+    }
     lockHeroOverlay();
     showHeroOverlay();
     setupLandingCues();
@@ -1164,21 +1514,24 @@ function ensureSitesCounterOverlay() {
         return;
     const wrap = document.createElement('div');
     wrap.id = 'sitesCounterFloating';
-    wrap.className = 'fixed right-3 top-16 z-50';
-    wrap.innerHTML = `<div id="sitesCounterBadge" class="px-3 py-2 rounded bg-slate-900/80 text-white text-xs shadow border border-slate-700/50">Sites generated: 0</div>`;
+    wrap.className = 'ndw-sites-panel';
+    wrap.innerHTML = `
+    <div id="sitesCounterBadge" class="ndw-sites-badge">Sites generated: 0</div>
+    <div id="sitesCounterModeMount" class="ndw-sites-mode-mount"></div>
+  `;
     document.body.appendChild(wrap);
 }
 async function refreshSitesCounter() {
     try {
-        const el = document.getElementById('sitesCounter');
         const badge = document.getElementById('sitesCounterBadge');
-        const resp = await fetch('/metrics/total', { headers: { accept: 'application/json' } });
+        const resp = await fetch(`/metrics/total?ts=${Date.now()}`, {
+            headers: { accept: 'application/json' },
+            cache: 'no-store',
+        });
         if (!resp.ok)
             throw new Error(String(resp.status));
         const data = await resp.json();
         const n = typeof data?.total === 'number' ? data.total : 0;
-        if (el)
-            el.textContent = `Sites generated: ${n}`;
         if (badge)
             badge.textContent = `Sites generated: ${n}`;
     }
@@ -1245,6 +1598,7 @@ function postRenderCommon(options) {
     ensureFloatingGenerate();
     ensureSitesCounterOverlay();
     adaptGenerateButtons();
+    bindQualityControls();
     ensureScrollableBody();
     upsertTitleOverlay(undefined);
     const skipReadable = options?.skipReadable ?? document.body.classList.contains('generated-mode');
@@ -1261,7 +1615,7 @@ function renderFullPage(html) {
         applyGeneratedStyles(doc, true);
         document.body.style.cssText = '';
         // Do NOT wipe document.body.className completely to protect host classes like ndw-base
-        const hostClasses = ['ndw-base', 'generated-mode'];
+        const hostClasses = ['ndw-base', 'generated-mode', 'ndw-eval-hide-chrome'];
         const currentClasses = Array.from(document.body.classList);
         const toKeep = currentClasses.filter(c => hostClasses.includes(c));
         document.body.className = toKeep.join(' ');
@@ -1294,7 +1648,7 @@ function renderFullPage(html) {
 function renderInline(html) {
     try {
         const doc = parseHtmlDocument(html);
-        applyGeneratedStyles(doc, false);
+        applyGeneratedStyles(doc, true);
         const target = resolveMainEl();
         populateTargetFromDoc(doc, target);
         executeScriptsFromDoc(doc, target);
@@ -1411,10 +1765,11 @@ function renderNdwSnippet(snippet) {
             const execSnippet = () => {
                 const sc = document.createElement('script');
                 sc.type = 'text/javascript';
+                sc.setAttribute('data-ndw-world-script', '1');
                 sc.textContent = `(function(){try
 {${rawJs}
 }catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
-                document.body.appendChild(sc);
+                (document.getElementById('ndw-sandbox') || document.body).appendChild(sc);
             };
             if (rawJs && containsDomReadyHook(rawJs)) {
                 runWithPatchedDomReady(execSnippet);
@@ -1492,7 +1847,11 @@ function showSpinner(msg) { const el = ensureSpinner(); const m = document.getEl
     m.textContent = msg; el.classList.remove('hidden'); }
 function hideSpinner() { ensureSpinner().classList.add('hidden'); }
 const _origEnterSite = enterSite;
-function enterSiteWithCounter(doc) { _origEnterSite(doc); if (doc && !doc.error)
-    refreshSitesCounter(); }
+async function enterSiteWithCounter(doc) {
+    await _origEnterSite(doc);
+    if (doc && !doc.error) {
+        await refreshSitesCounter();
+    }
+}
 // @ts-ignore
 enterSite = enterSiteWithCounter;

@@ -3,6 +3,7 @@ export interface NdwTime { start:number; now:number; elapsed:number; }
 export interface NdwCanvas extends HTMLCanvasElement { ctx:CanvasRenderingContext2D; dpr:number; clear():void; }
 export interface NdwCanvasOpts { fullScreen?:boolean; width?:number; height?:number; parent?:string|HTMLElement; dpr?:number; }
 export type NdwLoopFn = (dt:number)=>void;
+export type NdwCleanupFn = () => void;
 
 export interface NdwRuntime {
   state: Record<string,any>;
@@ -23,6 +24,7 @@ export interface NdwRuntime {
   onKey(fn:(e:KeyboardEvent)=>void):void;
   onPointer(fn:(p:NdwPointer)=>void):void;
   onResize(fn:()=>void):void;
+  registerCleanup(fn:NdwCleanupFn):void;
   isDown(code:string):boolean;
   isPressed(code:string):boolean;
   makeCanvas(opts?:NdwCanvasOpts):NdwCanvas;
@@ -49,6 +51,7 @@ export interface NdwRuntime {
     _keyHandlers: [] as ((e:KeyboardEvent)=>void)[],
     _ptrHandlers: [] as ((p:NdwPointer)=>void)[],
     _resizeHandlers: [] as (()=>void)[],
+    _cleanupFns: [] as NdwCleanupFn[],
     _canvases: new Set<HTMLCanvasElement>(),
     _keys: new Set<string>(),
     _prevKeys: new Set<string>(),
@@ -145,6 +148,11 @@ export interface NdwRuntime {
     },
     // Resource Management: Call this before swapping sites
     _cleanup(){
+      const cleanupFns = NDW._cleanupFns.slice();
+      NDW._cleanupFns = [];
+      for (const fn of cleanupFns) {
+        try { fn(); } catch (err) { console.warn('[NDW] cleanup callback error:', err); }
+      }
       // Stop the loop
       if (NDW._frameId) { cancelAnimationFrame(NDW._frameId); NDW._frameId = 0; }
       NDW._tick = null;
@@ -184,6 +192,7 @@ export interface NdwRuntime {
     onKey(fn:(e:KeyboardEvent)=>void){ NDW._ensureInit(); NDW._keyHandlers.push(fn); },
     onPointer(fn:(p:NdwPointer)=>void){ NDW._ensureInit(); NDW._ptrHandlers.push(fn); },
     onResize(fn:()=>void){ NDW._ensureInit(); NDW._resizeHandlers.push(fn); },
+    registerCleanup(fn:NdwCleanupFn){ if (typeof fn === 'function') NDW._cleanupFns.push(fn); },
     isDown(key:string){ NDW._ensureInit(); return NDW._keys.has(key); },
     isPressed(key:string){ NDW._ensureInit(); return NDW._keys.has(key) && !NDW._prevKeys.has(key); },
     makeCanvas(opts?:NdwCanvasOpts){

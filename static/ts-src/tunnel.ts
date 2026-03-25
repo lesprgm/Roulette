@@ -42,6 +42,9 @@ const FOV_MIN = 66;
 const FOV_MAX = 76;
 const FOV_LERP = 0.08;
 const FOV_VELOCITY_SCALE = 0.08;
+const NDW_TEST_MODE =
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('ndw_test');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -99,6 +102,7 @@ export class InfiniteTunnel {
   private fovVelocity = 0;
   private rngSeedOffset = 0x9e3779b9;
   private assignmentsBySegmentIndex = new Map<number, Record<string, string>>();
+  private readonly testMode = NDW_TEST_MODE;
   private placeholderPreviews: QueuePreview[] = [
     { id: 'placeholder:0', title: 'Queue warming...', category: 'placeholder', vibe: 'warming', created_at: 0 },
     { id: 'placeholder:1', title: 'Generating previews...', category: 'placeholder', vibe: 'warming', created_at: 0 },
@@ -163,11 +167,18 @@ export class InfiniteTunnel {
 
     // Kick off preview fetch in the background (don't block first paint).
     void this.fetchPreviews().then((changed) => {
-      if (changed) this.refreshCards();
+      if (changed) {
+        this.refreshCards();
+        if (this.testMode) {
+          this.renderer.render(this.scene, this.camera);
+        }
+      }
     });
 
     // Start preview refresh loop
-    this.startRefreshLoop();
+    if (!this.testMode) {
+      this.startRefreshLoop();
+    }
 
     // Start render loop
     this.animate();
@@ -182,6 +193,7 @@ export class InfiniteTunnel {
           const raw = next as QueuePreview[];
           const usePlaceholders = raw.length === 0;
           const previews = usePlaceholders ? this.placeholderPreviews : raw;
+          this.dispatchPreviewStatus(previews, !usePlaceholders);
           const ids = previews.map((item: any) => String(item?.id ?? '')).filter(Boolean);
           const sortedIds = [...ids].sort().join('|');
           const fingerprint = usePlaceholders
@@ -201,7 +213,20 @@ export class InfiniteTunnel {
     } catch (e) {
       console.warn('[Tunnel] Failed to fetch previews:', e);
     }
+    this.dispatchPreviewStatus(this.placeholderPreviews, false);
     return false;
+  }
+
+  private dispatchPreviewStatus(previews: QueuePreview[], hasLivePreviews: boolean): void {
+    window.dispatchEvent(
+      new CustomEvent('ndw:preview-status', {
+        detail: {
+          hasLivePreviews,
+          count: previews.length,
+          previews,
+        },
+      }),
+    );
   }
 
   private refreshCards(): void {
@@ -326,7 +351,7 @@ export class InfiniteTunnel {
   private populateCards(segment: THREE.Group, segmentIndex: number, resetAssignments = false): void {
     // Cleanup old cards
     const toRemove: THREE.Object3D[] = [];
-    segment.traverse((child) => { if (child.name === 'card') toRemove.push(child); });
+    segment.traverse((child: THREE.Object3D) => { if (child.name === 'card') toRemove.push(child); });
     toRemove.forEach(obj => {
       segment.remove(obj);
       if ((obj as THREE.Mesh).geometry) (obj as THREE.Mesh).geometry.dispose();
@@ -539,7 +564,9 @@ export class InfiniteTunnel {
   // ───────────────────────────────────────────────────────────────────────────
 
   private animate = (): void => {
-    this.animationId = requestAnimationFrame(this.animate);
+    if (!this.testMode) {
+      this.animationId = requestAnimationFrame(this.animate);
+    }
     const now = performance.now() * 0.001;
 
     // Smooth camera movement based on scroll

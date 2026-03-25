@@ -53,6 +53,17 @@ describe('NDW runtime', () => {
     expect(NDW._eventListeners.length).toBe(0);
   });
 
+  it('runs registered cleanup callbacks once', () => {
+    const NDW = getNDW();
+    const cleanup = vi.fn();
+
+    NDW.registerCleanup(cleanup);
+    NDW._cleanup();
+    NDW._cleanup();
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
   it('loop cancels any prior frame', () => {
     const NDW = getNDW();
     let nextId = 1;

@@ -9,6 +9,7 @@
         _keyHandlers: [],
         _ptrHandlers: [],
         _resizeHandlers: [],
+        _cleanupFns: [],
         _canvases: new Set(),
         _keys: new Set(),
         _prevKeys: new Set(),
@@ -127,6 +128,16 @@
         },
         // Resource Management: Call this before swapping sites
         _cleanup() {
+            const cleanupFns = NDW._cleanupFns.slice();
+            NDW._cleanupFns = [];
+            for (const fn of cleanupFns) {
+                try {
+                    fn();
+                }
+                catch (err) {
+                    console.warn('[NDW] cleanup callback error:', err);
+                }
+            }
             // Stop the loop
             if (NDW._frameId) {
                 cancelAnimationFrame(NDW._frameId);
@@ -184,6 +195,8 @@
         onKey(fn) { NDW._ensureInit(); NDW._keyHandlers.push(fn); },
         onPointer(fn) { NDW._ensureInit(); NDW._ptrHandlers.push(fn); },
         onResize(fn) { NDW._ensureInit(); NDW._resizeHandlers.push(fn); },
+        registerCleanup(fn) { if (typeof fn === 'function')
+            NDW._cleanupFns.push(fn); },
         isDown(key) { NDW._ensureInit(); return NDW._keys.has(key); },
         isPressed(key) { NDW._ensureInit(); return NDW._keys.has(key) && !NDW._prevKeys.has(key); },
         makeCanvas(opts) {

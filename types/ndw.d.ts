@@ -34,3 +34,7 @@ interface NdwRuntime {
 interface Window { NDW: NdwRuntime; }
 
 declare var NDW: NdwRuntime;
+
+declare module '/static/vendor/three.module.js' {
+  export * from 'three';
+}
