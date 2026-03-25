@@ -1,0 +1,27 @@
+:root {
+  --ndw-font-display-orbit: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --ndw-font-display-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --ndw-font-display-grotesk: "Franklin Gothic Medium", "Arial Narrow", "Trebuchet MS", Arial, sans-serif;
+  --ndw-font-body-clean: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  --ndw-font-body-soft: "Gill Sans", "Trebuchet MS", "Helvetica Neue", Arial, sans-serif;
+}
+
+.ndw-font-display-orbit {
+  font-family: var(--ndw-font-display-orbit);
+}
+
+.ndw-font-display-editorial {
+  font-family: var(--ndw-font-display-editorial);
+}
+
+.ndw-font-display-grotesk {
+  font-family: var(--ndw-font-display-grotesk);
+}
+
+.ndw-font-body-clean {
+  font-family: var(--ndw-font-body-clean);
+}
+
+.ndw-font-body-soft {
+  font-family: var(--ndw-font-body-soft);
+}
