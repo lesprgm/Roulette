@@ -10,7 +10,6 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-package-lock.json
 
 # macOS
 .DS_Store
@@ -18,7 +17,6 @@ package-lock.json
 # Editors/IDE
 .vscode/
 .idea/
-.wrangler/
 
 # Env / secrets
 .env
@@ -35,9 +33,21 @@ coverage/
 static/tailwind.css
 tailwindcss
 
+# Frontend/generated vendor assets rebuilt by npm scripts
+static/js/*.js
+static/js/*.tsbuildinfo
+static/vendor/three.module.js
+static/vendor/three-addons/
+static/vendor/ScrollTrigger.min.js
+static/vendor/fonts/
+
 #Cache files
 cache/
+.wrangler/
+delphi-main/
+refpics/
 
 # Generated review/eval artifacts
+artifacts/
 artifacts/evals/
 artifacts/playwright/
