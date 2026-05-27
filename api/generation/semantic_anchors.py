@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import hashlib
+import random
+from typing import Dict, Iterable
+
+
+ANCHOR_BUCKETS = {
+    "material": [
+        "concrete",
+        "brass",
+        "paper pulp",
+        "smoked glass",
+        "ceramic glaze",
+        "salt crystal",
+        "charcoal",
+        "rubber",
+        "woven linen",
+        "oxidized copper",
+        "liquid chrome",
+        "translucent resin",
+        "ash wood",
+        "magnetic sand",
+        "frosted acrylic",
+    ],
+    "natural_phenomenon": [
+        "bioluminescence",
+        "fog bank",
+        "tidal pull",
+        "murmuration",
+        "mycelium growth",
+        "desert mirage",
+        "aurora",
+        "coral bleaching",
+        "glacial calving",
+        "lightning filament",
+        "rain shadow",
+        "thermal vent",
+        "seed dispersal",
+        "eclipse",
+        "magnetic storm",
+    ],
+    "cultural_object": [
+        "typewriter",
+        "astrolabe",
+        "ticket booth",
+        "field notebook",
+        "radio dial",
+        "loom",
+        "cabinet of curiosities",
+        "subway map",
+        "chess clock",
+        "letterpress tray",
+        "passport stamp",
+        "weather vane",
+        "library card",
+        "film contact sheet",
+        "ceremonial mask",
+    ],
+    "system_metaphor": [
+        "signal relay",
+        "archive excavation",
+        "garden ecology",
+        "traffic choreography",
+        "memory palace",
+        "pressure chamber",
+        "orbital registry",
+        "market of rumors",
+        "fault-line survey",
+        "machine choir",
+        "atlas of thresholds",
+        "dream logistics",
+        "translation engine",
+        "migration counter",
+        "ritual scheduler",
+    ],
+    "interaction_verb": [
+        "excavate",
+        "tune",
+        "splice",
+        "cultivate",
+        "decode",
+        "weave",
+        "magnetize",
+        "classify",
+        "steer",
+        "listen",
+        "scrub",
+        "assemble",
+        "pollinate",
+        "illuminate",
+        "negotiate",
+    ],
+}
+
+
+def _stable_int(parts: Iterable[str]) -> int:
+    digest = hashlib.sha256("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
+
+
+def select_semantic_anchors(seed: int | None = None, cell_key: str = "") -> Dict[str, str]:
+    rng = random.Random(_stable_int([seed or 0, cell_key or "default"]))
+    anchors: Dict[str, str] = {}
+    for bucket, values in ANCHOR_BUCKETS.items():
+        anchors[bucket] = values[rng.randrange(len(values))]
+    return anchors
