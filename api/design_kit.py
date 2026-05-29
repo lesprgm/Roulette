@@ -88,31 +88,34 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
         "bento_magazine": {"summary": "Magazine-like bento grid with uneven card rhythm."},
         "immersive_poster": {"summary": "Full-viewport poster composition with layered foreground controls."},
     },
+    "creative_libraries": {
+        "gsap_core": {"global": "gsap", "summary": "Local GSAP core for precise timelines and staggered motion."},
+        "scroll_trigger": {"global": "ScrollTrigger", "summary": "Local GSAP ScrollTrigger for scroll-tied reveals and parallax."},
+        "three_orbit_controls": {
+            "import": "three/addons/controls/OrbitControls.js",
+            "summary": "Local OrbitControls addon for explorable 3D scenes.",
+        },
+        "three_bloom_pipeline": {
+            "imports": [
+                "three/addons/postprocessing/EffectComposer.js",
+                "three/addons/postprocessing/RenderPass.js",
+                "three/addons/postprocessing/UnrealBloomPass.js",
+            ],
+            "summary": "Local postprocessing pipeline for restrained glow/bloom effects.",
+        },
+    },
+    "composition_recipes": {
+        "fictional_instrument": {"summary": "A playable visual instrument with controls that reshape the scene."},
+        "living_poster": {"summary": "A poster-like composition that breathes and reacts through layered motion."},
+        "spatial_map": {"summary": "A navigable map or field with labels, depth, and a signature control."},
+        "kinetic_editorial": {"summary": "Magazine typography with scroll-linked shutters and dramatic reveals."},
+        "artifact_simulator": {"summary": "A fictional object/product simulator with tactile calibration UI."},
+        "civic_machine": {"summary": "A weird institutional system with forms, counters, seals, and procedural motion."},
+        "botanical_lab": {"summary": "Organic growth, sensor panels, and living material textures."},
+        "weather_console": {"summary": "Atmospheric controls that reshape clouds, particles, gradients, or maps."},
+    },
 }
 
 
 def compact_design_kit_manifest() -> str:
     return json.dumps(DESIGN_KIT_MANIFEST, separators=(",", ":"), ensure_ascii=True)
-
-
-def compact_fast_design_kit_manifest() -> str:
-    fast_manifest = {
-        "background_tokens": DESIGN_KIT_MANIFEST["background_tokens"],
-        "motion_tokens": DESIGN_KIT_MANIFEST["motion_presets"],
-        "font_pairs": {
-            "orbit_clean": {
-                "display": "display_orbit",
-                "body": "body_clean",
-            },
-            "editorial_soft": {
-                "display": "display_editorial",
-                "body": "body_soft",
-            },
-            "grotesk_clean": {
-                "display": "display_grotesk",
-                "body": "body_clean",
-            },
-        },
-        "layouts": DESIGN_KIT_MANIFEST["layouts"],
-    }
-    return json.dumps(fast_manifest, separators=(",", ":"), ensure_ascii=True)
