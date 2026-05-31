@@ -15,6 +15,8 @@ _INTERACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _REGION_RE = re.compile(r"<(main|section|article|aside|nav|footer|canvas)\b", re.IGNORECASE)
+_DIV_RE = re.compile(r"<div\b", re.IGNORECASE)
+_POSITIONED_LAYER_RE = re.compile(r"(position:\s*(?:absolute|fixed)|\babsolute\b|\bfixed\b|\brelative\b)", re.IGNORECASE)
 _TEXT_RE = re.compile(r">([^<]{20,})<")
 _LOCAL_KIT_RE = re.compile(r"/static/design-kit/", re.IGNORECASE)
 _FULL_VIEW_RE = re.compile(r"(min-height:\s*100vh|min-h-screen|100vh)", re.IGNORECASE)
@@ -24,6 +26,21 @@ _LOW_CONTRAST_RE = re.compile(r"(text-slate-400|text-slate-500|text-gray-400|tex
 _THREE_RE = re.compile(r"(<canvas\b|\bTHREE\b|WebGLRenderer|getContext\(\s*['\"](?:webgl|webgl2))", re.IGNORECASE)
 _COLOR_RE = re.compile(
     r"(#[0-9a-fA-F]{3,8}\b|rgba?\([^)]+\)|hsla?\([^)]+\)|\b(?:white|black|transparent)\b)",
+    re.IGNORECASE,
+)
+_GLOBAL_LISTENER_RE = re.compile(r"\b(?:window|document)\.addEventListener\(", re.IGNORECASE)
+_GLOBAL_REMOVE_RE = re.compile(r"\b(?:window|document)\.removeEventListener\(", re.IGNORECASE)
+_INLINE_LOOP_CLEANUP_RE = re.compile(
+    r"function\s+\w+\s*\([^)]*\)\s*\{[\s\S]{0,4000}?requestAnimationFrame\([\s\S]{0,2000}?NDW\.registerCleanup\(",
+    re.IGNORECASE,
+)
+_POINTER_ONLY_CONTROL_RE = re.compile(
+    r"addEventListener\(\s*['\"]mousedown['\"][\s\S]{0,3000}?addEventListener\(\s*['\"]touchstart['\"]",
+    re.IGNORECASE,
+)
+_KEYBOARD_CONTROL_RE = re.compile(r"addEventListener\(\s*['\"]keydown['\"]", re.IGNORECASE)
+_ACCESSIBILITY_ATTR_RE = re.compile(
+    r"(role\s*=\s*['\"](?:button|slider|spinbutton)['\"]|tabindex\s*=|aria-label\s*=|aria-labelledby\s*=)",
     re.IGNORECASE,
 )
 
@@ -61,19 +78,37 @@ def _normalized_color_tokens(html: str) -> List[str]:
 
 def extract_review_metrics(doc: Dict[str, Any]) -> Dict[str, Any]:
     html = _extract_html(doc)
+    doc_kind = doc.get("kind") if isinstance(doc, dict) else None
+    iframe_isolated = str(doc_kind or "").lower() == "full_page_html"
     region_count = len(_REGION_RE.findall(html))
+    layered_div_count = len(_DIV_RE.findall(html)) if _FULL_VIEW_RE.search(html) else 0
+    has_layered_stage = bool(layered_div_count >= 6 and _POSITIONED_LAYER_RE.search(html))
     has_background_treatment = bool(_BACKGROUND_RE.search(html))
     canvas_or_three = bool(_THREE_RE.search(html))
     first_paint = bool(html and (len(html) > 600 or _TEXT_RE.search(html)))
     motion = bool(_MOTION_RE.search(html))
     interaction = bool(_INTERACTION_RE.search(html))
     design_kit = bool(_LOCAL_KIT_RE.search(html))
-    immersive_stage = bool(_FULL_VIEW_RE.search(html) and (canvas_or_three or region_count >= 2))
-    centered_card = bool(_CENTERED_CARD_RE.search(html)) and region_count <= 2 and "<canvas" not in html.lower()
+    immersive_stage = bool(_FULL_VIEW_RE.search(html) and (canvas_or_three or region_count >= 2 or has_layered_stage))
+    centered_card = (
+        bool(_CENTERED_CARD_RE.search(html))
+        and region_count <= 2
+        and not canvas_or_three
+        and not has_layered_stage
+    )
     contrast_risk = bool(_LOW_CONTRAST_RE.search(html) and not has_background_treatment)
+    listener_cleanup_risk = bool(
+        not iframe_isolated and _GLOBAL_LISTENER_RE.search(html) and not _GLOBAL_REMOVE_RE.search(html)
+    )
+    loop_cleanup_risk = bool(not iframe_isolated and _INLINE_LOOP_CLEANUP_RE.search(html))
+    accessibility_risk = bool(
+        _POINTER_ONLY_CONTROL_RE.search(html)
+        and not _KEYBOARD_CONTROL_RE.search(html)
+        and not _ACCESSIBILITY_ATTR_RE.search(html)
+    )
     colors = _normalized_color_tokens(html)
     return {
-        "doc_kind": doc.get("kind") if isinstance(doc, dict) else None,
+        "doc_kind": doc_kind,
         "html_bytes": len(html.encode("utf-8")),
         "quality_flags": {
             "first_paint": first_paint,
@@ -82,9 +117,14 @@ def extract_review_metrics(doc: Dict[str, Any]) -> Dict[str, Any]:
             "design_kit": design_kit,
             "centered_card": centered_card,
             "contrast_risk": contrast_risk,
+            "listener_cleanup_risk": listener_cleanup_risk,
+            "loop_cleanup_risk": loop_cleanup_risk,
+            "accessibility_risk": accessibility_risk,
         },
         "layout_metrics": {
             "region_count": region_count,
+            "layered_div_count": layered_div_count,
+            "layered_stage": has_layered_stage,
             "immersive_stage": immersive_stage,
             "canvas_or_three": canvas_or_three,
         },
@@ -158,6 +198,27 @@ def score_page_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         score += 4
         reasons.append("no obvious low-contrast shell")
         flags["contrast_risk"] = False
+
+    if metrics["quality_flags"]["listener_cleanup_risk"]:
+        score -= 16
+        reasons.append("penalized global listener cleanup risk")
+        flags["listener_cleanup_risk"] = True
+    else:
+        flags["listener_cleanup_risk"] = False
+
+    if metrics["quality_flags"]["loop_cleanup_risk"]:
+        score -= 20
+        reasons.append("penalized cleanup registration inside animation loop")
+        flags["loop_cleanup_risk"] = True
+    else:
+        flags["loop_cleanup_risk"] = False
+
+    if metrics["quality_flags"]["accessibility_risk"]:
+        score -= 12
+        reasons.append("penalized pointer-only control without accessibility semantics")
+        flags["accessibility_risk"] = True
+    else:
+        flags["accessibility_risk"] = False
 
     final_score = max(0, min(100, score))
     return {
