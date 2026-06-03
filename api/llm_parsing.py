@@ -74,73 +74,6 @@ def _json_from_text(text: str) -> Any:
     raise ValueError("No JSON or HTML content found")
 
 
-def _repair_json_loose(text: str) -> str:
-    """Best-effort repair for truncated JSON by closing open strings/braces."""
-    t = (text or "").strip()
-    if not t:
-        return t
-    in_str = False
-    esc = False
-    braces = 0
-    brackets = 0
-    for ch in t:
-        if ch == '"' and not esc:
-            in_str = not in_str
-        if not in_str:
-            if ch == "{":
-                braces += 1
-            elif ch == "}":
-                braces -= 1
-            elif ch == "[":
-                brackets += 1
-            elif ch == "]":
-                brackets -= 1
-        esc = (ch == "\\") and not esc
-    if in_str:
-        t += '"'
-    if brackets > 0:
-        t += "]" * brackets
-    if braces > 0:
-        t += "}" * braces
-    return t
-
-
-def _extract_completed_objects_from_array(text: str) -> List[Dict[str, Any]]:
-    """Naively extract completed {...} objects from a JSON array string."""
-    objs: List[Dict[str, Any]] = []
-    # Strip the leading '[' if present
-    s = text.strip()
-    if s.startswith("["):
-        s = s[1:].strip()
-
-    depth = 0
-    start = -1
-    in_str = False
-    esc = False
-
-    for i, ch in enumerate(s):
-        if ch == '"' and not esc:
-            in_str = not in_str
-        if in_str:
-            esc = (ch == "\\") and not esc
-            continue
-
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start != -1:
-                candidate = s[start : i + 1]
-                try:
-                    objs.append(json.loads(candidate))
-                except Exception:
-                    pass
-                start = -1
-    return objs
-
-
 def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize model output to one of the accepted shapes or raise ValueError."""
     if not isinstance(doc, dict):
@@ -284,7 +217,7 @@ _CSS_IMPORT_RE = re.compile(
 )
 _TAILWIND_CDN_RE = re.compile(r"^(?:https?:)?//cdn\.tailwindcss\.com(?:/|\?|$)", re.IGNORECASE)
 _GSAP_CDN_RE = re.compile(
-    r"^(?:https?:)?//cdnjs\.cloudflare\.com/ajax/libs/gsap/[^/]+/gsap(?:\.min)?\.js",
+    r"^(?:https?:)?//cdn\.jsdelivr\.net/npm/gsap@[^/]+/dist/gsap(?:\.min)?\.js",
     re.IGNORECASE,
 )
 _LUCIDE_CDN_RE = re.compile(r"^(?:https?:)?//unpkg\.com/lucide(?:@[^/]+)?(?:/.*)?$", re.IGNORECASE)
