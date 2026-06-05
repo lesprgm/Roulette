@@ -9,8 +9,10 @@ client = TestClient(app)
 @pytest.fixture()
 def isolated_queue(monkeypatch, tmp_path):
     pf_dir = tmp_path / "pfq"
+    premium_pf_dir = tmp_path / "premium-pfq"
     seen_file = tmp_path / "seen.json"
     monkeypatch.setenv("PREFETCH_DIR", str(pf_dir))
+    monkeypatch.setenv("PREMIUM_PREFETCH_DIR", str(premium_pf_dir))
     monkeypatch.setenv("DEDUPE_RECENT_FILE", str(seen_file))
 
     from api import prefetch as pf
@@ -27,13 +29,18 @@ def _make_doc(title: str = "Test Page"):
         "category": "unit-test",
         "vibe": "testing",
         "kind": "full_page_html",
-        "html": f"<!doctype html><html><head><title>{title}</title></head><body><h1>{title}</h1></body></html>",
+        "html": (
+            f"<!doctype html><html><head><title>{title}</title></head>"
+            f"<body><main id='ndw-content' data-region><h1>{title}</h1>"
+            "<button id='play'>Play</button><script>document.getElementById('play')?.addEventListener('click',()=>{});</script>"
+            "</main></body></html>"
+        ),
     }
 
 def test_prefetch_previews_empty_or_populated(isolated_queue):
     """Test that previews endpoint returns a list (may be empty or populated)."""
     pf = isolated_queue
-    assert pf.enqueue(_make_doc("Preview Test"))
+    assert pf.enqueue(_make_doc("Preview Test"), lane="premium")
     response = client.get("/api/prefetch/previews")
     assert response.status_code == 200
     data = response.json()
@@ -50,7 +57,7 @@ def test_prefetch_entry_custom_flow(isolated_queue):
     """Manually enqueue a record and verify we can retrieve it."""
     pf = isolated_queue
     doc = _make_doc("Entry Test")
-    assert pf.enqueue(doc)
+    assert pf.enqueue(doc, lane="premium")
 
     resp = client.get("/api/prefetch/previews")
     assert resp.status_code == 200
@@ -72,7 +79,7 @@ def test_prefetch_entry_custom_flow(isolated_queue):
 
 def test_prefetch_entry_increments_counter_on_serve(monkeypatch, isolated_queue):
     pf = isolated_queue
-    assert pf.enqueue(_make_doc("Counter Test"))
+    assert pf.enqueue(_make_doc("Counter Test"), lane="premium")
 
     from api import main as main_mod
 

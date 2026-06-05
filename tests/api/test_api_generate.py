@@ -1,4 +1,5 @@
 import json
+import time
 from fastapi.testclient import TestClient
 
 from api.main import app, GenerateRequest
@@ -18,14 +19,14 @@ def test_llm_status_shape():
     r = client.get("/llm/status")
     assert r.status_code == 200
     body = r.json()
-    assert body.get("provider") in ("groq", "openrouter", "gemini", None)
+    assert body.get("provider") in ("gemini", None)
     assert "using" in body
     assert "has_token" in body
 
 
-def test_generate_request_defaults_to_fast():
+def test_generate_request_is_premium_only():
     req = GenerateRequest()
-    assert req.quality == "fast"
+    assert not hasattr(req, "quality")
 
 
 def test_validate_success():
@@ -80,55 +81,21 @@ def test_generate_ok(monkeypatch):
 
 def test_stream_returns_ndjson(monkeypatch):
     from api import main as main_mod
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "stub", "has_token": False})
+    page = {
+        "kind": "full_page_html",
+        "html": "<!doctype html><html><body><main id='ndw-content'>Stream Test</main></body></html>",
+    }
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
+    monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: page)
     payload = {"brief": "Landing page", "seed": 123}
     r = client.post("/generate/stream", json=payload, headers=API_HEADERS)
     assert r.status_code == 200
 
     raw_lines = [ln for ln in r.text.strip().splitlines() if ln.strip()]
-    assert len(raw_lines) >= 1
-
-    parsed_lines = []
-    all_component_lines = True
-    page_from_event = None
-
-    for ln in raw_lines:
-        try:
-            obj = json.loads(ln)
-            parsed_lines.append(obj)
-            if not (isinstance(obj, dict) and "component" in obj):
-                all_component_lines = False
-            if isinstance(obj, dict) and obj.get("event") == "page" and isinstance(obj.get("data"), dict):
-                page_from_event = obj["data"]
-        except json.JSONDecodeError:
-            all_component_lines = False
-
-    if all_component_lines:
-        assert all(isinstance(o, dict) and "component" in o for o in parsed_lines)
-        return
-
-    if page_from_event is not None:
-        if page_from_event.get("kind") == "full_page_html":
-            assert isinstance(page_from_event.get("html"), str) and "<" in page_from_event["html"]
-        else:
-            assert "components" in page_from_event and isinstance(page_from_event["components"], list) and len(page_from_event["components"]) >= 1
-        return
-
-    stitched = "".join(raw_lines)
-    try:
-        page = json.loads(stitched)
-    except json.JSONDecodeError:
-        joined = r.text
-        first = joined.find("{")
-        last = joined.rfind("}")
-        assert first != -1 and last != -1 and last > first, "Stream did not contain a JSON object or component lines"
-        page = json.loads(joined[first:last + 1])
-
-    assert isinstance(page, dict)
-    if page.get("kind") == "full_page_html":
-        assert isinstance(page.get("html"), str) and "<" in page["html"]
-    else:
-        assert "components" in page and isinstance(page["components"], list) and len(page["components"]) >= 1
+    events = [json.loads(line) for line in raw_lines]
+    assert events[0]["event"] == "meta"
+    assert [event for event in events if event.get("event") == "page"] == [{"event": "page", "data": page}]
 
 
 def test_rate_limit(monkeypatch):
@@ -152,18 +119,17 @@ def test_rate_limit(monkeypatch):
         rl.MAX_REQUESTS = old_max
 
 
-def test_generate_endpoint_premium_bypasses_prefetch(monkeypatch):
+def test_generate_endpoint_serves_premium_queue_first(monkeypatch):
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
     queued = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Queue</body></html>"}
-    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: queued if lane == "premium" else None)
     monkeypatch.setattr(main_mod.prefetch, "size", lambda lane=None: 2)
-    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("premium queue should serve first")))
+    monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("premium queue should serve first")))
 
-    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200
     assert r.json() == queued
 
@@ -174,11 +140,10 @@ def test_stream_endpoint_premium_emits_single_page(monkeypatch):
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
     page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Stream</body></html>"}
-    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
     monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: page)
 
-    r = client.post("/generate/stream", json={"brief": "", "seed": 12, "quality": "premium"}, headers=API_HEADERS)
+    r = client.post("/generate/stream", json={"brief": "", "seed": 12}, headers=API_HEADERS)
     assert r.status_code == 200
     lines = [json.loads(ln) for ln in r.text.strip().splitlines() if ln.strip()]
     assert lines[0]["event"] == "meta"
@@ -187,17 +152,18 @@ def test_stream_endpoint_premium_emits_single_page(monkeypatch):
     assert page_events[0]["data"] == page
 
 
-def test_stream_fast_prefetch_and_followups_increment_only_served_page(monkeypatch):
+def test_stream_premium_queue_increment_only_served_page(monkeypatch):
     from api import main as main_mod
 
     increments = []
-    queued = {"kind": "full_page_html", "html": "<!doctype html><html><body>Queued Fast</body></html>"}
+    queued = {"kind": "full_page_html", "html": "<!doctype html><html><body>Queued Premium</body></html>"}
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
-    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: queued if lane is None else None)
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
+    monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: queued if lane == "premium" else None)
     monkeypatch.setattr(main_mod.prefetch, "size", lambda lane=None: 2)
     monkeypatch.setattr(main_mod.counter, "increment", lambda n=1: increments.append(n) or 1)
 
-    r = client.post("/generate/stream", json={"brief": "", "seed": 12, "quality": "fast"}, headers=API_HEADERS)
+    r = client.post("/generate/stream", json={"brief": "", "seed": 12}, headers=API_HEADERS)
     assert r.status_code == 200
     lines = [json.loads(ln) for ln in r.text.strip().splitlines() if ln.strip()]
     page_events = [line for line in lines if line.get("event") == "page"]
@@ -206,79 +172,79 @@ def test_stream_fast_prefetch_and_followups_increment_only_served_page(monkeypat
     assert increments == [1]
 
 
-def test_generate_endpoint_premium_quota_exhaustion(monkeypatch):
+def test_generate_endpoint_returns_503_when_premium_unavailable(monkeypatch):
+    from api import main as main_mod
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("ALLOW_OFFLINE_GENERATION", raising=False)
+    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: False)
+
+    r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
+    assert r.status_code == 503
+    assert r.json()["error"] == "Missing LLM credentials"
+
+
+def test_generate_endpoint_premium_empty_queue_generates_live(monkeypatch):
     from api import main as main_mod
 
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
-    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (False, 0, 9999999999))
-
-    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
-    assert r.status_code == 429
-    assert "premium" in r.json()["error"]
-
-
-def test_generate_endpoint_premium_empty_queue_batches(monkeypatch):
-    from api import main as main_mod
-
-    monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
-    monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
-    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
-    page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Batch First</body></html>"}
-    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: page)
+    page = {"kind": "full_page_html", "html": "<!doctype html><html><body>Premium Live First</body></html>"}
+    monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: page)
 
-    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200
     assert r.json() == page
 
 
-def test_generate_endpoint_premium_refunds_quota_on_failed_batch(monkeypatch):
+def test_generate_endpoint_premium_failure_does_not_increment_counter(monkeypatch):
     from api import main as main_mod
 
-    refunds = []
+    increments = []
     monkeypatch.setattr(main_mod, "llm_status", lambda: {"provider": "gemini", "has_token": True})
     monkeypatch.setattr(main_mod, "llm_premium_available", lambda: True)
-    monkeypatch.setattr(main_mod, "_consume_premium_quota", lambda key: (True, 4, 9999999999))
-    monkeypatch.setattr(main_mod, "_refund_premium_quota", lambda key: refunds.append(key) or (True, 5, 9999999999))
     monkeypatch.setattr(main_mod.prefetch, "dequeue", lambda lane=None: None)
-    monkeypatch.setattr(main_mod, "_serve_or_fill_premium_batch", lambda *args, **kwargs: {"error": "Premium generation failed"})
+    monkeypatch.setattr(main_mod, "_stream_premium_first_page", lambda *args, **kwargs: {"error": "Premium generation failed"})
+    monkeypatch.setattr(main_mod.counter, "increment", lambda n=1: increments.append(n) or 1)
 
-    r = client.post("/generate", json={"brief": "", "seed": 9, "quality": "premium"}, headers=API_HEADERS)
+    r = client.post("/generate", json={"brief": "", "seed": 9}, headers=API_HEADERS)
     assert r.status_code == 200
     assert r.json()["error"] == "Premium generation failed"
-    assert len(refunds) == 1
+    assert increments == []
 
 
-def test_consume_premium_quota_uses_credit_before_limiter(monkeypatch):
+def test_generate_single_premium_doc_fail_opens_on_review_timeout(monkeypatch):
     from api import main as main_mod
 
-    monkeypatch.setattr(main_mod.premium_credits, "consume", lambda key: True)
-    monkeypatch.setattr(main_mod, "_inspect_premium_quota", lambda key: (False, 0, 9999999999))
-    monkeypatch.setattr(
-        main_mod,
-        "_safe_rate_check",
-        lambda bucket, key: (_ for _ in ()).throw(AssertionError("limiter should not increment when a credit is available")),
-    )
+    page = {
+        "kind": "full_page_html",
+        "html": """<!doctype html><html><body>
+        <main data-region class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,#020617)] text-white">
+          <section data-region class="p-10">
+            <h1>Premium Timeout</h1>
+            <button id="play">Play</button>
+            <script>document.getElementById('play')?.addEventListener('click',()=>{});</script>
+          </section>
+        </main>
+        </body></html>""",
+    }
+    monkeypatch.setattr(main_mod, "llm_generate_page_premium", lambda brief, seed, user_key=None: dict(page))
 
-    allowed, remaining, reset_ts = main_mod._consume_premium_quota("demo_123")
-    assert allowed is True
-    assert remaining == 0
-    assert reset_ts == 9999999999
+    started = time.monotonic()
+    out = main_mod._generate_single_premium_doc("", seed=3, user_key="student", context="premium.stream.first")
+    elapsed = time.monotonic() - started
+    assert isinstance(out, dict)
+    assert out["html"] == page["html"]
+    assert "review" not in out
+    assert elapsed < 0.75
 
 
-def test_refund_premium_quota_grants_credit_when_backend_refund_missing(monkeypatch):
+def test_generate_single_premium_doc_drops_weak_fail_open_doc(monkeypatch):
     from api import main as main_mod
 
-    granted = []
-    monkeypatch.setattr(main_mod, "_rl_instance", None)
-    monkeypatch.setattr(main_mod, "_rl_mod", object())
-    monkeypatch.setattr(main_mod.premium_credits, "grant", lambda key, amount=1: granted.append((key, amount)) or amount)
-    monkeypatch.setattr(main_mod.premium_credits, "peek", lambda key: 1)
-    monkeypatch.setattr(main_mod, "_inspect_premium_quota", lambda key: (False, 0, 9999999999))
+    weak_page = {"kind": "full_page_html", "html": "<!doctype html><html><body><div>hi</div></body></html>"}
+    monkeypatch.setattr(main_mod, "llm_generate_page_premium", lambda brief, seed, user_key=None: dict(weak_page))
 
-    allowed, remaining, reset_ts = main_mod._refund_premium_quota("demo_123")
-    assert allowed is True
-    assert remaining == 1
-    assert reset_ts == 9999999999
-    assert granted == [("demo_123", 1)]
+    out = main_mod._generate_single_premium_doc("", seed=4, user_key="student", context="premium.stream.first")
+    assert out is None

@@ -4,46 +4,53 @@ import os
 import time
 import uuid
 import threading
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-from collections import deque
 from pathlib import Path
-from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, ValidationError, TypeAdapter
+from pydantic import BaseModel, Field
 
 from api.auth import require_api_key, optional_api_key, extract_client_key, keys_required, is_admin_key
-from api import counter, dedupe, premium_credits
+from api import counter
 from api import prefetch
+from api.generation.novelty import record_served_doc
+from api.generation.ranking import rank_prefetch_docs as _rank_prefetch_docs
+from api.generation.redis_diversity import record_site_descriptor
 from api.preflight import annotate_doc as annotate_preflight_doc
 from api.preflight import has_blocking_issues as preflight_has_blocking_issues
 from api.preflight import preflight_doc
 from api.quality import extract_review_metrics, score_page_doc
+from api.validators import validate_page_doc as _validate_with_jsonschema
 
-_REVIEW_QUEUE_LOCK = threading.Lock()
 PrefetchHandle = str
-_PREFETCH_REVIEW_QUEUE: Deque[Tuple[List[PrefetchHandle], int]] = deque()
-_REVIEW_WORKER: Optional[threading.Thread] = None
-_REVIEW_MAX_ATTEMPTS = 3
 _PREMIUM_TOPUP_LOCK = threading.Lock()
+
+
+def _record_user_visible_serve(doc: Dict[str, Any]) -> None:
+    try:
+        record_served_doc(doc)
+    except Exception:
+        pass
+    try:
+        record_site_descriptor(doc, event="site_served")
+    except Exception:
+        pass
 
 try:
     from api.llm_client import (
-        generate_page as llm_generate_page,
         generate_page_premium as llm_generate_page_premium,
-        generate_page_burst as llm_generate_page_burst,
+        generate_page_premium_burst as llm_generate_page_premium_burst,
         premium_available as llm_premium_available,
         status as llm_status,
         probe as llm_probe,
-        run_compliance_batch,
     )
 except Exception:
-    llm_generate_page = None
     llm_generate_page_premium = None
+    llm_generate_page_premium_burst = None
 
     def llm_status() -> Dict[str, Any]:
         return {"provider": None, "model": None, "has_token": False, "using": "stub"}
@@ -53,9 +60,6 @@ except Exception:
 
     def llm_premium_available() -> bool:
         return False
-
-    def run_compliance_batch(documents: List[Dict[str, Any]]) -> Optional[List[Dict[str, Any]]]:
-        return None
 
 
 if not logging.getLogger().handlers:
@@ -91,21 +95,9 @@ def _is_render_env() -> bool:
 def _log_startup_checks() -> None:
     if os.getenv("PYTEST_CURRENT_TEST"):
         return
-    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    groq_key = os.getenv("GROQ_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not (openrouter_key or groq_key or gemini_key):
+    if not gemini_key:
         log.warning("startup.check: no LLM API keys set; generation will fail in production")
-
-    compliance_provider = (os.getenv("COMPLIANCE_PROVIDER", "gemini") or "gemini").lower()
-    if compliance_provider == "gemini":
-        review_key = os.getenv("GEMINI_REVIEW_API_KEY", "").strip() or gemini_key
-        if not review_key:
-            log.warning("startup.check: COMPLIANCE_PROVIDER=gemini but GEMINI_REVIEW_API_KEY/GEMINI_API_KEY missing")
-    elif compliance_provider == "openrouter":
-        review_model = os.getenv("OPENROUTER_REVIEW_MODEL", "").strip()
-        if not openrouter_key or not review_model:
-            log.warning("startup.check: COMPLIANCE_PROVIDER=openrouter but OPENROUTER_API_KEY or OPENROUTER_REVIEW_MODEL missing")
 
     if not os.getenv("PREFETCH_TOKEN_SECRET", "").strip():
         log.warning("startup.check: PREFETCH_TOKEN_SECRET not set; preview tokens reset on restart")
@@ -114,7 +106,9 @@ def _log_startup_checks() -> None:
         Path("static/tailwind.css"),
         Path("static/vendor/tailwind-play.js"),
         Path("static/vendor/gsap.min.js"),
+        Path("static/vendor/ScrollTrigger.min.js"),
         Path("static/vendor/lucide.min.js"),
+        Path("static/vendor/three-addons/controls/OrbitControls.js"),
     ]
     for asset in required_assets:
         if not asset.exists():
@@ -142,19 +136,6 @@ def _log_startup_checks() -> None:
 async def lifespan(app: FastAPI):
     try:
         _log_startup_checks()
-        if llm_generate_page is not None and llm_status().get("has_token"):
-            _prefill_prefetch_queue()
-        if _prefetch_topup_enabled():
-            try:
-                if llm_generate_page is not None and llm_status().get("has_token"):
-                    log.info("prefetch.lifespan: starting background top-up thread")
-                    t = threading.Thread(target=_top_up_prefetch, args=("", PREFETCH_FILL_TO), daemon=True)
-                    t.start()
-                else:
-                    log.debug("prefetch.lifespan: skipping top-up (LLM unavailable)")
-            except Exception:
-                log.exception("prefetch.lifespan: failed to start top-up thread")
-                pass
     except Exception:
         log.exception("prefetch.lifespan: unexpected startup error")
         pass
@@ -216,7 +197,6 @@ class GenerateRequest(BaseModel):
     brief: str = Field("", description="Short description of the app to create; may be empty to let the model choose")
     seed: Optional[int] = Field(default=None, description="Optional PRNG seed")
     model_version: Optional[str] = Field(default=None, description="Optional model name override")
-    quality: Literal["fast", "premium"] = Field(default="fast", description="Generation quality mode")
 
 
 class ValidateRequest(BaseModel):
@@ -225,11 +205,11 @@ class ValidateRequest(BaseModel):
 
 
 # Choose rate limiter based on environment
-_REDIST_URL = os.getenv("REDIS_URL", "").strip()
+_REDIS_URL = os.getenv("REDIS_URL", "").strip()
 _rl_instance = None
-if _REDIST_URL and _rr_cls and not os.getenv("PYTEST_CURRENT_TEST"):
+if _REDIS_URL and _rr_cls and not os.getenv("PYTEST_CURRENT_TEST"):
     try:
-        _rl_instance = _rr_cls(_REDIST_URL)
+        _rl_instance = _rr_cls(_REDIS_URL)
     except Exception:
         _rl_instance = None
 
@@ -308,106 +288,29 @@ def _rate_limit_payload(reset_ts: int) -> Dict[str, Any]:
     }
 
 
-# Prefetch tuning knobs
-PREFETCH_LOW_WATER = int(os.getenv("PREFETCH_LOW_WATER", "55") or 55)
-try:
-    # Prefer the batch max if available for a fill-to target
-    from api.prefetch import BATCH_MAX as _PF_BATCH_MAX
-    _DEFAULT_FILL_TO = max(int(_PF_BATCH_MAX or 75), PREFETCH_LOW_WATER)
-except Exception:
-    _DEFAULT_FILL_TO = max(75, PREFETCH_LOW_WATER)
-PREFETCH_FILL_TO = int(os.getenv("PREFETCH_FILL_TO", str(_DEFAULT_FILL_TO)) or _DEFAULT_FILL_TO)
-PREFETCH_DELAY_MS = int(os.getenv("PREFETCH_DELAY_MS", "3000") or 3000)
-if os.getenv("PYTEST_CURRENT_TEST"):
-    PREFETCH_DELAY_MS = 0
-PREFETCH_REVIEW_BATCH = int(os.getenv("PREFETCH_REVIEW_BATCH", "20") or 20)
-try:
-    PREFETCH_MAX_WORKERS = int(os.getenv("PREFETCH_MAX_WORKERS", "2") or 2)
-except Exception:
-    PREFETCH_MAX_WORKERS = 2
-if PREFETCH_MAX_WORKERS < 1:
-    PREFETCH_MAX_WORKERS = 1
-
 PREFETCH_PREVIEW_CACHE_TTL = float(os.getenv("PREFETCH_PREVIEW_CACHE_TTL", "2") or 2)
 _PREFETCH_PREVIEW_CACHE: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
 _PREFETCH_PREVIEW_LOCK = threading.Lock()
 PREMIUM_QUEUE_ENABLED = os.getenv("PREMIUM_QUEUE_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
 PREMIUM_LOW_WATER = int(os.getenv("PREMIUM_LOW_WATER", "3") or 3)
 PREMIUM_FILL_TO = int(os.getenv("PREMIUM_FILL_TO", "10") or 10)
-PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "1") or 1)
+if PREMIUM_LOW_WATER > PREMIUM_FILL_TO:
+    PREMIUM_LOW_WATER = PREMIUM_FILL_TO
+PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "15") or 15)
 PREMIUM_TOPUP_ENABLED = os.getenv("PREMIUM_TOPUP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
-
-
-def _prefetch_topup_enabled() -> bool:
-    # Disable during pytest runs or when env flag set to 0/false
-    if os.getenv("PYTEST_CURRENT_TEST"):
-        return False
-    v = os.getenv("PREFETCH_TOPUP_ENABLED", "1").lower()
-    return v in {"1", "true", "yes", "on"}
+PREMIUM_REFILL_MISSING_ENABLED = os.getenv("PREMIUM_REFILL_MISSING_ENABLED", "1").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+PREMIUM_FAIL_OPEN_MIN_SCORE = max(
+    0, min(100, int(os.getenv("PREMIUM_FAIL_OPEN_MIN_SCORE", "42") or 42))
+)
 
 
 def _premium_queue_enabled() -> bool:
     return PREMIUM_QUEUE_ENABLED
-
-
-def _inspect_premium_quota(key: str) -> Optional[Tuple[bool, int, int]]:
-    if is_admin_key(key):
-        return True, 9999, int(time.time()) + 60
-    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
-    if use_redis:
-        try:
-            if hasattr(_rl_instance, "inspect"):
-                return _rl_instance.inspect("premium", key)
-        except Exception:
-            pass
-    if _rl_mod and hasattr(_rl_mod, "inspect"):
-        try:
-            return _rl_mod.inspect("premium", key)
-        except Exception:
-            pass
-    return None
-
-
-def _safe_premium_quota_check(key: str) -> Tuple[bool, int, int]:
-    inspected = _inspect_premium_quota(key)
-    if inspected is not None:
-        return inspected
-    return _safe_rate_check("premium", key)
-
-
-def _consume_premium_quota(key: str) -> Tuple[bool, int, int]:
-    if is_admin_key(key):
-        return True, 9999, int(time.time()) + 60
-    if premium_credits.consume(key):
-        inspected = _inspect_premium_quota(key)
-        if inspected is not None:
-            _allowed, remaining, reset_ts = inspected
-            return True, remaining, reset_ts
-        return True, 0, int(time.time()) + 60
-    return _safe_rate_check("premium", key)
-
-
-def _refund_premium_quota(key: str) -> Tuple[bool, int, int]:
-    if is_admin_key(key):
-        return True, 9999, int(time.time()) + 60
-    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
-    if use_redis:
-        try:
-            if hasattr(_rl_instance, "refund"):
-                return _rl_instance.refund("premium", key)
-        except Exception:
-            pass
-    if _rl_mod and hasattr(_rl_mod, "refund"):
-        try:
-            return _rl_mod.refund("premium", key)
-        except Exception:
-            pass
-    premium_credits.grant(key, 1)
-    inspected = _inspect_premium_quota(key)
-    if inspected is not None:
-        _allowed, remaining, reset_ts = inspected
-        return True, remaining + premium_credits.peek(key), reset_ts
-    return True, premium_credits.peek(key), int(time.time()) + 60
 
 
 def _require_admin_or_dev(api_key: str) -> None:
@@ -415,242 +318,66 @@ def _require_admin_or_dev(api_key: str) -> None:
         raise HTTPException(status_code=403, detail="Admin API key required")
 
 
-def _prefill_prefetch_queue() -> None:
-    target = int(os.getenv("PREFETCH_PREWARM_COUNT", "0") or 0)
-    if target <= 0:
-        return
-    try:
-        current = prefetch.size()
-    except Exception:
-        current = 0
-    desired = max(0, target - current)
-    if desired <= 0:
-        return
-    if llm_generate_page is None or not llm_status().get("has_token"):
-        log.debug("prefetch.prewarm: LLM unavailable; skipping")
-        return
-    log.info("prefetch.prewarm: generating %d documents before startup", desired)
-    paths: List[PrefetchHandle] = []
-    generated_count = 0
-    failures = 0
-    max_failures = max(5, desired * 3)
-    target_size = current + desired
-    
-    while generated_count < desired and failures < max_failures:
-        seed = (int(time.time() * 1000) + generated_count + failures) % 1_000_000_007
-        try:
-            burst_docs: List[Dict[str, Any]] = []
-            for page in llm_generate_page_burst("", seed=seed, user_key="prefetch"):
-                if isinstance(page, dict) and page.get("error"):
-                    failures += 1
-                    break
-                if isinstance(page, dict):
-                    burst_docs.append(page)
-            if burst_docs:
-                approved = _apply_compliance_batch(burst_docs, "prefetch.prewarm")
-                added_paths = _enqueue_prefetch_docs(approved, context="prefetch.prewarm", max_queue=target_size)
-                paths.extend(added_paths)
-                generated_count += len(added_paths)
-                if added_paths:
-                    failures = 0
-                else:
-                    failures += 1
-        except Exception as e:
-            log.error("prefetch.prewarm: burst error err=%r", e)
-            failures += 1
-            break
-    log.info("prefetch.prewarm: completed with %d documents (failures=%d)", len(paths), failures)
+def _summarize_preflight_issues(issues: List[Dict[str, Any]], limit: int = 4) -> str:
+    parts: List[str] = []
+    for issue in list(issues or [])[:limit]:
+        severity = str(issue.get("severity") or "issue")
+        field = str(issue.get("field") or "unknown")
+        message = str(issue.get("message") or "").strip()
+        parts.append(f"{severity}:{field}:{message}")
+    extra = len(issues or []) - len(parts)
+    if extra > 0:
+        parts.append(f"+{extra} more")
+    return " | ".join(parts) if parts else "none"
 
 
-def _prefetch_target_size(current: int) -> int:
-    cap = max(PREFETCH_FILL_TO, PREFETCH_LOW_WATER)
-    if current <= 0:
-        return cap
-    if current <= PREFETCH_LOW_WATER:
-        target = min(cap, current + PREFETCH_REVIEW_BATCH)
-        return max(target, PREFETCH_LOW_WATER)
-    return cap
-
-
-def _top_up_prefetch(brief: str = "", min_fill: int = PREFETCH_FILL_TO) -> None:
-    """Background job: if queue is at/below low water, generate until it reaches min_fill.
-    Uses the configured LLM only; no offline prefetch here.
-    """
-    try:
-        if llm_generate_page is None or not llm_status().get("has_token"):
-            log.debug("prefetch.top_up: LLM unavailable; aborting")
-            return
-        worker_limit = max(1, PREFETCH_MAX_WORKERS)
-
-        def _generate_burst(seed: int) -> List[Dict[str, Any]]:
-            return list(llm_generate_page_burst("", seed=seed, user_key="prefetch"))
-
-        while True:
-            current = prefetch.size()
-            target = max(min_fill, _prefetch_target_size(current))
-            if current > PREFETCH_LOW_WATER and current >= target:
-                log.debug(
-                    "prefetch.top_up: queue healthy (size=%d, low_water=%d, target=%d)",
-                    current,
-                    PREFETCH_LOW_WATER,
-                    target,
-                )
-                return
-            log.info(
-                "prefetch.top_up: refilling queue (current=%d, target=%d, brief=%s)",
-                current,
-                target,
-                (brief or "")[:60],
-            )
-            generated = 0
-            failures = 0
-            max_failures = max(5, target * 3)
-            seed_offset = 0
-            with ThreadPoolExecutor(max_workers=worker_limit) as executor:
-                futures: Set[Any] = set()
-
-                def _submit_available_jobs() -> None:
-                    nonlocal seed_offset
-                    while (
-                        len(futures) < worker_limit
-                        and prefetch.size() + len(futures) < target
-                        and failures < max_failures
-                    ):
-                        seed = (int(time.time() * 1000) + generated + failures + seed_offset) % 1_000_000_007
-                        seed_offset += 1
-                        futures.add(executor.submit(_generate_burst, seed))
-
-                _submit_available_jobs()
-                while (prefetch.size() < target and failures < max_failures) or futures:
-                    if not futures:
-                        _submit_available_jobs()
-                        if not futures:
-                            break
-                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
-                    for fut in done:
-                        futures.discard(fut)
-                        try:
-                            burst_docs = [p for p in fut.result() if isinstance(p, dict) and not p.get("error")]
-                            if not burst_docs:
-                                failures += 1
-                                continue
-                            approved = _apply_compliance_batch(burst_docs, "prefetch.top_up")
-                            if not approved:
-                                failures += 1
-                                continue
-                            added_paths = _enqueue_prefetch_docs(approved, context="prefetch.top_up", max_queue=target)
-                            if added_paths:
-                                generated += len(added_paths)
-                                failures = 0
-                            else:
-                                failures += 1
-                        except Exception as exc:
-                            failures += 1
-                            log.warning("prefetch.top_up: generation worker error: %r", exc)
-                            continue
-                        if prefetch.size() >= target and failures < max_failures:
-                            # Allow outstanding workers to finish but do not enqueue more jobs
-                            continue
-                    if failures >= max_failures:
-                        for fut in futures:
-                            fut.cancel()
-                        futures.clear()
-                        break
-                    _submit_available_jobs()
-            updated_size = prefetch.size()
-            if updated_size >= target:
-                log.info("prefetch.top_up: refill complete queue_size=%d", updated_size)
-                return
-            if failures >= max_failures:
-                log.warning(
-                    "prefetch.top_up: stopped with queue_size=%d after %d attempts (target=%d)",
-                    updated_size,
-                    generated + failures,
-                    target,
-                )
-                return
-            log.info(
-                "prefetch.top_up: continuing refill (queue_size=%d target=%d)",
-                updated_size,
-                target,
-            )
-    except Exception:
-        log.exception("prefetch.top_up: unexpected error")
-        pass
-
-
-def _apply_compliance_batch(docs: List[Dict[str, Any]], context: str) -> List[Dict[str, Any]]:
-    if not docs:
-        return []
-    reviews = run_compliance_batch(docs)
-    if not isinstance(reviews, list):
-        if os.getenv("PYTEST_CURRENT_TEST"):
-            approved: List[Dict[str, Any]] = []
-            for doc in docs:
-                stub = {"ok": True, "notes": "review skipped in tests"}
-                doc["review"] = stub
-                approved.append(doc)
-            return approved
-        if os.getenv("COMPLIANCE_FAIL_OPEN", "0").lower() in {"1", "true", "yes", "on"}:
-            approved = []
-            for doc in docs:
-                stub = {"ok": True, "notes": "review unavailable; fail-open"}
-                doc["review"] = stub
-                approved.append(doc)
-            log.warning("%s: compliance batch unavailable; fail-open %d docs", context, len(docs))
-            return approved
-        log.warning("%s: compliance batch unavailable; dropping %d docs", context, len(docs))
-        return []
-    review_map: Dict[int, Dict[str, Any]] = {}
-    for idx, item in enumerate(reviews):
-        if not isinstance(item, dict):
-            continue
-        key = item.get("index")
-        if isinstance(key, int):
-            review_map[key] = item
-        else:
-            review_map[idx] = item
+def _apply_local_acceptance_batch(docs: List[Dict[str, Any]], context: str) -> List[Dict[str, Any]]:
     approved = []
     for idx, doc in enumerate(docs):
-        review = review_map.get(idx)
-        if not review:
-            log.warning("%s: missing review for index=%d", context, idx)
+        if not isinstance(doc, dict):
             continue
-        if review.get("ok") is False:
-            log.info("%s: review rejected index=%d", context, idx)
-            continue
-        meta = doc.get("_prefetch") if isinstance(doc, dict) else None
-        corrected = review.get("doc")
-        if isinstance(corrected, dict):
-            doc = corrected
-            if isinstance(meta, dict):
-                doc["_prefetch"] = meta
         issues = preflight_doc(doc)
         if preflight_has_blocking_issues(issues):
-            log.info("%s: preflight rejected index=%d", context, idx)
+            log.info(
+                "%s: local preflight rejected index=%d issues=%s",
+                context,
+                idx,
+                _summarize_preflight_issues(issues),
+            )
+            continue
+        if context.startswith("premium") and not _passes_premium_fail_open_gate(doc, context=context):
             continue
         if issues:
             doc = annotate_preflight_doc(doc, issues)
-        doc["review"] = review
+        doc["review"] = {"ok": True, "notes": "local preflight accepted"}
         approved.append(doc)
     return approved
 
 
-def _enqueue_prefetch_docs(
-    docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None
-) -> List[PrefetchHandle]:
-    if not docs:
-        return []
-    docs = _rank_prefetch_docs(docs)
-    stored: List[PrefetchHandle] = []
-    for idx, doc in enumerate(docs):
-        if max_queue is not None and prefetch.size() >= max_queue:
-            break
-        handle = prefetch.enqueue(doc)
-        if not handle:
-            continue
-        stored.append(handle)
-    return stored
+def _passes_premium_fail_open_gate(doc: Dict[str, Any], *, context: str) -> bool:
+    quality = score_page_doc(doc)
+    score = int(quality.get("score", 0))
+    metrics = quality.get("metrics") or extract_review_metrics(doc)
+    flags = metrics.get("quality_flags") or {}
+    layout = metrics.get("layout_metrics") or {}
+    color_metrics = metrics.get("color_metrics") or {}
+    has_structure = bool(layout.get("region_count", 0) >= 1 or layout.get("immersive_stage") or layout.get("canvas_or_three"))
+    has_signal = bool(
+        flags.get("motion")
+        or flags.get("interaction")
+        or flags.get("design_kit")
+        or color_metrics.get("has_background_treatment")
+    )
+    if score < PREMIUM_FAIL_OPEN_MIN_SCORE or not has_structure or not has_signal:
+        log.warning(
+            "%s: fail-open gate rejected doc score=%d structure=%s signal=%s",
+            context,
+            score,
+            has_structure,
+            has_signal,
+        )
+        return False
+    return True
 
 
 def _enqueue_premium_docs(
@@ -683,6 +410,21 @@ def _generate_premium_batch_candidates(
     user_key: str,
     context: str,
 ) -> List[Dict[str, Any]]:
+    if llm_generate_page_premium_burst:
+        docs: List[Dict[str, Any]] = []
+        try:
+            for doc in llm_generate_page_premium_burst(
+                brief or "",
+                seed=seed,
+                count=max(1, int(batch_size or 1)),
+                user_key=user_key,
+            ):
+                if isinstance(doc, dict) and not doc.get("error"):
+                    docs.append(doc)
+        except Exception:
+            log.exception("%s: premium burst interrupted after %d accepted candidates", context, len(docs))
+        if docs:
+            return _apply_local_acceptance_batch(docs, context)
     if not llm_generate_page_premium:
         return []
     docs: List[Dict[str, Any]] = []
@@ -692,7 +434,110 @@ def _generate_premium_batch_candidates(
             docs.append(doc)
     if not docs:
         return []
-    return _apply_compliance_batch(docs, context)
+    return _apply_local_acceptance_batch(docs, context)
+
+
+def _next_acceptable_premium_doc(iterator: Iterable[Dict[str, Any]], context: str) -> Optional[Dict[str, Any]]:
+    for doc in iterator:
+        if not isinstance(doc, dict) or doc.get("error"):
+            continue
+        approved = _apply_local_acceptance_batch([doc], context)
+        if approved:
+            ranked = _rank_prefetch_docs(approved)
+            if ranked:
+                return ranked[0]
+    return None
+
+
+def _drain_premium_burst_to_queue(
+    iterator: Iterable[Dict[str, Any]],
+    *,
+    context: str,
+    max_queue: int = PREMIUM_FILL_TO,
+    requested_count: Optional[int] = None,
+    brief: str = "",
+) -> None:
+    accepted_count = 0
+    try:
+        for doc in iterator:
+            if not isinstance(doc, dict) or doc.get("error"):
+                continue
+            approved = _apply_local_acceptance_batch([doc], context)
+            if not approved:
+                continue
+            stored = _enqueue_premium_docs(approved, context=context, max_queue=max_queue)
+            accepted_count += len(stored)
+            if _premium_queue_enabled() and prefetch.size("premium") >= max_queue:
+                break
+    except Exception:
+        log.exception("%s: failed draining premium burst leftovers", context)
+    finally:
+        if requested_count is not None:
+            missing_slots = max(0, int(requested_count) - accepted_count)
+            if missing_slots > 0:
+                _refill_missing_premium_slots(
+                    brief,
+                    missing_slots=missing_slots,
+                    max_queue=max_queue,
+                    context=f"{context}.missing_refill",
+                )
+
+
+def _refill_missing_premium_slots(
+    brief: str,
+    *,
+    missing_slots: int,
+    max_queue: int,
+    context: str,
+) -> None:
+    if missing_slots <= 0 or not PREMIUM_REFILL_MISSING_ENABLED:
+        return
+    if not _premium_queue_enabled() or not llm_premium_available():
+        return
+    if not _PREMIUM_TOPUP_LOCK.acquire(blocking=False):
+        log.info("%s: skipped missing-slot refill because another premium refill is running", context)
+        return
+    try:
+        target = int(max_queue or PREMIUM_FILL_TO)
+        if prefetch.size("premium") >= target:
+            return
+        seed = int(time.time() * 1000) % 1_000_000_007
+        approved = _generate_premium_batch_candidates(
+            brief or "",
+            batch_size=PREMIUM_BATCH_SIZE,
+            seed=seed,
+            user_key="premium-missing-refill",
+            context=context,
+        )
+        if approved:
+            _enqueue_premium_docs(approved, context=context, max_queue=target)
+    except Exception:
+        log.exception("%s: failed missing-slot refill", context)
+    finally:
+        _PREMIUM_TOPUP_LOCK.release()
+
+
+def _start_premium_burst(
+    brief: str,
+    *,
+    seed: int,
+    user_key: str,
+    context: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Iterable[Dict[str, Any]]]]:
+    if llm_generate_page_premium_burst:
+        iterator = iter(
+            llm_generate_page_premium_burst(
+                brief or "",
+                seed=seed,
+                count=PREMIUM_BATCH_SIZE,
+                user_key=user_key,
+            )
+        )
+        first = _next_acceptable_premium_doc(iterator, context)
+        if first:
+            return first, iterator
+    first = _generate_single_premium_doc(brief, seed=seed, user_key=user_key, context=context)
+    return first, None
 
 
 def _generate_single_premium_doc(
@@ -707,15 +552,35 @@ def _generate_single_premium_doc(
     doc = llm_generate_page_premium(brief or "", seed=seed, user_key=user_key)
     if not isinstance(doc, dict) or doc.get("error"):
         return None
-    approved = _apply_compliance_batch([doc], context)
-    if not approved:
+    issues = preflight_doc(doc)
+    if preflight_has_blocking_issues(issues):
+        log.info("%s: live preflight rejected output issues=%s", context, _summarize_preflight_issues(issues))
         return None
-    ranked = _rank_prefetch_docs(approved)
+    if issues:
+        doc = annotate_preflight_doc(doc, issues)
+    if not _passes_premium_fail_open_gate(doc, context=context):
+        return None
+    ranked = _rank_prefetch_docs([doc])
     return ranked[0] if ranked else None
 
 
 def _premium_queue_target_size(current: int) -> int:
     return max(PREMIUM_FILL_TO, current)
+
+
+def _schedule_premium_topup(background_tasks: Optional[BackgroundTasks], brief: str, target: int, *, context: str) -> None:
+    if not background_tasks:
+        return
+    try:
+        log.info(
+            "%s: scheduling premium top-up queue_size=%d target=%d",
+            context,
+            prefetch.size("premium"),
+            target,
+        )
+        background_tasks.add_task(_top_up_premium_queue, brief or "", target)
+    except Exception:
+        log.exception("%s: failed to schedule premium top-up", context)
 
 
 def _top_up_premium_queue(brief: str = "", min_fill: int = PREMIUM_FILL_TO) -> None:
@@ -771,7 +636,7 @@ def _serve_or_fill_premium_batch(
     if leftovers:
         _enqueue_premium_docs(leftovers, context="premium.generate", max_queue=PREMIUM_FILL_TO)
     if background_tasks and _premium_queue_enabled() and prefetch.size("premium") <= PREMIUM_LOW_WATER:
-        background_tasks.add_task(_top_up_premium_queue, brief or "", PREMIUM_FILL_TO)
+        _schedule_premium_topup(background_tasks, brief or "", PREMIUM_FILL_TO, context="premium.generate")
     return first
 
 
@@ -782,7 +647,7 @@ def _stream_premium_first_page(
     user_key: str,
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> Dict[str, Any]:
-    first = _generate_single_premium_doc(
+    first, leftovers = _start_premium_burst(
         brief,
         seed=seed,
         user_key=user_key,
@@ -790,216 +655,19 @@ def _stream_premium_first_page(
     )
     if not first:
         return {"error": "Premium generation failed"}
+    if leftovers and background_tasks:
+        background_tasks.add_task(
+            _drain_premium_burst_to_queue,
+            leftovers,
+            context="premium.stream.leftovers",
+            max_queue=PREMIUM_FILL_TO,
+            requested_count=max(0, PREMIUM_BATCH_SIZE - 1),
+            brief=brief or "",
+        )
     if background_tasks and _premium_queue_enabled():
         if prefetch.size("premium") < PREMIUM_FILL_TO:
-            background_tasks.add_task(_top_up_premium_queue, brief or "", PREMIUM_FILL_TO)
+            _schedule_premium_topup(background_tasks, brief or "", PREMIUM_FILL_TO, context="premium.stream.first")
     return first
-
-
-def _prefetch_diversity_bucket(doc: Dict[str, Any]) -> tuple:
-    metrics = extract_review_metrics(doc)
-    flags = metrics["quality_flags"]
-    layout = metrics["layout_metrics"]
-    colors = metrics["color_metrics"]
-    region_bucket = min(int(layout["region_count"]), 4)
-    color_bucket = min(int(colors["color_count"]) // 2, 4)
-    return (
-        doc.get("kind"),
-        bool(layout["canvas_or_three"]),
-        bool(layout["immersive_stage"]),
-        region_bucket,
-        color_bucket,
-        bool(flags["motion"]),
-        bool(flags["interaction"]),
-        bool(flags["design_kit"]),
-        bool(flags["centered_card"]),
-    )
-
-
-def _prefetch_candidate_score(doc: Dict[str, Any]) -> int:
-    quality = score_page_doc(doc)
-    metrics = quality.get("metrics") or extract_review_metrics(doc)
-    flags = metrics["quality_flags"]
-    layout = metrics["layout_metrics"]
-    colors = metrics["color_metrics"]
-    score = int(quality.get("score", 0))
-    score += min(int(colors["color_count"]), 6)
-    if layout["immersive_stage"]:
-        score += 8
-    if layout["canvas_or_three"]:
-        score += 4
-    if flags["motion"]:
-        score += 4
-    if flags["interaction"]:
-        score += 3
-    if flags["design_kit"]:
-        score += 3
-    if flags["centered_card"]:
-        score -= 10
-    return score
-
-
-def _rank_prefetch_docs(docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not docs:
-        return []
-    ranked: List[Tuple[int, tuple, int, Dict[str, Any]]] = []
-    seen_signatures: Set[str] = set()
-    for idx, doc in enumerate(docs):
-        if not isinstance(doc, dict):
-            continue
-        sig = dedupe.signature_for_doc(doc)
-        if sig and sig in seen_signatures:
-            continue
-        if sig:
-            seen_signatures.add(sig)
-        ranked.append((_prefetch_candidate_score(doc), _prefetch_diversity_bucket(doc), idx, doc))
-    ranked.sort(key=lambda item: (-item[0], item[2]))
-
-    primary: List[Dict[str, Any]] = []
-    spill: List[Dict[str, Any]] = []
-    seen_buckets: Set[tuple] = set()
-    for _score, bucket, _idx, doc in ranked:
-        if bucket in seen_buckets:
-            spill.append(doc)
-            continue
-        seen_buckets.add(bucket)
-        primary.append(doc)
-    return primary + spill
-
-
-def _review_prefetched_docs(handles: List[PrefetchHandle]) -> List[PrefetchHandle]:
-    retry: List[PrefetchHandle] = []
-    if not handles or prefetch.backend() != "file":
-        return retry
-    paths = [prefetch.PREFETCH_DIR / h for h in handles if h]
-    existing = [p for p in paths if p.exists()]
-    if not existing:
-        return retry
-    try:
-        for chunk in _chunked(existing, PREFETCH_REVIEW_BATCH):
-            docs: List[Dict[str, Any]] = []
-            valid_paths: List[Path] = []
-            for path in chunk:
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except Exception:
-                    log.warning("prefetch.review: failed to load %s", path.name, exc_info=True)
-                    try:
-                        path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    continue
-                docs.append(data)
-                valid_paths.append(path)
-            if not docs:
-                continue
-            reviews = run_compliance_batch(docs)
-            if not isinstance(reviews, list):
-                retry.extend(valid_paths)
-                continue
-            review_map: Dict[int, Dict[str, Any]] = {}
-            for idx, item in enumerate(reviews):
-                if not isinstance(item, dict):
-                    continue
-                key = item.get("index")
-                if isinstance(key, int):
-                    review_map[key] = item
-                else:
-                    review_map[idx] = item
-            for idx, path in enumerate(valid_paths):
-                review = review_map.get(idx)
-                if not review:
-                    retry.append(path.name)
-                    continue
-                if review.get("ok") is False:
-                    log.info("prefetch.review: removing rejected doc file=%s", path.name)
-                    try:
-                        path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    continue
-                doc = docs[idx]
-                meta = doc.get("_prefetch") if isinstance(doc, dict) else None
-                corrected = review.get("doc")
-                if isinstance(corrected, dict):
-                    doc = corrected
-                    if isinstance(meta, dict):
-                        doc["_prefetch"] = meta
-                issues = preflight_doc(doc)
-                if preflight_has_blocking_issues(issues):
-                    log.info("prefetch.review: removing preflight-blocked doc file=%s", path.name)
-                    try:
-                        path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    continue
-                if issues:
-                    doc = annotate_preflight_doc(doc, issues)
-                docs[idx] = doc
-                doc["review"] = review
-                try:
-                    path.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-                except Exception:
-                    log.exception("prefetch.review: failed to persist corrected doc file=%s", path.name)
-                    retry.append(path.name)
-                    continue
-                sig = dedupe.signature_for_doc(doc)
-                if sig:
-                    dedupe.add(sig)
-    except Exception:
-        log.exception("prefetch.review: unexpected error")
-        retry.extend([p.name for p in existing])
-    return retry
-
-
-def _process_prefetch_review_queue() -> None:
-    global _REVIEW_WORKER
-    while True:
-        with _REVIEW_QUEUE_LOCK:
-            if not _PREFETCH_REVIEW_QUEUE:
-                _REVIEW_WORKER = None
-                return
-            batch_paths, attempt = _PREFETCH_REVIEW_QUEUE.popleft()
-        retry_paths: List[PrefetchHandle] = []
-        try:
-            retry_paths = _review_prefetched_docs(batch_paths)
-        except Exception:
-            log.exception("prefetch.review: worker failed on batch", exc_info=True)
-            retry_paths = batch_paths
-        if retry_paths and attempt + 1 < _REVIEW_MAX_ATTEMPTS:
-            try:
-                time.sleep(5)
-            except Exception:
-                pass
-            with _REVIEW_QUEUE_LOCK:
-                _PREFETCH_REVIEW_QUEUE.append((retry_paths, attempt + 1))
-        elif retry_paths:
-            log.warning(
-                "prefetch.review: giving up after %d attempts on %d docs",
-                attempt + 1,
-                len(retry_paths),
-            )
-
-
-def _schedule_prefetch_review(handles: List[PrefetchHandle]) -> None:
-    global _REVIEW_WORKER
-    if prefetch.backend() != "file":
-        return
-    paths = [prefetch.PREFETCH_DIR / h for h in handles if h]
-    existing = [p for p in paths if p.exists()]
-    if not existing:
-        return
-    start_worker = False
-    worker: Optional[threading.Thread]
-    with _REVIEW_QUEUE_LOCK:
-        _PREFETCH_REVIEW_QUEUE.append((existing, 0))
-        worker = _REVIEW_WORKER
-        if not (worker and worker.is_alive()):
-            _REVIEW_WORKER = threading.Thread(target=_process_prefetch_review_queue, daemon=True)
-            worker = _REVIEW_WORKER
-            start_worker = True
-    if start_worker and worker:
-        worker.start()
 
 
 def _chunked(seq: List[Path], size: int) -> Iterable[List[Path]]:
@@ -1007,106 +675,6 @@ def _chunked(seq: List[Path], size: int) -> Iterable[List[Path]]:
         size = 1
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
-
-
-def _validate_with_jsonschema(page: Dict[str, Any]) -> Tuple[bool, List[Dict[str, Any]]]:
-    """
-    Validate `page` against your JSON schema file if present.
-    If schema file is absent, do a light required-fields check to satisfy tests.
-    """
-    schema_path = Path("schemas/page_schema.json")
-    errors: List[Dict[str, Any]] = []
-
-    # Minimal checks even without schema to support tests
-    def _light_checks(p: Dict[str, Any]):
-        if "components" not in p or not isinstance(p["components"], list):
-            errors.append({"path": "components", "message": "required: components list"})
-            return
-        for idx, comp in enumerate(p["components"]):
-            if not isinstance(comp, dict) or "id" not in comp:
-                errors.append({"path": f"components[{idx}].id", "message": "required property 'id'"})
-
-    # First try strict Pydantic models if available/valid
-    try:
-        from typing import Literal, Union, Optional as _Optional
-
-        class NdwBackground(BaseModel):
-            style: _Optional[str] = None
-            class_: _Optional[str] = Field(default=None, alias="class")
-
-        class NdwSnippetV1(BaseModel):
-            kind: Literal["ndw_snippet_v1"]
-            title: _Optional[str] = None
-            background: _Optional[NdwBackground] = None
-            css: _Optional[str] = None
-            html: _Optional[str] = None
-            js: _Optional[str] = None
-
-        class FullPageHtml(BaseModel):
-            kind: Literal["full_page_html"]
-            html: str
-
-        class CustomProps(BaseModel):
-            html: str
-            height: int
-
-        class Component(BaseModel):
-            id: str
-            type: str
-            props: CustomProps
-
-        class ComponentsDoc(BaseModel):
-            components: List[Component]
-
-        PageUnion = Union[NdwSnippetV1, FullPageHtml, ComponentsDoc]
-        TypeAdapter(PageUnion).validate_python(page)
-        return True, []
-    except ValidationError as ve:
-        pydantic_errors: List[Dict[str, Any]] = []
-        try:
-            for e in ve.errors():
-                loc = ".".join(str(p) for p in e.get("loc", [])) or "(root)"
-                pydantic_errors.append({"path": loc, "message": e.get("msg", "invalid")})
-        except Exception:
-            pydantic_errors = [{"path": "(root)", "message": "invalid"}]
-        errors.extend([])
-        _pyd_errs = pydantic_errors
-    except Exception:
-        # If Pydantic import/types fail, fall back silently
-        pass
-
-    if not schema_path.exists():
-        _light_checks(page)
-        return (len(errors) == 0), errors
-
-    try:
-        import jsonschema
-    except Exception:
-        _light_checks(page)
-        return (len(errors) == 0), errors
-
-    try:
-        schema = json.loads(schema_path.read_text())
-        validator = jsonschema.Draft202012Validator(schema)
-        schema_errors: List[Dict[str, Any]] = []
-        for err in validator.iter_errors(page):
-            loc = ".".join([str(p) for p in err.path]) or "(root)"
-            msg = str(err.message)
-            schema_errors.append({"path": loc, "message": msg})
-        if not schema_errors:
-            # Schema accepts the document; ignore earlier Pydantic complaints
-            return True, []
-        # If schema failed, combine with any Pydantic errors if present
-        try:
-            combined = schema_errors + locals().get('_pyd_errs', [])
-        except Exception:
-            combined = schema_errors
-        return False, combined
-    except Exception as e:
-        errors.append({"path": "(schema)", "message": f"schema load/validate error: {e}"})
-
-    return (len(errors) == 0), errors
-
 
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -1169,11 +737,11 @@ class QueuePreview(BaseModel):
 
 @app.get("/api/prefetch/previews", response_model=List[QueuePreview])
 def get_prefetch_previews(limit: int = 20) -> List[Dict[str, Any]]:
-    """Return recent prefetch queue entries for the 3D tunnel display."""
+    """Return recent premium queue entries for the 3D tunnel display."""
     cached = _get_cached_prefetch_previews(int(limit or 0))
     if cached is not None:
         return cached
-    items = prefetch.peek(limit=limit)
+    items = prefetch.peek(limit=limit, lane="premium")
     _set_cached_prefetch_previews(int(limit or 0), items)
     return items
 
@@ -1198,6 +766,7 @@ def get_prefetch_entry(item_id: str) -> Dict[str, Any]:
         counter.increment(1)
     except Exception:
         pass
+    _record_user_visible_serve(entry)
     return entry
 
 
@@ -1209,13 +778,10 @@ def generate_endpoint(
     api_key: str = Depends(optional_api_key),
 ):
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
-    premium_requested = req.quality == "premium"
-    llm_info = llm_status()
-    llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
     premium_ready = bool(llm_generate_page_premium is not None and llm_premium_available())
     offline_allowed = os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1", "true", "yes", "on"}
 
-    if not llm_available:
+    if not premium_ready:
         if offline_allowed:
             allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
             log.info("rate_limit (offline) allowed=%s remaining=%s", allowed, remaining)
@@ -1286,94 +852,23 @@ def generate_endpoint(
             headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
-    if premium_requested:
-        if not premium_ready:
-            return JSONResponse(
-                status_code=503,
-                content={"error": "Premium mode requires GEMINI_API_KEY"},
-                headers=_rate_limit_headers(remaining, reset_ts),
-            )
-        premium_allowed, premium_remaining, premium_reset_ts = _consume_premium_quota(client_key)
-        if not premium_allowed:
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "error": "premium rate limit exceeded",
-                    "reset": premium_reset_ts,
-                    "retry_after_seconds": max(0, premium_reset_ts - int(time.time())),
-                    "message": "Premium daily limit reached. Try again later.",
-                },
-                headers=_rate_limit_headers(premium_remaining, premium_reset_ts, limited=True),
-            )
-        try:
-            page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
-            if page:
-                if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
-                    background_tasks.add_task(_top_up_premium_queue, req.brief or "", PREMIUM_FILL_TO)
-            else:
-                page = _serve_or_fill_premium_batch(
-                    req.brief or "",
-                    seed=req.seed or 0,
-                    user_key=client_key,
-                    background_tasks=background_tasks,
-                )
-        except Exception:
-            _refund_premium_quota(client_key)
-            raise
-        if isinstance(page, dict) and not page.get("error"):
-            try:
-                counter.increment(1)
-            except Exception:
-                pass
-        else:
-            premium_allowed, premium_remaining, premium_reset_ts = _refund_premium_quota(client_key)
-        return JSONResponse(page, headers=_rate_limit_headers(premium_remaining, premium_reset_ts))
-
-    served_from_prefetch = False
-    page = prefetch.dequeue()
-    if page is not None:
-        served_from_prefetch = True
-        log.info("prefetch.generate: served page from queue")
+    page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
     if page:
-        try:
-            if PREFETCH_DELAY_MS > 0:
-                time.sleep(PREFETCH_DELAY_MS / 1000.0)
-        except Exception:
-            pass
-        if isinstance(page, dict) and not page.get("error"):
-            try:
-                counter.increment(1)
-            except Exception:
-                pass
-        try:
-            if _prefetch_topup_enabled() and served_from_prefetch:
-                queue_size = prefetch.size()
-                if queue_size <= PREFETCH_LOW_WATER:
-                    log.info(
-                        "prefetch.generate: queue size=%d <= low_water=%d, scheduling top-up",
-                        queue_size,
-                        PREFETCH_LOW_WATER,
-                    )
-                    target = _prefetch_target_size(prefetch.size())
-                    background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
-        except Exception:
-            log.exception("prefetch.generate: failed to schedule background top-up")
-        return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
-
-    # Queue empty: do a burst and return the FIRST site that finishes
-    log.info("prefetch.generate: queue empty; invoking shared fast generator")
-    try:
-        page = llm_generate_page(req.brief or "", seed=req.seed or 0, user_key=client_key, run_review=False)
-    except Exception as e:
-        log.exception("Shared fast generation failure")
-        page = {"error": str(e)}
-
+        if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+            _schedule_premium_topup(background_tasks, req.brief or "", PREMIUM_FILL_TO, context="site.generate")
+    else:
+        page = _stream_premium_first_page(
+            req.brief or "",
+            seed=req.seed or 0,
+            user_key=client_key,
+            background_tasks=background_tasks,
+        )
     if isinstance(page, dict) and not page.get("error"):
         try:
             counter.increment(1)
         except Exception:
             pass
-
+        _record_user_visible_serve(page)
     return JSONResponse(page, headers=_rate_limit_headers(remaining, reset_ts))
 
 
@@ -1389,12 +884,9 @@ def generate_stream(
     NDJSON streaming endpoint: emits a couple of JSON lines.
     """
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
-    premium_requested = req.quality == "premium"
-    llm_info = llm_status()
-    llm_available = not (llm_generate_page is None or not llm_info.get("has_token"))
     premium_ready = bool(llm_generate_page_premium is not None and llm_premium_available())
 
-    if not llm_available and os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() not in {"1", "true", "yes", "on"} and not os.getenv("PYTEST_CURRENT_TEST"):
+    if not premium_ready and os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() not in {"1", "true", "yes", "on"} and not os.getenv("PYTEST_CURRENT_TEST"):
         def _iter_error() -> Iterable[str]:
             meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
             yield json.dumps(meta) + "\n"
@@ -1419,173 +911,31 @@ def generate_stream(
         meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
         yield json.dumps(meta) + "\n"
 
-        if premium_requested:
-            if not premium_ready:
-                yield json.dumps({"event": "error", "data": {"error": "Premium mode requires GEMINI_API_KEY"}}) + "\n"
-                return
-            premium_allowed, premium_remaining, premium_reset_ts = _consume_premium_quota(client_key)
-            if not premium_allowed:
-                yield json.dumps({
-                    "event": "error",
-                    "data": {
-                        "error": "premium rate limit exceeded",
-                        "message": "Premium daily limit reached. Try again later.",
-                        "reset": premium_reset_ts,
-                        "retry_after_seconds": max(0, premium_reset_ts - int(time.time())),
-                    },
-                }) + "\n"
-                return
-            try:
-                page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
-                if page:
-                    if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
-                        background_tasks.add_task(_top_up_premium_queue, req.brief or "", PREMIUM_FILL_TO)
-                else:
-                    page = _stream_premium_first_page(
-                        req.brief or "",
-                        seed=req.seed or 0,
-                        user_key=client_key,
-                        background_tasks=background_tasks,
-                    )
-            except Exception:
-                _refund_premium_quota(client_key)
-                yield json.dumps({"event": "error", "data": {"error": "Premium generation failed"}}) + "\n"
-                return
-            if isinstance(page, dict) and not page.get("error"):
-                try:
-                    counter.increment(1)
-                except Exception:
-                    pass
-                yield json.dumps({"event": "page", "data": page}) + "\n"
+        try:
+            page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
+            if page:
+                if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+                    _schedule_premium_topup(background_tasks, req.brief or "", PREMIUM_FILL_TO, context="site.stream")
             else:
-                _refund_premium_quota(client_key)
-                yield json.dumps({"event": "error", "data": page or {"error": "Premium generation failed"}}) + "\n"
+                page = _stream_premium_first_page(
+                    req.brief or "",
+                    seed=req.seed or 0,
+                    user_key=client_key,
+                    background_tasks=background_tasks,
+                )
+        except Exception:
+            yield json.dumps({"event": "error", "data": {"error": "Generation failed"}}) + "\n"
             return
-
-        if not llm_available:
-            if os.getenv("ALLOW_OFFLINE_GENERATION", "0").lower() in {"1","true","yes","on"}:
-                # Try prefetch first; if empty, return a simple offline doc
-                page = prefetch.dequeue()
-                if not page:
-                    page = {
-                        "kind": "full_page_html",
-                        "html": """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <title>Offline Sandbox App</title>
-    <style>
-      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-      .card{max-width:420px;background:#1e293b;border-radius:18px;padding:32px;box-shadow:0 20px 50px rgba(15,23,42,0.4)}
-      .card h1{margin:0 0 12px;font-size:1.5rem}
-      .card p{margin:0 0 16px;line-height:1.5}
-      .card button{padding:10px 16px;border-radius:10px;background:#38bdf8;border:none;color:#0f172a;font-weight:600;cursor:pointer}
-    </style>
-  </head>
-  <body>
-    <main class="card">
-      <h1>Offline Preview</h1>
-      <p>This sandbox response is served when real LLM providers are unavailable.</p>
-      <button id="btn">Click me</button>
-      <p id="out" aria-live="polite"></p>
-      <script>
-        const out=document.getElementById("out");
-        document.getElementById("btn").addEventListener("click",()=>{out.textContent="Still offline, but responsive!";});
-      </script>
-    </main>
-  </body>
-</html>""".strip(),
-                        "review": {
-                            "ok": True,
-                            "issues": [],
-                            "notes": "Offline fallback page served because ALLOW_OFFLINE_GENERATION is enabled.",
-                        },
-                    }
-                yield json.dumps({"event": "page", "data": page}) + "\n"
-                return
-            if os.getenv("PYTEST_CURRENT_TEST"):
-                page = {
-                    "components": [
-                        {
-                            "id": "custom-1",
-                            "type": "custom",
-                            "props": {
-                                "html": "<div class=\"p-4 rounded-xl border border-slate-200 bg-white\">Stream Test</div>",
-                                "height": 200,
-                            },
-                        }
-                    ],
-                    "layout": {"flow": "stack"},
-                    "palette": {"primary": "slate", "accent": "indigo"},
-                    "links": ["/about"],
-                    "seed": req.seed or 0,
-                    "model_version": "test-stub",
-                }
-                yield json.dumps({"event": "page", "data": page}) + "\n"
-                return
-            else:
-                yield json.dumps({"event": "error", "data": {"error": "Missing LLM credentials"}}) + "\n"
-                return
-
-        # Normal path: prefer prefetch
-        served_from_prefetch = False
-        page = prefetch.dequeue()
-        if page is not None:
-            served_from_prefetch = True
+        if isinstance(page, dict) and not page.get("error"):
             try:
-                if PREFETCH_DELAY_MS > 0:
-                    time.sleep(PREFETCH_DELAY_MS / 1000.0)
+                counter.increment(1)
             except Exception:
                 pass
-            if isinstance(page, dict) and not page.get("error"):
-                try:
-                    counter.increment(1)
-                except Exception:
-                    pass
-            try:
-                if _prefetch_topup_enabled() and served_from_prefetch and prefetch.size() <= PREFETCH_LOW_WATER:
-                    target = _prefetch_target_size(prefetch.size())
-                    background_tasks.add_task(_top_up_prefetch, req.brief or "", target)
-            except Exception:
-                pass
+            _record_user_visible_serve(page)
             yield json.dumps({"event": "page", "data": page}) + "\n"
-            return
         else:
-            # Queue empty: do a burst, stream ONLY the first page, batch-review & enqueue the rest.
-            log.info("prefetch.generate_stream: queue empty; initiating ad-hoc burst")
-            count = 0
-            first_sent = False
-            followups: List[Dict[str, Any]] = []
-            try:
-                for burst_page in llm_generate_page_burst(req.brief or "", seed=req.seed or 0, user_key=client_key):
-                    if isinstance(burst_page, dict) and not burst_page.get("error"):
-                        if not first_sent:
-                            try:
-                                counter.increment(1)
-                            except Exception:
-                                pass
-                            yield json.dumps({"event": "page", "data": burst_page}) + "\n"
-                            first_sent = True
-                        else:
-                            followups.append(burst_page)
-                    count += 1
-
-                if followups:
-                    log.info("prefetch.generate_stream: running compliance batch on %d followups", len(followups))
-                    approved = _apply_compliance_batch(followups, "prefetch.generate_stream")
-                    try:
-                        _enqueue_prefetch_docs(approved, context="prefetch.generate_stream")
-                    except Exception:
-                        log.exception("prefetch.generate_stream: enqueue failed for reviewed followup")
-
-                if count == 0:
-                    yield json.dumps({"event": "error", "data": {"error": "No pages generated (Provider returned empty result)"}}) + "\n"
-
-            except Exception as e:
-                log.exception("Ad-hoc burst stream failure")
-                yield json.dumps({"event": "error", "data": {"error": str(e)}}) + "\n"
-            return
+            yield json.dumps({"event": "error", "data": page or {"error": "Generation failed"}}) + "\n"
+        return
 
     headers = _rate_limit_headers(remaining, reset_ts)
     return StreamingResponse(_iter(), media_type="application/x-ndjson", headers=headers)
@@ -1610,6 +960,7 @@ def prefetch_status() -> Dict[str, Any]:
         "premium_fill_to": PREMIUM_FILL_TO,
         "premium_batch_size": PREMIUM_BATCH_SIZE,
         "premium_topup_enabled": PREMIUM_TOPUP_ENABLED,
+        "premium_refill_missing_enabled": PREMIUM_REFILL_MISSING_ENABLED,
         "dir": str(prefetch.PREFETCH_DIR),
         "premium_dir": str(getattr(prefetch, "PREMIUM_PREFETCH_DIR", prefetch.PREFETCH_DIR)),
         "backend": prefetch.backend(),
@@ -1630,9 +981,7 @@ def prefetch_fill(
     request: Request,
     api_key: str = Depends(require_api_key),
 ):
-    """Generate N pages in advance (5-20 per request) and enqueue them for later /generate calls.
-    Returns how many were added plus the new queue size.
-    """
+    """Generate premium pages in advance and enqueue them for later /generate calls."""
     client_key = extract_client_key(api_key, request.client.host if request.client else "anon")
     allowed, remaining, reset_ts = _safe_rate_check("prefill", client_key)
     if not allowed:
@@ -1643,85 +992,46 @@ def prefetch_fill(
             headers=_rate_limit_headers(remaining, reset_ts, limited=True),
         )
 
-    # Only allow prefetch when LLM is available (no offline injection here)
-    llm_ok = not (llm_generate_page_burst is None or not llm_status().get("has_token"))
+    premium_ready = bool(llm_generate_page_premium is not None and llm_premium_available())
+    if not premium_ready:
+        log.warning("prefetch.fill: premium LLM unavailable client=%s", client_key)
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Missing Gemini credentials"},
+            headers=_rate_limit_headers(remaining, reset_ts),
+        )
 
     n = prefetch.clamp_batch(int(req.count or 0))
-    initial_size = prefetch.size()
+    initial_size = prefetch.size("premium")
     target_size = initial_size + n
     new_paths: List[PrefetchHandle] = []
-    generated_docs: List[Dict[str, Any]] = []
-    
     generated_count = 0
     attempts = 0
-    prefetch_gemini_only = os.getenv("PREFETCH_GEMINI_ONLY", "0").lower() in {"1", "true", "yes", "on"}
+
     while attempts < n and generated_count < n:
         attempts += 1
-        if not llm_ok:
-            log.warning("prefetch.fill: LLM unavailable mid-fill client=%s", client_key)
-            return JSONResponse(
-                status_code=503,
-                content={"error": "Missing LLM credentials"},
-                headers=_rate_limit_headers(remaining, reset_ts),
-            )
-        
-        # Calculate seed
         seed = (int(time.time() * 1000) + attempts) % 1_000_000_007
-        
         try:
-            burst_docs: List[Dict[str, Any]] = []
-            try:
-                burst_iter = llm_generate_page_burst(
-                    req.brief or "",
-                    seed=seed,
-                    user_key="prefetch",
-                    gemini_only=prefetch_gemini_only,
-                )
-            except TypeError:
-                # Back-compat for tests/mocks that don't accept gemini_only.
-                burst_iter = llm_generate_page_burst(
-                    req.brief or "",
-                    seed=seed,
-                    user_key="prefetch",
-                )
-            for page in burst_iter:
-                if isinstance(page, dict) and page.get("error"):
-                    log.warning("prefetch.fill: generation returned error doc client=%s", client_key)
-                    break
-                if isinstance(page, dict):
-                    burst_docs.append(page)
-
-            if burst_docs:
-                generated_docs.extend(burst_docs)
-                # Review in bounded chunks. Note that n may be smaller than a single burst:
-                # if PREFETCH_REVIEW_BATCH > n, we still batch at (n - generated_count).
-                while generated_count < n:
-                    desired = min(PREFETCH_REVIEW_BATCH, n - generated_count)
-                    if desired <= 0:
-                        break
-                    if len(generated_docs) < desired:
-                        break
-                    batch_size = desired
-                    batch = generated_docs[:batch_size]
-                    generated_docs = generated_docs[batch_size:]
-                    approved = _apply_compliance_batch(batch, "prefetch.fill")
-                    added_paths = _enqueue_prefetch_docs(approved, context="prefetch.fill", max_queue=target_size)
-                    new_paths.extend(added_paths)
-                    generated_count += len(added_paths)
+            requested = min(PREMIUM_BATCH_SIZE, n - generated_count)
+            approved = _generate_premium_batch_candidates(
+                req.brief or "",
+                seed=seed,
+                batch_size=requested,
+                user_key="premium-prefetch",
+                context="premium.fill",
+            )
+            added_paths = _enqueue_premium_docs(approved, context="premium.fill", max_queue=target_size)
+            new_paths.extend(added_paths)
+            generated_count += len(added_paths)
         except Exception as e:
-            log.error("prefetch.fill: burst error client=%s err=%r", client_key, e)
+            log.error("prefetch.fill: premium burst error client=%s err=%r", client_key, e)
             break
 
-    if generated_docs and generated_count < n:
-        approved = _apply_compliance_batch(generated_docs, "prefetch.fill")
-        added_paths = _enqueue_prefetch_docs(approved, context="prefetch.fill", max_queue=target_size)
-        new_paths.extend(added_paths)
-        generated_count += len(added_paths)
-    queue_size = prefetch.size()
+    queue_size = prefetch.size("premium")
     added = max(queue_size - initial_size, 0)
 
     log.info(
-        "prefetch.fill: client=%s requested=%d added=%d queue_size=%d",
+        "prefetch.fill: client=%s requested=%d added=%d premium_queue_size=%d",
         client_key,
         n,
         added,
@@ -1761,64 +1071,3 @@ def validate_endpoint(req: ValidateRequest):
     if preflight_errors:
         detail["warnings"] = preflight_errors
     return {"detail": detail}
-
-
-@app.get("/preview", response_class=HTMLResponse)
-def preview(
-    brief: str,
-    seed: Optional[int] = None,
-    request: Request = None,
-    api_key: str = Depends(require_api_key),
-):
-    """
-    Small HTML preview that calls /generate under the hood and renders
-    a barebones result. Protects with the same API key dependency.
-    """
-    client_key = extract_client_key(api_key, request.client.host if request and request.client else "anon")
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
-    if not allowed:
-        payload = _rate_limit_payload(reset_ts)
-        return PlainTextResponse(
-            payload["message"],
-            status_code=429,
-            headers=_rate_limit_headers(remaining, reset_ts, limited=True),
-        )
-
-    if llm_generate_page is None:
-        page = {
-            "components": [
-                {"id": "hero-1", "type": "hero", "props": {"title": "Welcome", "subtitle": "Fast, cached pages"}}
-            ],
-            "layout": {"flow": "stack"},
-            "palette": {"primary": "slate", "accent": "indigo"},
-            "links": ["/about"],
-            "seed": seed or 42,
-            "model_version": os.getenv("MODEL_NAME", "v0"),
-        }
-    else:
-        page = llm_generate_page(brief, seed=seed or 42, user_key=client_key)
-
-    title = subtitle = ""
-    for c in page.get("components", []):
-        if c.get("type") == "hero":
-            props = c.get("props", {})
-            title = props.get("title", title)
-            subtitle = props.get("subtitle", subtitle)
-            break
-
-    html = f"""<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>Preview</title>
-            <link rel="stylesheet" href="/static/tailwind.css" />
-  </head>
-        <body class="min-h-screen bg-gray-50 text-slate-900" style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 2rem;">
-            <div class="max-w-3xl mx-auto">
-                <h1 class="text-3xl font-bold mb-2">{title}</h1>
-                <p class="text-slate-600">{subtitle}</p>
-            </div>
-  </body>
-</html>
-"""
-    return HTMLResponse(html, headers=_rate_limit_headers(remaining, reset_ts))
