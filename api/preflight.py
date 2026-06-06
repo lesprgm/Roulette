@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 PreflightIssue = Dict[str, str]
@@ -12,12 +13,24 @@ PreflightIssue = Dict[str, str]
 _NODE_BIN = shutil.which("node")
 
 _SCRIPT_TAG_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
+_LINK_TAG_RE = re.compile(r"<link\b([^>]*)>", re.IGNORECASE | re.DOTALL)
+_MEDIA_TAG_RE = re.compile(r"<(?:img|video|audio|source)\b([^>]*)>", re.IGNORECASE | re.DOTALL)
+_IFRAME_RE = re.compile(r"<iframe\b", re.IGNORECASE)
+_STYLE_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", re.IGNORECASE)
 _ATTR_RE = re.compile(r'([a-zA-Z_:][\w:.-]*)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))')
 _ID_RE = re.compile(r'\bid\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _CLASS_RE = re.compile(r'\bclass\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 
 _GET_BY_ID_RE = re.compile(r"(?:document\.)?getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _QUERY_SELECTOR_RE = re.compile(r"querySelector(?:All)?\(\s*['\"]([#.][^'\"]+)['\"]\s*\)")
+_UNSAFE_GET_BY_ID_RE = re.compile(
+    r"(?:document\.)?getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)\s*(?!\?)\.",
+    re.IGNORECASE,
+)
+_UNSAFE_QUERY_SELECTOR_RE = re.compile(
+    r"querySelector\(\s*['\"]([#.][^'\"]+)['\"]\s*\)\s*(?!\?)\.",
+    re.IGNORECASE,
+)
 _SET_ID_RE = re.compile(
     r"(?:\.id\s*=\s*['\"]([^'\"]+)['\"]|setAttribute\(\s*['\"]id['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\))"
 )
@@ -34,8 +47,33 @@ _THREE_USAGE_RE = re.compile(
     re.IGNORECASE,
 )
 _RAF_OR_TIMER_RE = re.compile(r"\b(requestAnimationFrame|setInterval|setTimeout)\b")
+_GLOBAL_LISTENER_RE = re.compile(r"\b(?:window|document)\.addEventListener\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+_GLOBAL_REMOVE_RE = re.compile(r"\b(?:window|document)\.removeEventListener\(", re.IGNORECASE)
+_INLINE_LOOP_CLEANUP_RE = re.compile(
+    r"function\s+\w+\s*\([^)]*\)\s*\{[\s\S]{0,4000}?requestAnimationFrame\([\s\S]{0,2000}?NDW\.registerCleanup\(",
+    re.IGNORECASE,
+)
+_POINTER_ONLY_CONTROL_RE = re.compile(
+    r"addEventListener\(\s*['\"]mousedown['\"][\s\S]{0,3000}?addEventListener\(\s*['\"]touchstart['\"]",
+    re.IGNORECASE,
+)
+_KEYBOARD_CONTROL_RE = re.compile(r"addEventListener\(\s*['\"]keydown['\"]", re.IGNORECASE)
+_ACCESSIBILITY_ATTR_RE = re.compile(
+    r"(role\s*=\s*['\"](?:button|slider|spinbutton)['\"]|tabindex\s*=|aria-label\s*=|aria-labelledby\s*=)",
+    re.IGNORECASE,
+)
 
-_ALLOWED_FULL_PAGE_MODULE_IMPORTS = {"three"}
+_ALLOWED_FULL_PAGE_MODULE_IMPORTS = {
+    "/static/vendor/three.module.js",
+    "/static/vendor/three-addons/controls/OrbitControls.js",
+    "/static/vendor/three-addons/postprocessing/EffectComposer.js",
+    "/static/vendor/three-addons/postprocessing/RenderPass.js",
+    "/static/vendor/three-addons/postprocessing/UnrealBloomPass.js",
+}
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_LOCAL_ROUTE_FILES = {
+    "/tailwind.css": _PROJECT_ROOT / "static" / "tailwind.css",
+}
 _HOST_IDS = {
     "appMain",
     "ndw-app",
@@ -50,6 +88,15 @@ _HOST_IDS = {
     "ndwSnippetError",
     "ndwSnippetErrorMsg",
 }
+
+try:
+    _HTML_WARN_BYTES = int(os.getenv("PREFLIGHT_HTML_WARN_BYTES", "180000"))
+except Exception:
+    _HTML_WARN_BYTES = 180000
+try:
+    _HTML_BLOCK_BYTES = int(os.getenv("PREFLIGHT_HTML_BLOCK_BYTES", "280000"))
+except Exception:
+    _HTML_BLOCK_BYTES = 280000
 
 
 def _issue(severity: str, field: str, message: str) -> PreflightIssue:
@@ -83,6 +130,43 @@ def _extract_classes(html: str) -> Set[str]:
             if item:
                 classes.add(item)
     return classes
+
+
+def _is_remote_url(value: str) -> bool:
+    item = (value or "").strip().lower()
+    return item.startswith(("http://", "https://", "//"))
+
+
+def _is_data_or_fragment_url(value: str) -> bool:
+    item = (value or "").strip().lower()
+    return item.startswith(("data:", "blob:", "#", "mailto:", "tel:"))
+
+
+def _local_asset_exists(value: str) -> bool:
+    item = (value or "").split("?", 1)[0].split("#", 1)[0].strip()
+    if not item or _is_data_or_fragment_url(item):
+        return True
+    if item in _LOCAL_ROUTE_FILES:
+        return _LOCAL_ROUTE_FILES[item].exists()
+    if item.startswith("/static/"):
+        rel = item.lstrip("/")
+        return (_PROJECT_ROOT / rel).is_file()
+    return False
+
+
+def _check_url_reference(value: str, *, field: str, label: str) -> List[PreflightIssue]:
+    issues: List[PreflightIssue] = []
+    item = (value or "").strip()
+    if not item or _is_data_or_fragment_url(item):
+        return issues
+    if _is_remote_url(item):
+        issues.append(_issue("block", field, f"Remote {label} '{item}' is not allowed."))
+        return issues
+    if item.startswith(("/static/", "/tailwind.css")) and not _local_asset_exists(item):
+        issues.append(_issue("block", field, f"Local {label} '{item}' does not exist."))
+    elif not item.startswith(("/static/", "/tailwind.css")):
+        issues.append(_issue("block", field, f"Relative or unsupported {label} '{item}' is not allowed."))
+    return issues
 
 
 def _extract_scripts(html: str) -> List[Dict[str, str]]:
@@ -154,9 +238,46 @@ def _check_selector_refs(
     issues: List[PreflightIssue] = []
     ids = set(html_ids) | _HOST_IDS
     created_ids = _extract_created_ids(js_code)
-    for match in _GET_BY_ID_RE.finditer(js_code or ""):
+    blocked_missing_ids: Set[str] = set()
+    blocked_missing_selectors: Set[str] = set()
+    for match in _UNSAFE_GET_BY_ID_RE.finditer(js_code or ""):
         target_id = match.group(1)
         if target_id and target_id not in ids and target_id not in created_ids:
+            blocked_missing_ids.add(target_id)
+            issues.append(
+                _issue(
+                    "block",
+                    field,
+                    f"Script directly dereferences missing element id '{target_id}'.",
+                )
+            )
+    for match in _UNSAFE_QUERY_SELECTOR_RE.finditer(js_code or ""):
+        selector = match.group(1) or ""
+        if selector.startswith("#"):
+            target_id = selector[1:]
+            if target_id and target_id not in ids and target_id not in created_ids:
+                blocked_missing_selectors.add(selector)
+                issues.append(
+                    _issue(
+                        "block",
+                        field,
+                        f"Script directly dereferences missing selector '{selector}'.",
+                    )
+                )
+        elif selector.startswith("."):
+            target_class = selector[1:]
+            if target_class and target_class not in html_classes:
+                blocked_missing_selectors.add(selector)
+                issues.append(
+                    _issue(
+                        "block",
+                        field,
+                        f"Script directly dereferences missing selector '{selector}'.",
+                    )
+                )
+    for match in _GET_BY_ID_RE.finditer(js_code or ""):
+        target_id = match.group(1)
+        if target_id and target_id not in ids and target_id not in created_ids and target_id not in blocked_missing_ids:
             issues.append(
                 _issue(
                     "warn",
@@ -168,7 +289,12 @@ def _check_selector_refs(
         selector = match.group(1) or ""
         if selector.startswith("#"):
             target_id = selector[1:]
-            if target_id and target_id not in ids and target_id not in created_ids:
+            if (
+                target_id
+                and target_id not in ids
+                and target_id not in created_ids
+                and selector not in blocked_missing_selectors
+            ):
                 issues.append(
                     _issue(
                         "warn",
@@ -178,7 +304,7 @@ def _check_selector_refs(
                 )
         elif selector.startswith("."):
             target_class = selector[1:]
-            if target_class and target_class not in html_classes:
+            if target_class and target_class not in html_classes and selector not in blocked_missing_selectors:
                 issues.append(
                     _issue(
                         "warn",
@@ -274,9 +400,9 @@ def _inspect_js(
     if uses_three and doc_kind == "full_page_html" and not uses_cleanup:
         issues.append(
             _issue(
-                "block",
+                "warn",
                 field,
-                "Three.js/WebGL pages must register teardown with NDW.registerCleanup(...).",
+                "Three.js/WebGL cleanup is handled by iframe teardown; explicit NDW.registerCleanup(...) is optional.",
             )
         )
     if doc_kind == "full_page_html" and _RAF_OR_TIMER_RE.search(code) and not uses_cleanup and "NDW.loop(" not in code:
@@ -285,6 +411,23 @@ def _inspect_js(
                 "warn",
                 field,
                 "Long-lived timers or animation loops should register cleanup with NDW.registerCleanup(...).",
+            )
+        )
+    if doc_kind == "full_page_html" and _INLINE_LOOP_CLEANUP_RE.search(code):
+        issues.append(
+            _issue(
+                "warn",
+                field,
+                "Cleanup registered inside a recurring animation loop is unnecessary in iframe-rendered full pages.",
+            )
+        )
+    global_listener_matches = list(_GLOBAL_LISTENER_RE.finditer(code))
+    if doc_kind == "full_page_html" and global_listener_matches and not _GLOBAL_REMOVE_RE.search(code):
+        issues.append(
+            _issue(
+                "warn",
+                field,
+                "Global window/document listeners are isolated by iframe teardown; explicit removal is optional.",
             )
         )
 
@@ -299,6 +442,35 @@ def _inspect_html(
     doc_kind: str,
 ) -> List[PreflightIssue]:
     issues: List[PreflightIssue] = []
+    html_bytes = len((html or "").encode("utf-8"))
+    if _HTML_BLOCK_BYTES > 0 and html_bytes > _HTML_BLOCK_BYTES:
+        issues.append(
+            _issue(
+                "block",
+                field,
+                f"Generated HTML is too large ({html_bytes} bytes > {_HTML_BLOCK_BYTES} bytes).",
+            )
+        )
+    elif _HTML_WARN_BYTES > 0 and html_bytes > _HTML_WARN_BYTES:
+        issues.append(
+            _issue(
+                "warn",
+                field,
+                f"Generated HTML is heavy ({html_bytes} bytes > {_HTML_WARN_BYTES} bytes).",
+            )
+        )
+    if doc_kind == "full_page_html":
+        if "<!doctype" not in (html or "").lower():
+            issues.append(_issue("warn", field, "Full-page HTML should include a doctype."))
+        if not re.search(r"<html\b", html or "", re.IGNORECASE):
+            issues.append(_issue("block", field, "full_page_html output must include an <html> element."))
+        if not re.search(r"<body\b", html or "", re.IGNORECASE):
+            issues.append(_issue("block", field, "full_page_html output must include a <body> element."))
+        if not re.search(r"\bid\s*=\s*['\"]ndw-content['\"]", html or "", re.IGNORECASE):
+            issues.append(_issue("warn", field, "Full-page HTML should include a primary #ndw-content stage."))
+    if _IFRAME_RE.search(html or ""):
+        issues.append(_issue("block", field, "Generated pages must not create nested iframes."))
+
     ids = _extract_ids(html)
     classes = _extract_classes(html)
     seen: Set[str] = set()
@@ -314,16 +486,12 @@ def _inspect_html(
     for index, script in enumerate(scripts):
         src = script.get("src") or ""
         script_field = f"{field}.scripts[{index}]"
-        if src and src.startswith(("http://", "https://", "//")):
-            issues.append(
-                _issue(
-                    "block",
-                    script_field,
-                    f"Remote script '{src}' is not allowed.",
-                )
-            )
-            continue
         if src:
+            issues.extend(_check_url_reference(src, field=script_field, label="script"))
+            if issues and any(item.get("field") == script_field and item.get("severity") == "block" for item in issues):
+                continue
+            if src.startswith("/") and not (src.startswith("/static/vendor/") or src == "/static/js/ndw.js"):
+                issues.append(_issue("block", script_field, f"Local script '{src}' is not an allowed generated-page script."))
             continue
         issues.extend(
             _inspect_js(
@@ -336,6 +504,36 @@ def _inspect_html(
                 doc_kind=doc_kind,
             )
         )
+    for index, attrs_raw in enumerate(_LINK_TAG_RE.findall(html or "")):
+        attrs = _parse_script_attrs(attrs_raw)
+        href = (attrs.get("href") or "").strip()
+        rel = (attrs.get("rel") or "").strip().lower()
+        if not href:
+            continue
+        link_field = f"{field}.links[{index}]"
+        issues.extend(_check_url_reference(href, field=link_field, label="link"))
+        if rel == "stylesheet" and href.startswith("/") and not (
+            href.startswith("/static/design-kit/")
+            or href.startswith("/static/vendor/fonts/")
+            or href == "/tailwind.css"
+        ):
+            issues.append(_issue("block", link_field, f"Stylesheet '{href}' is not an allowed generated-page stylesheet."))
+    for index, attrs_raw in enumerate(_MEDIA_TAG_RE.findall(html or "")):
+        attrs = _parse_script_attrs(attrs_raw)
+        src = (attrs.get("src") or "").strip()
+        if src:
+            issues.extend(_check_url_reference(src, field=f"{field}.media[{index}]", label="media asset"))
+    for index, url in enumerate(_STYLE_URL_RE.findall(html or "")):
+        issues.extend(_check_url_reference(url, field=f"{field}.style_urls[{index}]", label="CSS asset"))
+    if doc_kind == "full_page_html" and _POINTER_ONLY_CONTROL_RE.search(html or ""):
+        if not _KEYBOARD_CONTROL_RE.search(html or "") and not _ACCESSIBILITY_ATTR_RE.search(html or ""):
+            issues.append(
+                _issue(
+                    "warn",
+                    field,
+                    "Pointer-driven custom controls should expose keyboard handling and accessibility semantics.",
+                )
+            )
     return issues
 
 
