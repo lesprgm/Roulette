@@ -1,7 +1,7 @@
 // Migrated TypeScript version of app.js (core client logic)
-// NDW runtime is loaded separately via a plain <script src="/static/ts-build/ndw.js"></script>
-// I intentionally do NOT import './ndw' so this compiles to a classic script (no type="module").
-// Provide an empty export so this file is treated as a module and allows scoped types without polluting global.
+// NDW runtime is loaded separately; app.ts owns the host shell and iframe lifecycle.
+import { buildGeneratedFrame, extractDocumentTitle } from './frame_renderer.js';
+
 export { };
 
 interface NdwBackground { style?: string; class?: string }
@@ -11,7 +11,6 @@ interface ErrorDoc { error: string }
 interface ComponentDoc { components: any[] }
 interface QueuePreview { id: string; title: string; category: string; vibe: string; created_at: number }
 type AppNormalizedDoc = NdwSnippet | FullPageDoc | ErrorDoc | ComponentDoc | any;
-type QualityMode = 'fast' | 'premium';
 
 type AppWindow = Window & {
   __NDW_showSnippetErrorOverlay?: (err: any) => void;
@@ -23,13 +22,11 @@ const _w = window as AppWindow;
 
 const bodyEl = document.body;
 let mainEl: HTMLElement | null = null;
+let activeSiteFrame: HTMLIFrameElement | null = null;
 const SANDBOX_SCOPE = '#ndw-sandbox';
-const QUALITY_STORAGE_KEY = 'ndw_generation_quality';
 const QUERY_PARAMS = new URLSearchParams(window.location.search);
 const NDW_TEST_MODE = QUERY_PARAMS.has('ndw_test');
 const NDW_TEST_DEBUG_PREVIEWS = NDW_TEST_MODE && QUERY_PARAMS.has('ndw_test_debug');
-let generationQuality: QualityMode = loadGenerationQuality();
-let qualityDismissBound = false;
 let previewStatusBound = false;
 
 function resolveMainEl(): HTMLElement | null {
@@ -40,89 +37,6 @@ function resolveMainEl(): HTMLElement | null {
   return mainEl;
 }
 
-function loadGenerationQuality(): QualityMode {
-  try {
-    const stored = window.localStorage.getItem(QUALITY_STORAGE_KEY);
-    return stored === 'premium' ? 'premium' : 'fast';
-  } catch (_) {
-    return 'fast';
-  }
-}
-
-function getGenerationQuality(): QualityMode {
-  return generationQuality;
-}
-
-function setGenerationQuality(next: QualityMode) {
-  generationQuality = next;
-  try {
-    window.localStorage.setItem(QUALITY_STORAGE_KEY, next);
-  } catch (_) {
-    // ignore storage errors
-  }
-  syncQualityControls();
-}
-
-function qualityModeLabel(mode: QualityMode): string {
-  return mode === 'premium' ? 'Mode: Premium' : 'Mode: Fast';
-}
-
-function buildModeToggleMarkup() {
-  const activeMode = getGenerationQuality();
-  return `
-    <div class="ndw-mode-stack" data-ndw-quality-toggle="1">
-      <div class="ndw-mode-menu">
-        <button
-          type="button"
-          class="ndw-mode-chip"
-          data-ndw-mode-toggle="1"
-          aria-haspopup="dialog"
-          aria-expanded="false"
-        >
-          <span data-ndw-mode-label="1">${qualityModeLabel(activeMode)}</span>
-        </button>
-        <div
-          class="ndw-mode-popover"
-          data-ndw-mode-popover="1"
-          role="dialog"
-          aria-label="Generation mode"
-          hidden
-        >
-          <div class="ndw-mode-options" role="radiogroup" aria-label="Generation quality">
-            <button
-              type="button"
-              class="ndw-mode-option${activeMode === 'fast' ? ' is-active' : ''}"
-              data-quality-mode="fast"
-              role="radio"
-              aria-checked="${activeMode === 'fast' ? 'true' : 'false'}"
-            >
-              <span>
-                <span class="ndw-mode-option-label">Fast</span>
-                <span class="ndw-mode-option-note">Instant queue-friendly regenerate</span>
-              </span>
-              <span class="ndw-mode-option-mark" data-ndw-mode-mark="fast">${activeMode === 'fast' ? 'Selected' : ''}</span>
-            </button>
-            <button
-              type="button"
-              class="ndw-mode-option${activeMode === 'premium' ? ' is-active' : ''}"
-              data-quality-mode="premium"
-              role="radio"
-              aria-checked="${activeMode === 'premium' ? 'true' : 'false'}"
-            >
-              <span>
-                <span class="ndw-mode-option-label">Premium</span>
-                <span class="ndw-mode-option-note">More art direction, slower response</span>
-              </span>
-              <span class="ndw-mode-option-mark" data-ndw-mode-mark="premium">${activeMode === 'premium' ? 'Selected' : ''}</span>
-            </button>
-          </div>
-          <p class="ndw-mode-copy">Premium is slower and more art directed.</p>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
 function buildFloatingGenerateMarkup() {
   return `
     <div class="ndw-button button" aria-label="Generate">
@@ -130,93 +44,6 @@ function buildFloatingGenerateMarkup() {
       <span></span><span></span><span></span><span></span>
     </div>
   `;
-}
-
-function setModePopoverOpen(toggle: HTMLElement, open: boolean) {
-  const trigger = toggle.querySelector<HTMLButtonElement>('[data-ndw-mode-toggle="1"]');
-  const popover = toggle.querySelector<HTMLElement>('[data-ndw-mode-popover="1"]');
-  if (!trigger || !popover) return;
-  trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-  popover.hidden = !open;
-}
-
-function closeQualityPopovers(except?: HTMLElement) {
-  const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]')) as HTMLElement[];
-  toggles.forEach(toggle => {
-    if (except && toggle === except) return;
-    setModePopoverOpen(toggle, false);
-  });
-}
-
-function bindQualityControls(root: ParentNode = document) {
-  const toggles = Array.from(root.querySelectorAll('[data-ndw-quality-toggle="1"]')) as HTMLElement[];
-  toggles.forEach(toggle => {
-    if ((toggle as any).__ndwBound) return;
-    (toggle as any).__ndwBound = true;
-    const modeToggle = toggle.querySelector<HTMLButtonElement>('[data-ndw-mode-toggle="1"]');
-    const popover = toggle.querySelector<HTMLElement>('[data-ndw-mode-popover="1"]');
-    const buttons = Array.from(toggle.querySelectorAll<HTMLButtonElement>('[data-quality-mode]'));
-    modeToggle?.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const isOpen = modeToggle.getAttribute('aria-expanded') === 'true';
-      closeQualityPopovers(toggle);
-      setModePopoverOpen(toggle, !isOpen);
-    });
-    popover?.addEventListener('click', (event) => {
-      event.stopPropagation();
-    });
-    buttons.forEach(button => {
-      button.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const next = button.dataset.qualityMode === 'premium' ? 'premium' : 'fast';
-        setGenerationQuality(next);
-        setModePopoverOpen(toggle, false);
-      });
-    });
-  });
-  if (!qualityDismissBound) {
-    qualityDismissBound = true;
-    document.addEventListener('click', (event) => {
-      const target = event.target as Node | null;
-      const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]')) as HTMLElement[];
-      toggles.forEach(toggle => {
-        if (target && toggle.contains(target)) return;
-        setModePopoverOpen(toggle, false);
-      });
-    });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') {
-        closeQualityPopovers();
-      }
-    });
-    window.addEventListener('storage', (event) => {
-      if (event.key !== QUALITY_STORAGE_KEY) return;
-      generationQuality = event.newValue === 'premium' ? 'premium' : 'fast';
-      syncQualityControls();
-    });
-  }
-  syncQualityControls();
-}
-
-function syncQualityControls() {
-  const next = getGenerationQuality();
-  const toggles = Array.from(document.querySelectorAll('[data-ndw-quality-toggle="1"]')) as HTMLElement[];
-  toggles.forEach(toggle => {
-    const label = toggle.querySelector<HTMLElement>('[data-ndw-mode-label="1"]');
-    if (label) label.textContent = qualityModeLabel(next);
-    const buttons = Array.from(toggle.querySelectorAll<HTMLButtonElement>('[data-quality-mode]'));
-    buttons.forEach(button => {
-      const active = button.dataset.qualityMode === next;
-      button.classList.toggle('is-active', active);
-      button.setAttribute('aria-checked', active ? 'true' : 'false');
-      const mark = button.querySelector<HTMLElement>(`[data-ndw-mode-mark="${button.dataset.qualityMode || ''}"]`);
-      if (mark) {
-        mark.textContent = active ? 'Selected' : '';
-      }
-    });
-  });
 }
 
 function setLandingFallbackVisible(visible: boolean) {
@@ -416,14 +243,6 @@ export function __ndwTestResetTransitions() {
   transitionIndex = 0;
   hasRenderedOnce = false;
   transitionInFlight = false;
-}
-
-export function __ndwTestGetGenerationQuality(): QualityMode {
-  return getGenerationQuality();
-}
-
-export function __ndwTestSetGenerationQuality(next: QualityMode) {
-  setGenerationQuality(next);
 }
 
 export function __ndwTestSetBodyMode(mode: 'landing' | 'generated') {
@@ -743,6 +562,7 @@ export function initApp() {
   __ndwAppInitialized = true;
   mainEl = document.getElementById('appMain');
   console.debug('[ndw] app init; readyState=', document.readyState);
+  window.addEventListener('message', handleGeneratedFrameMessage);
   ensureControlStyles();
   ensureJsonOverlay();
   installEvalHook();
@@ -753,79 +573,6 @@ export function initApp() {
   renderLanding();
 }
 
-function scopeCssText(cssText: string, scope: string): string {
-  if (!cssText.trim()) return cssText;
-  let styleEl: HTMLStyleElement | null = null;
-  try {
-    styleEl = document.createElement('style');
-    styleEl.textContent = cssText;
-    document.head.appendChild(styleEl);
-    const sheet = styleEl.sheet;
-    if (!sheet) return cssText;
-    const scoped = processCssRules(Array.from(sheet.cssRules), scope);
-    return scoped.join('\n');
-  } catch (err) {
-    console.warn('scopeCssText failed', err);
-    return cssText;
-  } finally {
-    styleEl?.remove();
-  }
-}
-
-function processCssRules(rules: CSSRule[], scope: string): string[] {
-  const output: string[] = [];
-  rules.forEach(rule => {
-    switch (rule.type) {
-      case CSSRule.STYLE_RULE: {
-        const styleRule = rule as CSSStyleRule;
-        const selectors = styleRule.selectorText.split(',').map(sel => {
-          let trimmed = sel.trim();
-          if (!trimmed) return '';
-          trimmed = trimmed.replace(/:root/gi, scope);
-          trimmed = trimmed.replace(/\bhtml\b/gi, scope);
-          trimmed = trimmed.replace(/\bbody\b/gi, scope);
-          if (!trimmed.startsWith(scope) && !trimmed.startsWith('@')) {
-            trimmed = `${scope} ${trimmed}`;
-          }
-          return trimmed;
-        }).filter(Boolean);
-        if (selectors.length) {
-          output.push(`${selectors.join(', ')} { ${styleRule.style.cssText} }`);
-        }
-        break;
-      }
-      case CSSRule.MEDIA_RULE: {
-        const mediaRule = rule as CSSMediaRule;
-        const inner = processCssRules(Array.from(mediaRule.cssRules), scope);
-        output.push(`@media ${mediaRule.conditionText} { ${inner.join(' ')} }`);
-        break;
-      }
-      case CSSRule.SUPPORTS_RULE: {
-        const supportsRule = rule as CSSSupportsRule;
-        const inner = processCssRules(Array.from(supportsRule.cssRules), scope);
-        output.push(`@supports ${supportsRule.conditionText} { ${inner.join(' ')} }`);
-        break;
-      }
-      case CSSRule.KEYFRAMES_RULE:
-      case CSSRule.FONT_FACE_RULE:
-      case CSSRule.PAGE_RULE:
-      default:
-        output.push(rule.cssText);
-        break;
-    }
-  });
-  return output;
-}
-
-function scopeInlineStyles(container: HTMLElement, scope: string) {
-  const styles = Array.from(container.querySelectorAll('style')) as HTMLStyleElement[];
-  styles.forEach(styleEl => {
-    const scoped = scopeCssText(styleEl.textContent || '', scope);
-    styleEl.textContent = scoped;
-    styleEl.setAttribute('data-ndw-scoped', '1');
-  });
-}
-
 const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && String(bodyEl.dataset.apiKey)) || '';
 
 function buildAuthHeaders() {
@@ -834,204 +581,6 @@ function buildAuthHeaders() {
     headers['x-api-key'] = API_KEY;
   }
   return headers;
-}
-
-function stripExternalScripts(html: string) {
-  return String(html).replace(/<script[^>]*\bsrc\s*=\s*['"][^'"]+['"][^>]*>\s*<\/script>/gi, '');
-}
-
-function containsDomReadyHook(code: string): boolean {
-  return /DOMContentLoaded/i.test(code);
-}
-
-function invokeDomReadyListener(listener: EventListenerOrEventListenerObject): void {
-  try {
-    const evt = new Event('DOMContentLoaded');
-    Object.defineProperty(evt, 'target', { value: document, configurable: true });
-    Object.defineProperty(evt, 'currentTarget', { value: document, configurable: true });
-    if (typeof listener === 'function') {
-      listener.call(document, evt);
-    } else if (listener && typeof (listener as any).handleEvent === 'function') {
-      (listener as any).handleEvent.call(listener, evt);
-    }
-  } catch (err) {
-    console.warn('ndw dom-ready handler error', err);
-  }
-}
-
-function ensureOptionalGlobals() {
-  const w = window as any;
-  if (!w.lucide) {
-    w.lucide = { createIcons: () => {} };
-  }
-  if (!w.gsap) {
-    const safeComplete = (vars?: any) => {
-      if (vars && typeof vars.onComplete === 'function') {
-        try {
-          vars.onComplete();
-        } catch (err) {
-          console.warn('[ndw] gsap stub onComplete error', err);
-        }
-      }
-    };
-    const noop = (_target?: any, vars?: any) => {
-      safeComplete(vars);
-      return {};
-    };
-    const timeline = (vars?: any) => {
-      safeComplete(vars);
-      const tl = {
-        to: (_target?: any, next?: any) => { safeComplete(next); return tl; },
-        from: (_target?: any, next?: any) => { safeComplete(next); return tl; },
-        fromTo: (_target?: any, _from?: any, next?: any) => { safeComplete(next); return tl; },
-        set: (_target?: any, next?: any) => { safeComplete(next); return tl; },
-      };
-      return tl;
-    };
-    w.gsap = {
-      to: noop,
-      from: noop,
-      fromTo: (_target?: any, _from?: any, vars?: any) => { safeComplete(vars); return {}; },
-      set: noop,
-      timeline,
-      quickTo: () => noop,
-    };
-  }
-}
-
-function loadExternalScript(src: string, type?: string | null): Promise<void> {
-  return new Promise(resolve => {
-    const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
-    const markDone = (el?: HTMLScriptElement) => {
-      if (el) {
-        el.dataset.ndwLoaded = '1';
-      }
-      resolve();
-    };
-    const isReady = () => {
-      const w = window as any;
-      if (src.includes('gsap') && w.gsap) return true;
-      if (src.includes('lucide') && w.lucide) return true;
-      if (src.includes('tailwind') && w.tailwind) return true;
-      return false;
-    };
-    if (existing) {
-      if (existing.dataset.ndwLoaded === '1' || isReady()) {
-        resolve();
-        return;
-      }
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        existing.dataset.ndwLoaded = '1';
-        resolve();
-      };
-      existing.addEventListener('load', finish, { once: true });
-      existing.addEventListener('error', finish, { once: true });
-      setTimeout(finish, 4000);
-      return;
-    }
-    const sc = document.createElement('script');
-    sc.src = src;
-    if (type) sc.type = type;
-    sc.async = false;
-    sc.addEventListener('load', () => markDone(sc), { once: true });
-    sc.addEventListener('error', () => markDone(sc), { once: true });
-    document.head.appendChild(sc);
-  });
-}
-
-function executeDocScripts(scripts: HTMLScriptElement[], target: HTMLElement | null) {
-  const externalLoads: Promise<void>[] = [];
-  const inlineScripts: HTMLScriptElement[] = [];
-  scripts.forEach(old => {
-    if (old.src) {
-      const src = old.src.toLowerCase();
-      const safe =
-        src.includes('/static/vendor/') ||
-        src.includes('/vendor/') ||
-        src.includes('unpkg.com') ||
-        src.includes('cdnjs.cloudflare.com/ajax/libs/gsap');
-      if (!safe) return;
-      externalLoads.push(loadExternalScript(old.src, old.type));
-      return;
-    }
-    inlineScripts.push(old);
-  });
-  const runInline = () => {
-    ensureOptionalGlobals();
-    inlineScripts.forEach(old => {
-      const code = old.textContent || '';
-      const exec = () => {
-        const sc = document.createElement('script');
-        const typeAttr = old.type || '';
-        if (typeAttr) sc.type = typeAttr;
-        if (typeAttr.includes('module')) {
-          sc.textContent = code;
-        } else {
-          sc.textContent = `(function(){\n${code}\n}).call(window);\n`;
-        }
-        try {
-          target?.appendChild(sc);
-        } catch (err) {
-          console.error('[ndw] inline script error', err);
-        }
-      };
-      if (containsDomReadyHook(code)) {
-        runWithPatchedDomReady(exec);
-      } else {
-        exec();
-      }
-    });
-  };
-  if (externalLoads.length) {
-    Promise.allSettled(externalLoads).then(runInline);
-  } else {
-    runInline();
-  }
-}
-
-function runWithPatchedDomReady(exec: () => void): void {
-  if (document.readyState === 'loading') {
-    exec();
-    return;
-  }
-  const originalAdd = document.addEventListener.bind(document);
-  const originalRemove = document.removeEventListener.bind(document);
-  const intercepted = new Set<EventListenerOrEventListenerObject>();
-  function patchedAdd(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions,
-  ): void {
-    if (type === 'DOMContentLoaded' && listener) {
-      intercepted.add(listener);
-      invokeDomReadyListener(listener);
-      return;
-    }
-    originalAdd(type, listener as EventListenerOrEventListenerObject, options as any);
-  }
-  function patchedRemove(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions,
-  ): void {
-    if (type === 'DOMContentLoaded' && listener) {
-      intercepted.delete(listener);
-      return;
-    }
-    originalRemove(type, listener as EventListenerOrEventListenerObject, options as any);
-  }
-  document.addEventListener = patchedAdd as typeof document.addEventListener;
-  document.removeEventListener = patchedRemove as typeof document.removeEventListener;
-  try {
-    exec();
-  } finally {
-    document.addEventListener = originalAdd;
-    document.removeEventListener = originalRemove;
-    intercepted.clear();
-  }
 }
 
 async function enterSite(doc: AppNormalizedDoc) {
@@ -1067,8 +616,8 @@ export function renderDocForPreview(doc: AppNormalizedDoc) {
   void enterSite(doc);
 }
 
-async function callGenerate(brief: string, seed: number, quality: QualityMode) {
-  const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed, quality }) });
+async function callGenerate(brief: string, seed: number) {
+  const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed }) });
   if (!resp.ok) {
     const text = await resp.text();
     return { error: `Generate failed (${resp.status}): ${text || resp.statusText}` };
@@ -1080,7 +629,7 @@ function setGenerating(is: boolean) {
   const controls = [
     document.getElementById('floatingGenerate'),
     document.getElementById('landingRecoveryBtn'),
-    ...Array.from(document.querySelectorAll('[data-gen-button="1"], [data-ndw-mode-toggle="1"], [data-quality-mode]')),
+    ...Array.from(document.querySelectorAll('[data-gen-button="1"]')),
   ].filter(Boolean) as HTMLElement[];
   controls.forEach(b => {
     if (is) {
@@ -1209,7 +758,6 @@ async function generateNew(e?: Event) {
   console.debug('[ndw] generateNew invoked (streaming burst)');
   if (e) e.preventDefault();
   const seed = Math.floor(Math.random() * 1e9);
-  const quality = document.body.classList.contains('landing-mode') ? 'fast' : getGenerationQuality();
   const jsonOut = document.getElementById('jsonOut');
   if (jsonOut) jsonOut.textContent = '';
 
@@ -1269,21 +817,7 @@ async function generateNew(e?: Event) {
     const isFullPage = page && page.kind === 'full_page_html' && typeof page.html === 'string' && page.html.trim();
 
     if (isFullPage) {
-      await runTransition(() => {
-        // Double-Buffering: Render to hidden buffer first
-        const buffer = document.getElementById('ndw-sandbox-buffer');
-        if (buffer) {
-          renderToTarget(page.html, buffer);
-          // Swap buffer to main
-          const target = resolveMainEl();
-          if (target) {
-            target.innerHTML = '';
-            target.appendChild(buffer.firstElementChild?.cloneNode(true) || document.createTextNode(''));
-          }
-        } else {
-          renderFullPage(page.html);
-        }
-      });
+      await runTransition(() => renderFullPage(page.html));
     } else {
       await enterSite(page);
     }
@@ -1341,11 +875,11 @@ async function generateNew(e?: Event) {
   };
 
   try {
-    showSpinner(quality === 'premium' ? 'Art directing your next world…' : 'Generating…');
+    showSpinner('Art directing your next world…');
     const resp = await fetch('/generate/stream', {
       method: 'POST',
       headers: buildAuthHeaders(),
-      body: JSON.stringify({ brief: '', seed, quality }),
+      body: JSON.stringify({ brief: '', seed }),
       signal
     });
 
@@ -1415,7 +949,7 @@ async function generateNew(e?: Event) {
     console.error('[ndw] stream error', err);
     if (!(_w as any).__ndwTimedOut && !firstPageSeen) {
       try {
-        const fallback = await callGenerate('', seed, quality);
+        const fallback = await callGenerate('', seed);
         if (fallback && !fallback.error) {
           await renderFirstPage(fallback);
         } else {
@@ -1453,44 +987,26 @@ async function generateNew(e?: Event) {
 
 // Utility to render content to a specific target element
 function renderToTarget(html: string, target: HTMLElement) {
-    const doc = parseHtmlDocument(html);
-    applyGeneratedStyles(doc, false);
-    populateTargetFromDoc(doc, target);
-    executeScriptsFromDoc(doc, target);
+    target.innerHTML = '';
+    target.appendChild(buildGeneratedFrame(html));
 }
 
 function ensureFloatingGenerate() {
   console.debug('[ndw] ensureFloatingGenerate called');
   if (document.body.classList.contains('landing-mode')) {
     const existingWrap = document.getElementById('floatingGenerateWrap');
-    const existingMode = document.getElementById('generationModeWrap');
     if (existingWrap) {
       try { existingWrap.remove(); } catch (_) { }
-    }
-    if (existingMode) {
-      try { existingMode.remove(); } catch (_) { }
     }
     return;
   }
   document.getElementById('floatingGenerateWrap')?.remove();
-  document.getElementById('generationModeWrap')?.remove();
   ensureSitesCounterOverlay();
   const generateWrap = document.createElement('div');
   generateWrap.id = 'floatingGenerateWrap';
   generateWrap.innerHTML = buildFloatingGenerateMarkup();
   document.body.appendChild(generateWrap);
-
-  const modeWrap = document.createElement('div');
-  modeWrap.id = 'generationModeWrap';
-  modeWrap.innerHTML = buildModeToggleMarkup();
-  const modeMount = document.getElementById('sitesCounterModeMount');
-  if (modeMount) {
-    modeMount.appendChild(modeWrap);
-  } else {
-    document.body.appendChild(modeWrap);
-  }
   document.getElementById('floatingGenerate')?.addEventListener('click', generateNew);
-  bindQualityControls(modeWrap);
 }
 
 type TunnelLike = {
@@ -1587,6 +1103,7 @@ function showHeroOverlay() {
 }
 
 function renderLanding() {
+  destroyActiveSiteFrame();
   setLandingFallbackVisible(false);
   renderTestPreviewDock([]);
   if (NDW_TEST_MODE) {
@@ -1648,196 +1165,95 @@ function upsertTitleOverlay(title?: string) {
 
 function escapeHtml(s: string) { return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
 
-function parseHtmlDocument(html: string): Document {
-  const parser = new DOMParser();
-  return parser.parseFromString(String(html), 'text/html');
-}
-
-function applyGeneratedStyles(doc: Document, clearExisting: boolean) {
-  if (clearExisting) {
-    document.querySelectorAll('style[data-gen-style="1"]').forEach(s => s.remove());
-  }
-  doc.head?.querySelectorAll('style').forEach(s => {
-    const st = document.createElement('style');
-    st.setAttribute('data-gen-style', '1');
-    const typeAttr = s.getAttribute('type');
-    if (typeAttr) st.setAttribute('type', typeAttr);
-    st.textContent = s.textContent || '';
-    document.head.appendChild(st);
-  });
-}
-
-function populateTargetFromDoc(doc: Document, target: HTMLElement | null) {
+function resetFullPageHostRoot(target: HTMLElement | null) {
   if (!target) return;
-  target.innerHTML = '';
-  const frag = document.createDocumentFragment();
-  const nodes = doc.body ? Array.from(doc.body.childNodes) : [];
-  nodes.forEach(n => frag.appendChild(n.cloneNode(true)));
-  target.appendChild(frag);
+  target.removeAttribute('style');
+  target.className = 'w-full min-h-screen';
+  target.removeAttribute('data-ndw-fullpage-root');
 }
 
-function executeScriptsFromDoc(doc: Document, target: HTMLElement | null) {
-  const scripts: HTMLScriptElement[] = [];
-  if (doc.head) scripts.push(...Array.from(doc.head.querySelectorAll('script')));
-  if (doc.body) scripts.push(...Array.from(doc.body.querySelectorAll('script')));
-  executeDocScripts(scripts, target);
-}
-
-function postRenderCommon(options?: { skipReadable?: boolean }) {
+function postRenderCommon() {
   ensureFloatingGenerate();
   ensureSitesCounterOverlay();
   adaptGenerateButtons();
-  bindQualityControls();
   ensureScrollableBody();
   upsertTitleOverlay(undefined);
-  const skipReadable = options?.skipReadable ?? document.body.classList.contains('generated-mode');
-  if (!skipReadable) ensureReadableTheme();
   try { (window as any).lucide?.createIcons(); } catch (_) { }
+}
+
+function destroyActiveSiteFrame() {
+  if (activeSiteFrame && activeSiteFrame.parentNode) {
+    activeSiteFrame.remove();
+  }
+  activeSiteFrame = null;
+}
+
+function handleGeneratedFrameMessage(event: MessageEvent) {
+  const data = event.data;
+  if (!data || typeof data !== 'object' || data.type !== 'NDW_GENERATE') return;
+  void generateNew();
 }
 
 function renderFullPage(html: string) {
   try {
-    const doc = parseHtmlDocument(html);
-    applyGeneratedStyles(doc, true);
+    document.querySelectorAll('style[data-gen-style="1"], style[data-ndw-sandbox="1"]').forEach(s => s.remove());
     document.body.style.cssText = '';
-    // Do NOT wipe document.body.className completely to protect host classes like ndw-base
     const hostClasses = ['ndw-base', 'generated-mode', 'ndw-eval-hide-chrome'];
     const currentClasses = Array.from(document.body.classList);
     const toKeep = currentClasses.filter(c => hostClasses.includes(c));
     document.body.className = toKeep.join(' ');
-    
     hideLandingElements();
-
-    if (doc.body) {
-      const newStyle = doc.body.getAttribute('style');
-      const newClass = doc.body.getAttribute('class');
-      if (newStyle) document.body.style.cssText = newStyle;
-      if (newClass) {
-        newClass.split(/\s+/).forEach(c => {
-          const next = c.trim();
-          if (!next || next === 'landing-mode') return;
-          document.body.classList.add(next);
-        });
-      }
-    }
-    document.body.classList.remove('landing-mode');
+    document.body.classList.add('generated-mode');
     const target = resolveMainEl();
-    populateTargetFromDoc(doc, target);
-    executeScriptsFromDoc(doc, target);
-    postRenderCommon({ skipReadable: true });
+    destroyActiveSiteFrame();
+    resetFullPageHostRoot(target);
+    if (target) {
+      target.innerHTML = '';
+      activeSiteFrame = buildGeneratedFrame(html);
+      target.appendChild(activeSiteFrame);
+    }
+    const title = extractDocumentTitle(html);
+    if (title) {
+      document.title = title;
+    }
+    postRenderCommon();
   } catch (e) { console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
 function renderInline(html: string) {
   try {
-    const doc = parseHtmlDocument(html);
-    applyGeneratedStyles(doc, true);
-    const target = resolveMainEl();
-    populateTargetFromDoc(doc, target);
-    executeScriptsFromDoc(doc, target);
-    postRenderCommon();
+    renderFullPage(html);
   } catch (e) { console.error('Inline render error:', e); showError('Failed to render content.'); }
 }
 
 function renderNdwSnippet(snippet: NdwSnippet) {
   try {
-    const bg = snippet.background || {};
-    const hasBg = (typeof bg.style === 'string' && bg.style.trim()) || (typeof bg.class === 'string' && bg.class.trim());
-    document.querySelectorAll('style[data-ndw-sandbox="1"]').forEach(s => s.remove());
-    const target = resolveMainEl();
-    if (target) {
-      target.innerHTML = '';
-      const sandbox = document.createElement('div');
-      sandbox.id = 'ndw-sandbox';
-      sandbox.className = 'ndw-sandbox';
-      sandbox.style.position = 'relative';
-      sandbox.style.minHeight = '60vh';
-      sandbox.style.padding = '24px';
-      sandbox.style.background = 'linear-gradient(135deg,#f1f5f9,#e2e8f0)';
-      sandbox.style.color = '#0f172a';
-      if (hasBg) {
-        if (bg.style) { sandbox.setAttribute('style', `${sandbox.getAttribute('style') || ''}; ${bg.style}`.trim()); }
-        if (bg.class) { sandbox.className = `${sandbox.className} ${bg.class}`.trim(); }
-      }
-      const appRoot = document.createElement('div');
-      appRoot.id = 'ndw-app';
-      sandbox.appendChild(appRoot);
-      const html = snippet.html || '';
-      const safeHtml = html; // executeDocScripts will handle whitelisting
-      const hasCanvasCreation = /NDW\.makeCanvas/.test(snippet.js || '');
-      if (safeHtml.trim()) {
-        appRoot.innerHTML = safeHtml;
-        // Also extract and run any scripts found in the HTML
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(safeHtml, 'text/html');
-        const embedded = Array.from(doc.querySelectorAll('script'));
-        executeDocScripts(embedded, appRoot);
-        const nested = appRoot.querySelector('#ndw-app');
-        if (nested && nested !== appRoot) {
-          const cls = nested.getAttribute('class');
-          const sty = nested.getAttribute('style');
-          if (cls) appRoot.className = `${appRoot.className} ${cls}`.trim();
-          if (sty) appRoot.setAttribute('style', `${appRoot.getAttribute('style') || ''}; ${sty}`.trim());
-          const kids = Array.from(nested.childNodes);
-          nested.remove();
-          kids.forEach(n => appRoot.appendChild(n));
-        }
-      } else if (!hasCanvasCreation) {
-        const c = document.createElement('canvas');
-        c.id = 'canvas';
-        c.style.display = 'block';
-        c.style.width = '100%';
-        c.style.minHeight = '60vh';
-        appRoot.appendChild(c);
-      }
-      target.appendChild(sandbox);
-      scopeInlineStyles(sandbox, SANDBOX_SCOPE);
-      ensureReadableTheme(sandbox);
-    }
-    upsertTitleOverlay(snippet.title);
-    ensureControlStyles();
-    if (snippet.css && snippet.css.trim()) {
-      const scopedCss = scopeCssText(snippet.css, SANDBOX_SCOPE);
-      const st = document.createElement('style');
-      st.setAttribute('data-ndw-sandbox', '1');
-      st.textContent = scopedCss;
-      document.head.appendChild(st);
-    }
-    if (snippet.js && snippet.js.trim()) {
-      if (!_w.NDW) console.warn('NDW runtime not found; snippet JS may fail.');
-      if (!_w.__NDW_showSnippetErrorOverlay) {
-        _w.__NDW_showSnippetErrorOverlay = (err: any) => {
-          try { let el = document.getElementById('ndwSnippetError'); if (!el) { el = document.createElement('div'); el.id = 'ndwSnippetError'; Object.assign(el.style, { position: 'fixed', top: '12px', left: '12px', zIndex: '1000', background: 'rgba(220,38,38,0.95)', color: '#fff', padding: '10px 12px', borderRadius: '8px', font: '12px/1.4 system-ui, sans-serif', boxShadow: '0 6px 20px rgba(0,0,0,0.25)', maxWidth: '60vw' }); el.innerHTML = '<strong>Snippet error</strong><div id="ndwSnippetErrorMsg" style="margin-top:6px;white-space:pre-wrap"></div>'; document.body.appendChild(el); } const msg = document.getElementById('ndwSnippetErrorMsg'); if (msg) msg.textContent = String(err && (err.message || err)).slice(0, 500); } catch (e) { console.error('Snippet error overlay failure', e); }
-        };
-      }
-      const rawJs = snippet.js;
-      
-      // Security: Basic Keyword Stripping (Tier 1.5 Runtime Check)
-      // This prevents obvious malicious network/eval calls in the generated snippet
-      const dangerous = /\b(fetch|XMLHttpRequest|WebSocket|Worker|eval|Function|import)\b/g;
-      if (dangerous.test(rawJs || '')) {
-         console.warn('[ndw] Blocked dangerous API in snippet JS');
-         showError('Security Block: Dangerous API usage detected.');
-         return;
-      }
-
-      const execSnippet = () => {
-        const sc = document.createElement('script'); sc.type = 'text/javascript';
-        sc.setAttribute('data-ndw-world-script', '1');
-        sc.textContent = `(function(){try
-{${rawJs}
-}catch(err){try{(window.__NDW_showSnippetErrorOverlay||console.error).call(window,err);}catch(_){console.error(err);}}})();`;
-        (document.getElementById('ndw-sandbox') || document.body).appendChild(sc);
-      };
-      if (rawJs && containsDomReadyHook(rawJs)) {
-        runWithPatchedDomReady(execSnippet);
-      } else {
-        execSnippet();
-      }
-    }
-    postRenderCommon();
-    const sandboxEl = document.getElementById('ndw-sandbox');
-    if (sandboxEl instanceof HTMLElement) ensureReadableTheme(sandboxEl);
+    const title = escapeHtml(snippet.title || 'Generated website');
+    const snippetBg = snippet.background || {};
+    const bgStyle = typeof snippetBg.style === 'string' ? snippetBg.style : '';
+    const bgClass = typeof snippetBg.class === 'string' ? snippetBg.class : '';
+    const html = `
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title}</title>
+  <link rel="stylesheet" href="/tailwind.css">
+  <script src="/js/ndw.js"></script>
+  <style>
+    html, body { margin: 0; min-height: 100%; }
+    body { ${bgStyle || 'background: linear-gradient(135deg,#f1f5f9,#e2e8f0); color: #0f172a;'} }
+    ${snippet.css || ''}
+  </style>
+</head>
+<body class="${escapeHtml(bgClass)}">
+  <main id="ndw-content">${snippet.html || '<canvas id="canvas"></canvas>'}</main>
+  <script>${snippet.js || ''}</script>
+</body>
+</html>`;
+    renderFullPage(html);
+    return;
   } catch (e) { console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
 

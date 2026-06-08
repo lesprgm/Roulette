@@ -82,9 +82,9 @@ def _free_port() -> int:
 @pytest.fixture(scope="module")
 def live_server():
     original_llm_status = main_mod.llm_status
-    original_prefetch_topup = main_mod._prefetch_topup_enabled
+    original_premium_topup = main_mod.PREMIUM_TOPUP_ENABLED
     main_mod.llm_status = lambda: {"provider": "stub", "has_token": False, "using": "stub"}
-    main_mod._prefetch_topup_enabled = lambda: False
+    main_mod.PREMIUM_TOPUP_ENABLED = False
 
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
@@ -114,7 +114,7 @@ def live_server():
         server.should_exit = True
         thread.join(timeout=5)
         main_mod.llm_status = original_llm_status
-        main_mod._prefetch_topup_enabled = original_prefetch_topup
+        main_mod.PREMIUM_TOPUP_ENABLED = original_premium_topup
 
 
 @pytest.fixture(scope="module")
@@ -153,18 +153,15 @@ def _install_api_stubs(page, captured: Dict[str, List[dict]]):
     def handle_generate(route):
         payload = json.loads(route.request.post_data or "{}")
         captured["generate"].append(payload)
-        page_doc = PREMIUM_PAGE if payload.get("quality") == "premium" else FAST_PAGE
-        route.fulfill(status=200, content_type="application/json", body=json.dumps(page_doc))
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(PREMIUM_PAGE))
 
     def handle_stream(route):
         payload = json.loads(route.request.post_data or "{}")
         captured["stream"].append(payload)
-        page_doc = PREMIUM_PAGE if payload.get("quality") == "premium" else FAST_PAGE
-        if payload.get("quality") == "premium":
-            time.sleep(0.25)
+        time.sleep(0.25)
         lines = [
-            json.dumps({"event": "meta", "data": {"quality": payload.get("quality", "fast")}}),
-            json.dumps({"event": "page", "data": page_doc}),
+            json.dumps({"event": "meta", "data": {"mode": "premium"}}),
+            json.dumps({"event": "page", "data": PREMIUM_PAGE}),
         ]
         route.fulfill(
             status=200,
@@ -198,7 +195,7 @@ def test_landing_stays_configuration_free(browser, live_server):
         context.close()
 
 
-def test_generator_bar_flow_and_quality_persistence(browser, live_server):
+def test_generator_bar_flow_and_premium_generation(browser, live_server):
     context = browser.new_context(viewport={"width": 1440, "height": 1000})
     page = context.new_page()
     captured = {"stream": [], "generate": []}
@@ -210,39 +207,25 @@ def test_generator_bar_flow_and_quality_persistence(browser, live_server):
         page.wait_for_function("() => document.body.classList.contains('generated-mode')")
         page.locator("#floatingGenerateWrap").wait_for()
         page.locator("#sitesCounterBadge").wait_for()
-        assert (page.locator("#sitesCounterBadge").text_content() or "").strip() == "128"
-        assert page.evaluate(
-            "() => !!document.getElementById('sitesCounterFloating')?.contains(document.getElementById('floatingGenerateWrap'))"
-        ) is True
+        assert "128" in ((page.locator("#sitesCounterBadge").text_content() or "").strip())
+        assert page.locator("#generationModeWrap").count() == 0
 
         _capture(page, "generated-bar-baseline.png")
-
-        page.locator('[data-ndw-mode-toggle="1"]').click()
-        page.locator('[data-ndw-mode-popover="1"]').wait_for()
-        page.locator('[data-quality-mode="premium"]').click()
-
-        expect_label = page.locator('[data-ndw-mode-label="1"]')
-        assert (expect_label.text_content() or "").strip() == "Mode: Premium"
-        assert page.evaluate("() => window.localStorage.getItem('ndw_generation_quality')") == "premium"
 
         page.reload(wait_until="domcontentloaded")
         page.locator('[data-test-preview-id="file:alpha.json"]').click()
         page.wait_for_function("() => document.body.classList.contains('generated-mode')")
         page.locator("#floatingGenerateWrap").wait_for()
-        assert (page.locator('[data-ndw-mode-label="1"]').text_content() or "").strip() == "Mode: Premium"
-
-        page.locator('[data-ndw-mode-toggle="1"]').click()
-        page.locator('[data-ndw-mode-popover="1"]').wait_for()
-        _capture(page, "generated-mode-popover-baseline.png")
 
         page.locator("#floatingGenerate").click()
         page.locator("#spinnerMsg").wait_for()
         assert (page.locator("#spinnerMsg").text_content() or "").strip() == "Art directing your next world…"
-        page.get_by_role("heading", name="Premium World").first.wait_for(timeout=5000)
-        assert (page.locator("#sitesCounterBadge").text_content() or "").strip() == "128"
+        frame = page.frame_locator("#ndw-site-frame")
+        frame.get_by_role("heading", name="Premium World").first.wait_for(timeout=5000)
+        assert "128" in ((page.locator("#sitesCounterBadge").text_content() or "").strip())
 
         assert captured["stream"], "expected a streamed generate request"
-        assert captured["stream"][-1]["quality"] == "premium"
+        assert "quality" not in captured["stream"][-1]
         assert captured["generate"] == []
     finally:
         context.close()
@@ -266,7 +249,8 @@ def test_eval_hook_renders_saved_doc_for_review_pack(browser, live_server):
         assert result["ok"] is True
         assert result["generatedMode"] is True
         assert result["heroHidden"] is True
-        page.get_by_role("heading", name="Review Pack Render").wait_for(timeout=5000)
+        frame = page.frame_locator("#ndw-site-frame")
+        frame.get_by_role("heading", name="Review Pack Render").wait_for(timeout=5000)
         assert not page.locator("text=Roulette").first.is_visible()
         assert not page.locator("text=Random websites with every click").first.is_visible()
         assert not page.locator("text=Click a preview to enter").first.is_visible()
