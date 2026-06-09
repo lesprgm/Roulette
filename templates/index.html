@@ -6,13 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Non-Deterministic Website</title>
 
-  <!-- Modern Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;700;800&display=swap"
-    rel="stylesheet">
-
+  <link rel="stylesheet" href="/static/design-kit/fonts.css" />
   <link rel="stylesheet" href="/tailwind.css" />
   <link rel="stylesheet" href="/css/style.css" />
 
@@ -26,11 +20,13 @@
   <script src="/static/vendor/lucide.min.js"></script>
   <!-- GSAP (local) -->
   <script src="/static/vendor/gsap.min.js"></script>
+  <script src="/static/vendor/ScrollTrigger.min.js"></script>
   <!-- Three.js (local) -->
   <script type="importmap">
   {
     "imports": {
-      "three": "/static/vendor/three.module.js"
+      "three": "/static/vendor/three.module.js",
+      "three/addons/": "/static/vendor/three-addons/"
     }
   }
   </script>
@@ -80,9 +76,17 @@
         </h1>
         <p class="hero-sub">Random websites with every click.</p>
         <p class="hero-hint" id="heroHint">Click a preview to enter</p>
-
-        <!-- Placeholder for standard button if JS fails -->
-        <div class="mt-8 hero-btn-wrap" style="opacity:0"></div>
+        <div id="landingFallback" class="landing-fallback" hidden>
+          <p class="landing-fallback-copy">Preview queue is warming up.</p>
+          <button
+            id="landingRecoveryBtn"
+            type="button"
+            class="landing-fallback-btn"
+            data-ndw-no-hijack="1"
+          >
+            Generate one anyway
+          </button>
+        </div>
       </div>
       <div class="scroll-cue" id="scrollCue" aria-hidden="true">
         <span></span>
@@ -94,6 +98,7 @@
   <div id="ndw-sandbox-buffer" class="fixed inset-0 pointer-events-none opacity-0 -z-10" aria-hidden="true">
     <!-- Next experience is pre-rendered here off-screen -->
   </div>
+  <div id="ndwTestPreviewDock" class="ndw-test-preview-dock" hidden aria-hidden="true"></div>
 
   <!-- Load compiled TypeScript as ES modules -->
   <script type="module" src="/js/ndw.js"></script>
@@ -101,6 +106,13 @@
 
   <script>
     (function () {
+      const params = new URLSearchParams(window.location.search);
+      const testMode = params.has('ndw_test');
+      if (testMode) {
+        document.documentElement.setAttribute('data-ndw-test-mode', '1');
+        return;
+      }
+
       // ========== GSAP Timelines ==========
       const tl = gsap.timeline({ defaults: { ease: "power4.out" } });
 
