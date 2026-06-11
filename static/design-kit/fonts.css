@@ -1,9 +1,57 @@
+@font-face {
+  font-family: "NDW Inter";
+  src: url("/static/vendor/fonts/inter-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NDW Inter";
+  src: url("/static/vendor/fonts/inter-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NDW Space Grotesk";
+  src: url("/static/vendor/fonts/space-grotesk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NDW Space Grotesk";
+  src: url("/static/vendor/fonts/space-grotesk-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NDW Playfair";
+  src: url("/static/vendor/fonts/playfair-display-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "NDW Playfair";
+  src: url("/static/vendor/fonts/playfair-display-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --ndw-font-display-orbit: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --ndw-font-display-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-  --ndw-font-display-grotesk: "Franklin Gothic Medium", "Arial Narrow", "Trebuchet MS", Arial, sans-serif;
-  --ndw-font-body-clean: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
-  --ndw-font-body-soft: "Gill Sans", "Trebuchet MS", "Helvetica Neue", Arial, sans-serif;
+  --ndw-font-display-orbit: "NDW Space Grotesk", "Avenir Next", sans-serif;
+  --ndw-font-display-editorial: "NDW Playfair", Georgia, serif;
+  --ndw-font-display-grotesk: "NDW Space Grotesk", "Franklin Gothic Medium", sans-serif;
+  --ndw-font-body-clean: "NDW Inter", system-ui, sans-serif;
+  --ndw-font-body-soft: "NDW Inter", "Trebuchet MS", sans-serif;
 }
 
 .ndw-font-display-orbit {
