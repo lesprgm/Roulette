@@ -11,3 +11,6 @@ dependencies = [
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
