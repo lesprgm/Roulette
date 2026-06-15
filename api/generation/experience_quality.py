@@ -38,7 +38,10 @@ _FEEDBACK_RE = re.compile(
 )
 _RESET_RE = re.compile(r"\b(reset|replay|restart|again|clear|new variant|shuffle)\b", re.IGNORECASE)
 _MOBILE_RE = re.compile(r"(@media|touchstart|touchmove|pointerdown|pointermove|viewport|max-width|clamp\()", re.IGNORECASE)
-_CUE_RE = re.compile(r"\b(start|drag|type|tap|click|hover|scroll|choose|press|move|tune|scan|paint|scrub|zoom|reset)\b", re.IGNORECASE)
+_CUE_RE = re.compile(
+    r"\b(start|drag|type|tap|click|hover|scroll|choose|select|press|move|steer|arrow|arrows|avoid|match|tune|scan|paint|scrub|zoom|reset|restart|add|reserve|checkout|buy|filter|search|save|plan|play|try|use)\b",
+    re.IGNORECASE,
+)
 _WORD_RE = re.compile(r"\b[a-z][a-z0-9-]{3,}\b", re.IGNORECASE)
 
 

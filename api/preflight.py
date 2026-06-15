@@ -20,6 +20,20 @@ _STYLE_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", re.IGNORECASE
 _ATTR_RE = re.compile(r'([a-zA-Z_:][\w:.-]*)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))')
 _ID_RE = re.compile(r'\bid\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _CLASS_RE = re.compile(r'\bclass\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+_STYLE_SCRIPT_RE = re.compile(r"<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)>", re.IGNORECASE)
+_VISIBLE_CODE_ARTIFACT_RE = re.compile(
+    r"(^|\s)(//\s*[A-Za-z]|TODO\b|undefined\b|null\b|```|~~~|\{ ?\"kind\")",
+    re.IGNORECASE,
+)
+_VISIBLE_PLANNING_TERMS_RE = re.compile(
+    r"\b(onboarding instructions?|visitor role|visitor goal|primary loop|feedback contract)\b",
+    re.IGNORECASE,
+)
+_INLINE_EVENT_ATTR_RE = re.compile(
+    r"\son(?:click|input|change|submit|keydown|keyup|pointerdown|mousedown|touchstart|mousemove)\s*=",
+    re.IGNORECASE,
+)
 
 _GET_BY_ID_RE = re.compile(r"(?:document\.)?getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _QUERY_SELECTOR_RE = re.compile(r"querySelector(?:All)?\(\s*['\"]([#.][^'\"]+)['\"]\s*\)")
@@ -130,6 +144,11 @@ def _extract_classes(html: str) -> Set[str]:
             if item:
                 classes.add(item)
     return classes
+
+
+def _visible_text(html: str) -> str:
+    stripped = _STYLE_SCRIPT_RE.sub(" ", html or "")
+    return re.sub(r"\s+", " ", _TAG_RE.sub(" ", stripped)).strip()
 
 
 def _is_remote_url(value: str) -> bool:
@@ -470,6 +489,20 @@ def _inspect_html(
             issues.append(_issue("warn", field, "Full-page HTML should include a primary #ndw-content stage."))
     if _IFRAME_RE.search(html or ""):
         issues.append(_issue("block", field, "Generated pages must not create nested iframes."))
+    if _INLINE_EVENT_ATTR_RE.search(html or ""):
+        issues.append(
+            _issue(
+                "block",
+                field,
+                "Inline event handlers are not allowed; wire controls with addEventListener or Alpine x-on/@click.",
+            )
+        )
+
+    visible_text = _visible_text(html)
+    if _VISIBLE_CODE_ARTIFACT_RE.search(visible_text):
+        issues.append(_issue("warn", field, "Visible code/debug artifact text such as //, TODO, undefined, null, or raw JSON leaked into the page."))
+    if _VISIBLE_PLANNING_TERMS_RE.search(visible_text):
+        issues.append(_issue("warn", field, "Planner/internal labels leaked into visible page copy."))
 
     ids = _extract_ids(html)
     classes = _extract_classes(html)
