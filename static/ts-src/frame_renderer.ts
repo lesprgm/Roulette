@@ -25,15 +25,13 @@ function injectIframeBridge(html: string): string {
   const bridge = `
 <script>
 (() => {
-  const GENERATE_RE = /\\b(generate|new site|new website|next site|next world|randomize|roll again|another)\\b/i;
   window.NDW = window.NDW || {};
   window.NDW.registerCleanup = window.NDW.registerCleanup || function(){};
   document.addEventListener('click', (event) => {
     const target = event.target && event.target.closest ? event.target.closest('button,a,[role="button"],[data-ndw-trigger]') : null;
     if (!target) return;
     const trigger = String(target.getAttribute('data-ndw-trigger') || '').toLowerCase();
-    const label = [target.getAttribute('aria-label'), target.textContent, target.id, target.className].filter(Boolean).join(' ');
-    if (trigger === 'generate' || trigger === 'new-site' || GENERATE_RE.test(label)) {
+    if (trigger === 'generate' || trigger === 'new-site') {
       event.preventDefault();
       window.parent.postMessage({ type: 'NDW_GENERATE' }, '*');
     }

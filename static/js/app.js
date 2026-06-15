@@ -934,12 +934,21 @@ function ensureFloatingGenerate() {
     document.getElementById('floatingGenerate')?.addEventListener('click', generateNew);
 }
 let tunnel = null;
+export function __ndwResolveTunnelCardAction(id) {
+    return String(id || '').startsWith('placeholder:') ? 'generate' : 'prefetch';
+}
 async function initTunnel() {
     const container = document.getElementById('tunnel-container');
     if (container && !tunnel) {
         const { InfiniteTunnel } = await import('./tunnel.js');
         tunnel = new InfiniteTunnel(container);
-        tunnel.setOnCardClick((id) => loadPrefetchSite(id));
+        tunnel.setOnCardClick((id) => {
+            if (__ndwResolveTunnelCardAction(id) === 'generate') {
+                void generateNew();
+                return;
+            }
+            void loadPrefetchSite(id);
+        });
         await tunnel.init();
         tunnel.setTheme(false); // Default to light mode for tunnel
     }

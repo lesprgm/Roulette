@@ -11,6 +11,7 @@ export default defineConfig({
   resolve: {
     alias: [
       { find: /^\.\/tunnel\.js$/, replacement: `${rootDir}static/ts-src/tunnel.ts` },
+      { find: '/static/vendor/three.module.js', replacement: `${rootDir}tests/frontend/mocks/three.ts` },
       { find: 'three', replacement: `${rootDir}tests/frontend/mocks/three.ts` },
     ],
   },

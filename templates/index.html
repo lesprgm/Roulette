@@ -20,7 +20,6 @@
   <script src="/static/vendor/lucide.min.js"></script>
   <!-- GSAP (local) -->
   <script src="/static/vendor/gsap.min.js"></script>
-  <script src="/static/vendor/ScrollTrigger.min.js"></script>
   <!-- Three.js (local) -->
   <script type="importmap">
   {
@@ -76,17 +75,6 @@
         </h1>
         <p class="hero-sub">Random websites with every click.</p>
         <p class="hero-hint" id="heroHint">Click a preview to enter</p>
-        <div id="landingFallback" class="landing-fallback" hidden>
-          <p class="landing-fallback-copy">Preview queue is warming up.</p>
-          <button
-            id="landingRecoveryBtn"
-            type="button"
-            class="landing-fallback-btn"
-            data-ndw-no-hijack="1"
-          >
-            Generate one anyway
-          </button>
-        </div>
       </div>
       <div class="scroll-cue" id="scrollCue" aria-hidden="true">
         <span></span>

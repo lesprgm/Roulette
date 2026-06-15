@@ -5,7 +5,10 @@
  * Site previews from the prefetch queue float as clickable cards within the tunnel.
  * Object pooling is used for performance - segments are recycled as you scroll.
  */
-import * as THREE from 'three';
+// The browser serves compiled modules from /js, so this must be an absolute
+// static URL rather than a source-relative import.
+// @ts-expect-error Vended browser module; types come from the three package.
+import * as THREE from '/static/vendor/three.module.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -549,9 +552,6 @@ export class InfiniteTunnel {
     const intersects = this.raycaster.intersectObjects(cards);
     if (intersects.length > 0) {
       const clickedCard = intersects[0].object as TunnelCard;
-      if (clickedCard.userData.isPlaceholder) {
-        return;
-      }
       const queueId = clickedCard.userData.queueId;
       if (queueId && this.onCardClick) {
         this.onCardClick(queueId);
