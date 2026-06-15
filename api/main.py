@@ -18,12 +18,10 @@ from api.auth import require_api_key, optional_api_key, extract_client_key, keys
 from api import counter
 from api import prefetch
 from api.generation.novelty import record_served_doc
-from api.generation.ranking import rank_prefetch_docs as _rank_prefetch_docs
 from api.generation.redis_diversity import record_site_descriptor
 from api.preflight import annotate_doc as annotate_preflight_doc
 from api.preflight import has_blocking_issues as preflight_has_blocking_issues
 from api.preflight import preflight_doc
-from api.quality import extract_review_metrics, score_page_doc
 from api.validators import validate_page_doc as _validate_with_jsonschema
 
 PrefetchHandle = str
@@ -106,8 +104,9 @@ def _log_startup_checks() -> None:
         Path("static/tailwind.css"),
         Path("static/vendor/tailwind-play.js"),
         Path("static/vendor/gsap.min.js"),
-        Path("static/vendor/ScrollTrigger.min.js"),
         Path("static/vendor/lucide.min.js"),
+        Path("static/vendor/alpine.min.js"),
+        Path("static/vendor/matter.min.js"),
         Path("static/vendor/three-addons/controls/OrbitControls.js"),
     ]
     for asset in required_assets:
@@ -296,7 +295,7 @@ PREMIUM_LOW_WATER = int(os.getenv("PREMIUM_LOW_WATER", "3") or 3)
 PREMIUM_FILL_TO = int(os.getenv("PREMIUM_FILL_TO", "10") or 10)
 if PREMIUM_LOW_WATER > PREMIUM_FILL_TO:
     PREMIUM_LOW_WATER = PREMIUM_FILL_TO
-PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "15") or 15)
+PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "12") or 12)
 PREMIUM_TOPUP_ENABLED = os.getenv("PREMIUM_TOPUP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 PREMIUM_REFILL_MISSING_ENABLED = os.getenv("PREMIUM_REFILL_MISSING_ENABLED", "1").lower() in {
     "1",
@@ -304,10 +303,6 @@ PREMIUM_REFILL_MISSING_ENABLED = os.getenv("PREMIUM_REFILL_MISSING_ENABLED", "1"
     "yes",
     "on",
 }
-PREMIUM_FAIL_OPEN_MIN_SCORE = max(
-    0, min(100, int(os.getenv("PREMIUM_FAIL_OPEN_MIN_SCORE", "42") or 42))
-)
-
 
 def _premium_queue_enabled() -> bool:
     return PREMIUM_QUEUE_ENABLED
@@ -345,8 +340,6 @@ def _apply_local_acceptance_batch(docs: List[Dict[str, Any]], context: str) -> L
                 _summarize_preflight_issues(issues),
             )
             continue
-        if context.startswith("premium") and not _passes_premium_fail_open_gate(doc, context=context):
-            continue
         if issues:
             doc = annotate_preflight_doc(doc, issues)
         doc["review"] = {"ok": True, "notes": "local preflight accepted"}
@@ -354,38 +347,11 @@ def _apply_local_acceptance_batch(docs: List[Dict[str, Any]], context: str) -> L
     return approved
 
 
-def _passes_premium_fail_open_gate(doc: Dict[str, Any], *, context: str) -> bool:
-    quality = score_page_doc(doc)
-    score = int(quality.get("score", 0))
-    metrics = quality.get("metrics") or extract_review_metrics(doc)
-    flags = metrics.get("quality_flags") or {}
-    layout = metrics.get("layout_metrics") or {}
-    color_metrics = metrics.get("color_metrics") or {}
-    has_structure = bool(layout.get("region_count", 0) >= 1 or layout.get("immersive_stage") or layout.get("canvas_or_three"))
-    has_signal = bool(
-        flags.get("motion")
-        or flags.get("interaction")
-        or flags.get("design_kit")
-        or color_metrics.get("has_background_treatment")
-    )
-    if score < PREMIUM_FAIL_OPEN_MIN_SCORE or not has_structure or not has_signal:
-        log.warning(
-            "%s: fail-open gate rejected doc score=%d structure=%s signal=%s",
-            context,
-            score,
-            has_structure,
-            has_signal,
-        )
-        return False
-    return True
-
-
 def _enqueue_premium_docs(
     docs: List[Dict[str, Any]], *, context: str, max_queue: Optional[int] = None
 ) -> List[PrefetchHandle]:
     if not docs or not _premium_queue_enabled():
         return []
-    docs = _rank_prefetch_docs(docs)
     stored: List[PrefetchHandle] = []
     for doc in docs:
         if max_queue is not None and prefetch.size("premium") >= max_queue:
@@ -443,9 +409,7 @@ def _next_acceptable_premium_doc(iterator: Iterable[Dict[str, Any]], context: st
             continue
         approved = _apply_local_acceptance_batch([doc], context)
         if approved:
-            ranked = _rank_prefetch_docs(approved)
-            if ranked:
-                return ranked[0]
+            return approved[0]
     return None
 
 
@@ -558,10 +522,7 @@ def _generate_single_premium_doc(
         return None
     if issues:
         doc = annotate_preflight_doc(doc, issues)
-    if not _passes_premium_fail_open_gate(doc, context=context):
-        return None
-    ranked = _rank_prefetch_docs([doc])
-    return ranked[0] if ranked else None
+    return doc
 
 
 def _premium_queue_target_size(current: int) -> int:
@@ -630,9 +591,8 @@ def _serve_or_fill_premium_batch(
     )
     if not approved:
         return {"error": "Premium generation failed"}
-    ranked = _rank_prefetch_docs(approved)
-    first = ranked[0]
-    leftovers = ranked[1:]
+    first = approved[0]
+    leftovers = approved[1:]
     if leftovers:
         _enqueue_premium_docs(leftovers, context="premium.generate", max_queue=PREMIUM_FILL_TO)
     if background_tasks and _premium_queue_enabled() and prefetch.size("premium") <= PREMIUM_LOW_WATER:
@@ -964,6 +924,7 @@ def prefetch_status() -> Dict[str, Any]:
         "dir": str(prefetch.PREFETCH_DIR),
         "premium_dir": str(getattr(prefetch, "PREMIUM_PREFETCH_DIR", prefetch.PREFETCH_DIR)),
         "backend": prefetch.backend(),
+        "redis_disabled_reason": getattr(prefetch, "redis_disabled_reason", lambda: "")(),
     }
 
 

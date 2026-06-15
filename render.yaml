@@ -25,9 +25,9 @@ services:
       - key: GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS
         value: '64000'
       - key: GEMINI_THINKING_LEVEL
-        value: low
+        value: medium
       - key: BURST_SITE_COUNT
-        value: '15'
+        value: '12'
       - key: TEMPERATURE
         value: '1.2'
       - key: LLM_MAX_TOKENS
@@ -65,7 +65,7 @@ services:
       - key: PREMIUM_LOW_WATER
         value: '3'
       - key: PREMIUM_BATCH_SIZE
-        value: '15'
+        value: '12'
       - key: PREMIUM_BURST_MIN_HTML_BYTES
         value: '3000'
       - key: PREFLIGHT_HTML_WARN_BYTES

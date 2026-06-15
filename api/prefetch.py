@@ -29,6 +29,12 @@ PREFETCH_DIR = Path(os.getenv("PREFETCH_DIR", "cache/prefetch"))
 PREMIUM_PREFETCH_DIR = Path(os.getenv("PREMIUM_PREFETCH_DIR", "cache/premium_prefetch"))
 BATCH_MIN = int(os.getenv("PREFETCH_BATCH_MIN", "5"))
 BATCH_MAX = int(os.getenv("PREFETCH_BATCH_MAX", "20"))
+DROP_TEST_FIXTURE_DOCS = os.getenv("PREFETCH_DROP_TEST_FIXTURES", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 _REDIS_URL = os.getenv("REDIS_URL", "").strip()
 _REDIS_QUEUE_KEY = os.getenv("PREFETCH_REDIS_QUEUE_KEY", "ndw:prefetch:queue")
@@ -36,11 +42,15 @@ _REDIS_DOC_PREFIX = os.getenv("PREFETCH_REDIS_DOC_PREFIX", "ndw:prefetch:doc:")
 _PREMIUM_REDIS_QUEUE_KEY = os.getenv("PREMIUM_REDIS_QUEUE_KEY", "ndw:premium:queue")
 _PREMIUM_REDIS_DOC_PREFIX = os.getenv("PREMIUM_REDIS_DOC_PREFIX", "ndw:premium:doc:")
 _REDIS_CLIENT = None
+_REDIS_DISABLED_REASON = ""
 if redis and _REDIS_URL and not os.getenv("PYTEST_CURRENT_TEST"):
     try:
         _REDIS_CLIENT = redis.from_url(_REDIS_URL, decode_responses=True)
+        if os.getenv("PREFETCH_REDIS_HEALTHCHECK", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            _REDIS_CLIENT.ping()
     except Exception:
         _REDIS_CLIENT = None
+        _REDIS_DISABLED_REASON = "initialization_failed"
         log.warning("prefetch.redis: failed to initialize redis client", exc_info=True)
 
 TOKEN_TTL_SECONDS = int(os.getenv("PREFETCH_TOKEN_TTL_SECONDS", "1800"))
@@ -84,7 +94,16 @@ def _list_files(lane: Optional[str] = None) -> list[Path]:
 
 
 def _redis_enabled() -> bool:
-    return _REDIS_CLIENT is not None
+    return _REDIS_CLIENT is not None and not _REDIS_DISABLED_REASON
+
+
+def _disable_redis(reason: str) -> None:
+    global _REDIS_CLIENT, _REDIS_DISABLED_REASON
+    if _REDIS_DISABLED_REASON:
+        return
+    _REDIS_DISABLED_REASON = reason or "operation_failed"
+    _REDIS_CLIENT = None
+    log.warning("prefetch.redis: disabled for this process; using file queue reason=%s", _REDIS_DISABLED_REASON)
 
 
 def _redis_doc_key(doc_id: str, lane: Optional[str] = None) -> str:
@@ -221,6 +240,38 @@ def _read_doc(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _is_test_fixture_doc(doc: Dict[str, Any]) -> bool:
+    """Protect local file fallback from serving stale unit-test queue artifacts."""
+    if not DROP_TEST_FIXTURE_DOCS:
+        return False
+    category = str(doc.get("category") or "").strip().lower()
+    vibe = str(doc.get("vibe") or "").strip().lower()
+    if category in {"unit-test", "test", "testing"}:
+        return True
+    if vibe in {"unit-test", "test", "testing"}:
+        return True
+    return False
+
+
+def _drop_queue_file(path: Path, reason: str) -> None:
+    log.warning("prefetch.file: dropping %s reason=%s", path.name, reason)
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        log.warning("prefetch.file: failed to drop %s", path.name, exc_info=True)
+
+
+def _read_file_queue_doc(path: Path) -> Optional[Dict[str, Any]]:
+    doc = _read_doc(path)
+    if not isinstance(doc, dict):
+        _drop_queue_file(path, "invalid_json")
+        return None
+    if _is_test_fixture_doc(doc):
+        _drop_queue_file(path, "test_fixture")
+        return None
+    return doc
+
+
 def _strip_prefetch_meta(doc: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(doc, dict) and "_prefetch" in doc:
         doc.pop("_prefetch", None)
@@ -237,6 +288,7 @@ def size(lane: Optional[str] = None) -> int:
             return int(_REDIS_CLIENT.llen(_lane_queue_key(lane_name)))
         except Exception:
             log.warning("prefetch.redis: failed to read queue size", exc_info=True)
+            _disable_redis("size_failed")
     return len(_list_files(lane_name))
 
 
@@ -272,11 +324,12 @@ def peek(limit: int = 20, lane: Optional[str] = None) -> list[Dict[str, Any]]:
             return previews
         except Exception:
             log.warning("prefetch.redis: peek failed; falling back to file queue", exc_info=True)
+            _disable_redis("peek_failed")
     files = _list_files(lane_name)
     records: list[Tuple[float, Path, Dict[str, Any]]] = []
     for path in files:
-        doc = _read_doc(path)
-        if not isinstance(doc, dict):
+        doc = _read_file_queue_doc(path)
+        if not doc:
             continue
         try:
             created_at = doc.get("created_at") or path.stat().st_mtime
@@ -317,6 +370,7 @@ def take(token: str) -> Optional[Dict[str, Any]]:
             return _strip_prefetch_meta(doc)
         except Exception:
             log.warning("prefetch.redis: take failed; falling back to file queue", exc_info=True)
+            _disable_redis("take_failed")
     if base_kind != "file":
         return None
     name = ident
@@ -326,11 +380,8 @@ def take(token: str) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     doc = _read_doc(path)
-    if not isinstance(doc, dict):
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
+    if not isinstance(doc, dict) or _is_test_fixture_doc(doc):
+        _drop_queue_file(path, "invalid_or_test_fixture")
         return None
     try:
         path.unlink(missing_ok=True)
@@ -380,6 +431,7 @@ def enqueue(doc: Dict[str, Any], lane: Optional[str] = None) -> Optional[str]:
             return doc_id
         except Exception:
             log.warning("prefetch.redis: enqueue failed; falling back to file queue", exc_info=True)
+            _disable_redis("enqueue_failed")
     _ensure_dir(lane_name)
     fname = f"{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
     path = _lane_dir(lane_name) / fname
@@ -411,19 +463,14 @@ def dequeue(lane: Optional[str] = None) -> Optional[Dict[str, Any]]:
                 return _strip_prefetch_meta(data)
         except Exception:
             log.warning("prefetch.redis: dequeue failed; falling back to file queue", exc_info=True)
+            _disable_redis("dequeue_failed")
     files = _list_files(lane_name)
     if not files:
         log.debug("prefetch.dequeue: queue empty")
         return None
     for path in files:
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            log.warning("prefetch.dequeue: failed to parse %s, dropping file", path.name, exc_info=True)
-            try:
-                path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        data = _read_file_queue_doc(path)
+        if not data:
             continue
         try:
             path.unlink(missing_ok=True)
@@ -437,6 +484,10 @@ def dequeue(lane: Optional[str] = None) -> Optional[Dict[str, Any]]:
 
 def backend() -> str:
     return "redis" if _redis_enabled() else "file"
+
+
+def redis_disabled_reason() -> str:
+    return _REDIS_DISABLED_REASON
 
 
 def clamp_batch(n: int) -> int:
