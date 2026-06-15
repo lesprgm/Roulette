@@ -29,7 +29,6 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
     "overlays": {
         "noise_grid": {"path": "/static/design-kit/overlays/noise-grid.svg"},
-        "mesh_wave": {"path": "/static/design-kit/overlays/mesh-wave.svg"},
         "contour_lines": {"path": "/static/design-kit/overlays/contour-lines.svg"},
         "diagonal_hatch": {"path": "/static/design-kit/overlays/diagonal-hatch.svg"},
         "orbital_dots": {"path": "/static/design-kit/overlays/orbital-dots.svg"},
@@ -40,9 +39,9 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
             "overlay": "noise_grid",
             "summary": "Soft sunrise gradients with luminous haze and a faint technical grid.",
         },
-        "paper_mesh": {
-            "overlay": "mesh_wave",
-            "summary": "Editorial mesh backdrop with crisp paper-white spacing and cool accents.",
+        "paper_hatch": {
+            "overlay": "diagonal_hatch",
+            "summary": "Editorial paper backdrop with crisp white spacing and a lightly printed hatch.",
         },
         "night_grid": {
             "overlay": "contour_lines",
@@ -89,8 +88,22 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
         "immersive_poster": {"summary": "Full-viewport poster composition with layered foreground controls."},
     },
     "creative_libraries": {
-        "gsap_core": {"global": "gsap", "summary": "Local GSAP core for precise timelines and staggered motion."},
-        "scroll_trigger": {"global": "ScrollTrigger", "summary": "Local GSAP ScrollTrigger for scroll-tied reveals and parallax."},
+        "ndw_runtime": {
+            "global": "NDW",
+            "summary": "Local game/creative runtime for canvas loops, pointer/keyboard state, seeded RNG, particles, shake, tones, and simple persistence.",
+        },
+        "gsap_core": {"global": "gsap", "summary": "Local GSAP core for precise timelines, staggered motion, state transitions, score/result reveals, and interface choreography."},
+        "lucide_icons": {"global": "lucide", "summary": "Local icon set for app/workspace chrome, controls, toolbars, cards, and legible UI affordances."},
+        "alpine_state": {
+            "global": "Alpine",
+            "script": "/static/vendor/alpine.min.js",
+            "summary": "Local Alpine.js for declarative UI state in apps, commerce flows, forms, drawers, filters, carts, quizzes, and multi-step workflows.",
+        },
+        "matter_physics": {
+            "global": "Matter",
+            "script": "/static/vendor/matter.min.js",
+            "summary": "Local Matter.js for 2D physics games and toys such as pinball, pachinko, stacking, marble, basket, and block-drop mechanics.",
+        },
         "three_orbit_controls": {
             "import": "three/addons/controls/OrbitControls.js",
             "summary": "Local OrbitControls addon for explorable 3D scenes.",
@@ -103,6 +116,18 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
             ],
             "summary": "Local postprocessing pipeline for restrained glow/bloom effects.",
         },
+    },
+    "library_profiles": {
+        "ndw_canvas_game_loop": {"summary": "Use NDW.makeCanvas, NDW.loop, keyboard/pointer helpers, score state, and reset/replay for lightweight games."},
+        "ndw_audio_particles": {"summary": "Use NDW.loop plus NDW.audio.playTone, NDW.particles.spawn, and NDW.juice.shake for game-feel feedback."},
+        "gsap_timeline_dom": {"summary": "Use GSAP timelines for DOM-based entrances, staged transitions, and focused interaction response."},
+        "gsap_state_transition": {"summary": "Use GSAP to animate state changes such as card flips, score updates, filters, saved states, and results."},
+        "lucide_app_chrome": {"summary": "Use Lucide icons to make SaaS, commerce, booking, and tool interfaces feel like real usable apps."},
+        "alpine_ui_state": {"summary": "Use Alpine.js for app/tool/commerce UI state: filters, forms, carts, accordions, drawers, tabs, selected records, and multi-step flows."},
+        "matter_physics_game": {"summary": "Use Matter.js for physics-first games and toys with collisions, gravity, constraints, scoring, reset, and visible cause/effect."},
+        "three_orbit_scene": {"summary": "Use Three.js plus OrbitControls for explorable objects, maps, instruments, or spatial demos."},
+        "three_bloom_scene": {"summary": "Use Three.js postprocessing only for one restrained focal scene, not as generic neon decoration."},
+        "dom_css_state_machine": {"summary": "Use DOM/CSS state, CSS grid, buttons, forms, outputs, and accessible controls for puzzle/app flows."},
     },
     "composition_recipes": {
         "fictional_instrument": {"summary": "A playable visual instrument with controls that reshape the scene."},

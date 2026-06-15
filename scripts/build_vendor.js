@@ -58,6 +58,14 @@ function main() {
     path.join(vendorDir, "three-addons", "postprocessing", "UnrealBloomPass.js")
   );
   copyIfExists(
+    path.join(root, "node_modules", "alpinejs", "dist", "cdn.min.js"),
+    path.join(vendorDir, "alpine.min.js")
+  );
+  copyIfExists(
+    path.join(root, "node_modules", "matter-js", "build", "matter.min.js"),
+    path.join(vendorDir, "matter.min.js")
+  );
+  copyIfExists(
     path.join(root, "node_modules", "gsap", "dist", "ScrollTrigger.min.js"),
     path.join(vendorDir, "ScrollTrigger.min.js"),
     { optional: true }
