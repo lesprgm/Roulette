@@ -155,9 +155,8 @@ def _semantic_role_schema() -> dict:
 
 _ANCHOR_KEYS = [
     "material",
-    "natural_phenomenon",
-    "cultural_object",
-    "system_metaphor",
+    "everyday_object",
+    "layout_metaphor",
     "interaction_verb",
 ]
 

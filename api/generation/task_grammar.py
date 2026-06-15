@@ -80,16 +80,16 @@ VARIANT_TASK_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "completion_condition": "reservation summary is shown with selected trip details",
         "allowed_patterns": FORMAT_PATTERN_GROUPS["commerce"],
     },
-    "crm_pipeline": {
-        "format": "crm_pipeline",
+    "sales_tracker": {
+        "format": "sales_tracker",
         "user_goal": "Filter leads, move deals between stages, and save a pipeline update.",
         "domain_objects": ["lead", "deal", "stage", "owner", "value"],
         "state_variables": ["leads", "selectedLead", "stage", "filters", "saved"],
         "completion_condition": "at least one lead is updated and saved",
         "allowed_patterns": FORMAT_PATTERN_GROUPS["app"],
     },
-    "kanban_workspace": {
-        "format": "kanban_workspace",
+    "task_board": {
+        "format": "task_board",
         "user_goal": "Organize tasks across columns and save a project board state.",
         "domain_objects": ["task", "column", "assignee", "status"],
         "state_variables": ["tasks", "columns", "selectedTask", "filters", "saved"],
@@ -127,6 +127,70 @@ VARIANT_TASK_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "state_variables": ["records", "filters", "selectedEvidence", "findings", "saved"],
         "completion_condition": "at least one finding is saved from selected evidence",
         "allowed_patterns": FORMAT_PATTERN_GROUPS["investigation"],
+    },
+    "sudoku_grid": {
+        "format": "sudoku_puzzle",
+        "user_goal": "Fill the grid with numbers 1-9 so each row, column, and box contains all digits.",
+        "domain_objects": ["grid", "number", "row", "column", "box"],
+        "state_variables": ["cells", "selectedCell", "hints", "complete", "errors"],
+        "completion_condition": "all 81 cells are filled correctly",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "connect_four": {
+        "format": "connect_four_game",
+        "user_goal": "Drop discs to connect four in a row before your opponent does.",
+        "domain_objects": ["disc", "column", "row", "board", "player"],
+        "state_variables": ["board", "currentPlayer", "winner", "columnHeights"],
+        "completion_condition": "one player connects four discs",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "solitaire_card": {
+        "format": "solitaire_game",
+        "user_goal": "Sort all cards into foundation stacks by suit.",
+        "domain_objects": ["card", "suit", "stack", "tableau", "foundation"],
+        "state_variables": ["deck", "tableau", "foundations", "drawPile"],
+        "completion_condition": "all cards are in foundation stacks",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "pong_clone": {
+        "format": "pong_game",
+        "user_goal": "Bounce the ball past your opponent to score points.",
+        "domain_objects": ["paddle", "ball", "score", "court"],
+        "state_variables": ["paddle1", "paddle2", "ball", "score1", "score2"],
+        "completion_condition": "first player reaches target score",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "flappy_bird": {
+        "format": "flappy_bird_game",
+        "user_goal": "Tap to flap and dodge pipes for as long as possible.",
+        "domain_objects": ["bird", "pipe", "gap", "score", "ground"],
+        "state_variables": ["birdY", "velocity", "pipes", "score", "alive"],
+        "completion_condition": "game ends on collision",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "darts_scoring": {
+        "format": "darts_game",
+        "user_goal": "Throw darts at the target to score the highest points.",
+        "domain_objects": ["dart", "board", "bullseye", "score", "round"],
+        "state_variables": ["throws", "totalScore", "rounds", "highScore"],
+        "completion_condition": "all rounds are completed",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "bowling_arcade": {
+        "format": "bowling_game",
+        "user_goal": "Roll the ball to knock down all ten pins.",
+        "domain_objects": ["ball", "pin", "lane", "frame", "score"],
+        "state_variables": ["pins", "ballPosition", "frames", "totalScore"],
+        "completion_condition": "all ten frames are completed",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
+    },
+    "air_hockey": {
+        "format": "air_hockey_game",
+        "user_goal": "Hit the puck into your opponent's goal to score.",
+        "domain_objects": ["puck", "striker", "goal", "table", "score"],
+        "state_variables": ["puck", "playerStriker", "aiStriker", "playerScore", "aiScore"],
+        "completion_condition": "first player reaches target score",
+        "allowed_patterns": FORMAT_PATTERN_GROUPS["game"],
     },
 }
 
@@ -243,7 +307,7 @@ def _error_states_for(format_name: str) -> List[str]:
 
 def _primary_action_label(format_name: str) -> str:
     lowered = format_name.lower()
-    if any(term in lowered for term in ["game", "snake", "breakout", "2048", "runner", "rhythm", "whack", "pinball", "asteroids", "maze", "basketball"]):
+    if any(term in lowered for term in ["game", "snake", "breakout", "2048", "runner", "rhythm", "whack", "pinball", "asteroids", "maze", "basketball", "pong", "flappy", "darts", "bowling", "hockey", "sudoku", "connect", "solitaire"]):
         return "Play / move"
     if "quiz" in lowered or "word" in lowered or "memory" in lowered:
         return "Answer / match"

@@ -22,7 +22,7 @@ _REDIS_COUNTER_KEY = os.getenv("REDIS_COUNTER_KEY", "ndw:metrics:total")
 _REDIS_TIMEOUT = float(os.getenv("REDIS_COUNTER_TIMEOUT", "0.35") or 0.35)
 
 _REDIS_CLIENT: Optional["redis.Redis[str]"] = None  # type: ignore[name-defined]
-if redis and _REDIS_URL:
+if redis and _REDIS_URL and _REDIS_URL.startswith(("redis://", "rediss://", "unix://")):
     try:
         _REDIS_CLIENT = redis.from_url(  
             _REDIS_URL,

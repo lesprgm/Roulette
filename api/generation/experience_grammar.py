@@ -99,7 +99,7 @@ PAGE_GENRES = [
 
 COPY_DENSITIES = ["almost_none", "low", "medium", "high"]
 
-GENRE_VISUAL_DENSITIES = ["sparse", "focused", "dense", "maximal"]
+GENRE_VISUAL_DENSITIES = ["sparse", "focused", "dense", "maximal", "variable_adaptive", "zoned", "generous_white"]
 
 PALETTE_STRATEGIES = [
     "monochrome_accent",
@@ -110,6 +110,11 @@ PALETTE_STRATEGIES = [
     "pastel_toy",
     "high_contrast_game",
     "earth_material_accent",
+    "warm_amber",
+    "forest_natural",
+    "ocean_coastal",
+    "zen_minimal",
+    "tropical_vibrant",
 ]
 
 MOTION_LANGUAGES = [
@@ -119,6 +124,18 @@ MOTION_LANGUAGES = [
     "playful_elastic",
     "glitchy_unstable",
     "calm_product",
+    "scroll_parallax",
+    "staggered_sequence",
+    "liquid_smooth",
+    "spring_bounce",
+    "hover_ambient",
+    "kinetic_type",
+    "float_dreamy",
+    "morph_shape",
+    "grain_texture",
+    "wave_ripple",
+    "neon_pulse",
+    "minimal_fade",
 ]
 
 INSTRUCTION_POLICIES = [
@@ -126,6 +143,9 @@ INSTRUCTION_POLICIES = [
     "one_microcue",
     "labels_allowed",
     "documentation_allowed",
+    "visual_cue_only",
+    "embedded_hint",
+    "contextual_tooltip",
 ]
 
 CHROME_POLICIES = [
@@ -179,13 +199,21 @@ GAME_FORMATS = [
     "basketball_arcade",
     "card_sort_strategy",
     "typing_race",
+    "sudoku_grid",
+    "connect_four",
+    "solitaire_card",
+    "pong_clone",
+    "flappy_bird",
+    "darts_scoring",
+    "bowling_arcade",
+    "air_hockey",
 ]
 
 APP_FORMATS = [
-    "kanban_workspace",
-    "crm_pipeline",
+    "task_board",
+    "sales_tracker",
     "invoice_builder",
-    "analytics_explorer",
+    "dashboard_app",
     "calendar_scheduler",
     "inventory_manager",
     "travel_booking",
@@ -193,8 +221,8 @@ APP_FORMATS = [
     "marketplace_comparison",
     "subscription_configurator",
     "portfolio_builder",
-    "resume_screener",
-    "support_triage",
+    "hiring_tracker",
+    "helpdesk_app",
     "habit_tracker",
     "budget_planner",
     "recipe_planner",
@@ -293,6 +321,14 @@ MECHANIC_PATTERNS = [
     "choose_branching_path",
     "unlock_sequence_or_stages",
     "inspect_compare_and_act",
+    "sudoku_fill_number_grid",
+    "connect_four_drop_disc",
+    "solitaire_sort_stacks",
+    "pong_bounce_ball",
+    "flappy_bird_dodge_pipe",
+    "darts_throw_for_score",
+    "bowling_knock_pins",
+    "air_hockey_strike_puck",
 ]
 
 BORING_INTERACTION_PATTERNS = [
@@ -358,13 +394,13 @@ LOW_FRICTION_APP_FORMATS = [
 ]
 
 HEAVY_WORKFLOW_FORMATS = [
-    "kanban_workspace",
-    "crm_pipeline",
+    "task_board",
+    "sales_tracker",
     "invoice_builder",
-    "analytics_explorer",
+    "dashboard_app",
     "inventory_manager",
-    "resume_screener",
-    "support_triage",
+    "hiring_tracker",
+    "helpdesk_app",
 ]
 
 RETENTION_TOY_FORMATS = [
@@ -381,20 +417,18 @@ RETENTION_TOY_FORMATS = [
 FORMAT_FIRST_VARIANT_POOL = (
     GAME_FORMATS
     + GAME_FORMATS
-    + GAME_FORMATS
-    + GAME_FORMATS
     + RETENTION_TOY_FORMATS
     + RETENTION_TOY_FORMATS
     + LOW_FRICTION_APP_FORMATS
     + LOW_FRICTION_APP_FORMATS
     + PRODUCT_FORMATS
     + PRODUCT_FORMATS
-    + PRODUCT_FORMATS
+    + HEAVY_WORKFLOW_FORMATS
     + HEAVY_WORKFLOW_FORMATS
     + ["record_investigation", "map_explorer", "timeline_compare", "case_file_sorter"]
 )
 
-FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
+FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str | List[str]]] = {
     "platformer_collectathon": {
         "activity_type": "platformer",
         "core_mechanic": "platform_jump_and_collect",
@@ -405,7 +439,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "activity_type": "snake_game",
         "core_mechanic": "snake_collect_and_grow",
         "experience_archetype": "browser_game",
-        "primary_loop_type": "collect_to_complete",
+        "primary_loop_type": ["collect_to_complete", "steer_to_explore"],
     },
     "tic_tac_toe": {
         "activity_type": "tic_tac_toe",
@@ -422,7 +456,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "memory_match": {
         "activity_type": "memory_match",
         "core_mechanic": "flip_cards_to_match_pairs",
-        "experience_archetype": "quiz_game",
+        "experience_archetype": ["quiz_game", "browser_game"],
         "primary_loop_type": "collect_to_complete",
     },
     "word_guess": {
@@ -434,8 +468,8 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "breakout_paddle": {
         "activity_type": "microgame",
         "core_mechanic": "breakout_paddle_bounce",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "collect_to_complete",
+        "experience_archetype": ["browser_game", "visual_playground"],
+        "primary_loop_type": ["collect_to_complete", "steer_to_explore"],
     },
     "minesweeper_grid": {
         "activity_type": "microgame",
@@ -482,7 +516,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "pinball_table": {
         "activity_type": "microgame",
         "core_mechanic": "pinball_flipper_bounce",
-        "experience_archetype": "browser_game",
+        "experience_archetype": ["browser_game", "visual_playground"],
         "primary_loop_type": "steer_to_explore",
     },
     "asteroids_shooter": {
@@ -494,7 +528,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "maze_escape": {
         "activity_type": "microgame",
         "core_mechanic": "maze_escape_navigation",
-        "experience_archetype": "browser_game",
+        "experience_archetype": ["browser_game", "spatial_exploration"],
         "primary_loop_type": "steer_to_explore",
     },
     "reaction_timer": {
@@ -527,13 +561,61 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "experience_archetype": "quiz_game",
         "primary_loop_type": "type_to_reveal",
     },
-    "kanban_workspace": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": "saas_workspace",
+    "sudoku_grid": {
+        "activity_type": "microgame",
+        "core_mechanic": "sudoku_fill_number_grid",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "assemble_to_activate",
+    },
+    "connect_four": {
+        "activity_type": "microgame",
+        "core_mechanic": "connect_four_drop_disc",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "choose_to_branch",
+    },
+    "solitaire_card": {
+        "activity_type": "microgame",
+        "core_mechanic": "solitaire_sort_stacks",
+        "experience_archetype": "browser_game",
         "primary_loop_type": "sort_to_understand",
     },
-    "crm_pipeline": {
+    "pong_clone": {
+        "activity_type": "microgame",
+        "core_mechanic": "pong_bounce_ball",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "steer_to_explore",
+    },
+    "flappy_bird": {
+        "activity_type": "microgame",
+        "core_mechanic": "flappy_bird_dodge_pipe",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "steer_to_explore",
+    },
+    "darts_scoring": {
+        "activity_type": "microgame",
+        "core_mechanic": "darts_throw_for_score",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "press_sequence_to_unlock",
+    },
+    "bowling_arcade": {
+        "activity_type": "microgame",
+        "core_mechanic": "bowling_knock_pins",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "press_sequence_to_unlock",
+    },
+    "air_hockey": {
+        "activity_type": "microgame",
+        "core_mechanic": "air_hockey_strike_puck",
+        "experience_archetype": "browser_game",
+        "primary_loop_type": "steer_to_explore",
+    },
+    "task_board": {
+        "activity_type": "saas_replica",
+        "core_mechanic": "filter_search_and_select_records",
+        "experience_archetype": ["saas_workspace", "data_sculpture"],
+        "primary_loop_type": ["sort_to_understand", "assemble_to_activate"],
+    },
+    "sales_tracker": {
         "activity_type": "saas_replica",
         "core_mechanic": "filter_search_and_select_records",
         "experience_archetype": "saas_workspace",
@@ -545,10 +627,10 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "experience_archetype": "saas_workspace",
         "primary_loop_type": "assemble_to_activate",
     },
-    "analytics_explorer": {
+    "dashboard_app": {
         "activity_type": "saas_replica",
         "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "saas_workspace",
+        "experience_archetype": ["saas_workspace", "data_sculpture"],
         "primary_loop_type": "scrub_time_to_compare",
     },
     "calendar_scheduler": {
@@ -659,13 +741,13 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "experience_archetype": "product_demo_experience",
         "primary_loop_type": "assemble_to_activate",
     },
-    "resume_screener": {
+    "hiring_tracker": {
         "activity_type": "saas_replica",
         "core_mechanic": "filter_search_and_select_records",
         "experience_archetype": "saas_workspace",
         "primary_loop_type": "sort_to_understand",
     },
-    "support_triage": {
+    "helpdesk_app": {
         "activity_type": "saas_replica",
         "core_mechanic": "sort_cards_into_meaningful_groups",
         "experience_archetype": "saas_workspace",
@@ -675,7 +757,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "activity_type": "saas_replica",
         "core_mechanic": "collect_items_to_complete_set",
         "experience_archetype": "saas_workspace",
-        "primary_loop_type": "collect_to_complete",
+        "primary_loop_type": ["collect_to_complete", "assemble_to_activate"],
     },
     "budget_planner": {
         "activity_type": "saas_replica",
@@ -693,7 +775,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "activity_type": "creative_tool",
         "core_mechanic": "paint_or_draw_to_create_output",
         "experience_archetype": "creative_tool_interface",
-        "primary_loop_type": "paint_to_grow",
+        "primary_loop_type": ["paint_to_grow", "mix_to_generate"],
     },
     "music_step_sequencer": {
         "activity_type": "creative_tool",
@@ -710,7 +792,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "color_palette_mixer": {
         "activity_type": "creative_tool",
         "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "creative_tool_interface",
+        "experience_archetype": ["creative_tool_interface", "generative_poster"],
         "primary_loop_type": "mix_to_generate",
     },
     "poster_generator": {
@@ -752,13 +834,13 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
     "record_investigation": {
         "activity_type": "data_investigation",
         "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": "interactive_editorial",
+        "experience_archetype": ["interactive_editorial", "data_sculpture"],
         "primary_loop_type": "sort_to_understand",
     },
     "map_explorer": {
         "activity_type": "narrative_explorer",
         "core_mechanic": "navigate_map_or_space",
-        "experience_archetype": "spatial_exploration",
+        "experience_archetype": ["spatial_exploration", "narrative_microsite"],
         "primary_loop_type": "steer_to_explore",
     },
     "timeline_compare": {
@@ -780,6 +862,17 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str]] = {
         "primary_loop_type": "assemble_to_activate",
     },
 }
+
+
+def _resolve_spec(spec: Dict[str, str | List[str]], variant: str, seed: int | None = None) -> Dict[str, str]:
+    rng = random.Random(f"{int(seed or 0)}:{variant}:resolve-spec")
+    resolved: Dict[str, str] = {}
+    for key, value in spec.items():
+        if isinstance(value, list):
+            resolved[key] = rng.choice(value)
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def cell_key(archetype: str, loop_type: str) -> str:
@@ -811,7 +904,7 @@ def seeded_experience_cell(seed: int | None = None) -> Dict[str, str]:
 
 def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:{activity_variant}:format-first-contract")
-    spec = FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"]
+    spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
     activity_type = spec["activity_type"]
     mechanic = spec["core_mechanic"]
     library_profile = _library_profile_for_activity(rng, activity_type, activity_variant, mechanic)
@@ -836,7 +929,7 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
 def seeded_format_first_target(seed: int | None = None) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:format-first-target")
     activity_variant = rng.choice(FORMAT_FIRST_VARIANT_POOL)
-    spec = FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"]
+    spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
     activity_contract = _activity_contract_for_variant(seed, activity_variant)
     return {
         "experience_archetype": spec["experience_archetype"],
@@ -856,9 +949,9 @@ def activity_family_for_variant(activity_variant: str) -> str:
         return "word_game"
     if activity_variant in {"trivia_quiz", "memory_match", "tic_tac_toe", "card_sort_strategy"}:
         return "quiz_card_game"
-    if activity_variant in {"snake_grid", "breakout_paddle", "endless_runner", "rhythm_tap", "whack_a_target", "pinball_table", "asteroids_shooter", "maze_escape", "reaction_timer", "fishing_timing", "basketball_arcade", "platformer_collectathon"}:
+    if activity_variant in {"snake_grid", "breakout_paddle", "endless_runner", "rhythm_tap", "whack_a_target", "pinball_table", "asteroids_shooter", "maze_escape", "reaction_timer", "fishing_timing", "basketball_arcade", "platformer_collectathon", "pong_clone", "flappy_bird", "air_hockey"}:
         return "arcade_action"
-    if activity_variant in {"minesweeper_grid", "tile_merge_2048", "sliding_tile_puzzle", "tower_defense_lite"}:
+    if activity_variant in {"minesweeper_grid", "tile_merge_2048", "sliding_tile_puzzle", "tower_defense_lite", "sudoku_grid", "connect_four", "solitaire_card", "darts_scoring", "bowling_arcade"}:
         return "puzzle_strategy"
     if activity_variant in {"room_layout_builder", "furniture_product_configurator"}:
         return "layout_builder"
@@ -872,7 +965,7 @@ def activity_family_for_variant(activity_variant: str) -> str:
         return "product_storefront"
     if activity_variant in {"travel_booking", "restaurant_ordering", "marketplace_comparison", "subscription_configurator"}:
         return "commerce_flow"
-    if activity_variant in {"kanban_workspace", "crm_pipeline", "invoice_builder", "analytics_explorer", "calendar_scheduler", "inventory_manager", "resume_screener", "support_triage", "habit_tracker", "budget_planner", "recipe_planner", "portfolio_builder"}:
+    if activity_variant in {"task_board", "sales_tracker", "invoice_builder", "dashboard_app", "calendar_scheduler", "inventory_manager", "hiring_tracker", "helpdesk_app", "habit_tracker", "budget_planner", "recipe_planner", "portfolio_builder"}:
         return "workspace_app"
     if activity_variant in {"map_route_planner", "map_explorer"}:
         return "map_tool"
@@ -925,8 +1018,8 @@ def seeded_diverse_format_first_targets(
             chosen_family = activity_family_for_variant(chosen_variant)
         used_variants.add(chosen_variant)
         used_families.add(chosen_family)
-        spec = FORMAT_VARIANT_SPECS.get(chosen_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"]
         site_seed = int(seed or 0) + ((index + 1) * 7919)
+        spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(chosen_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], chosen_variant, site_seed)
         activity_contract = _activity_contract_for_variant(site_seed, chosen_variant)
         targets.append(
             {
@@ -1072,12 +1165,20 @@ def seeded_activity_contract(seed: int | None = None, archetype: str = "", loop_
         "basketball_arcade": ("microgame", "basketball_shot_arc"),
         "card_sort_strategy": ("microgame", "card_hand_strategy"),
         "typing_race": ("word_game", "typing_race_accuracy"),
+        "sudoku_grid": ("microgame", "sudoku_fill_number_grid"),
+        "connect_four": ("microgame", "connect_four_drop_disc"),
+        "solitaire_card": ("microgame", "solitaire_sort_stacks"),
+        "pong_clone": ("microgame", "pong_bounce_ball"),
+        "flappy_bird": ("microgame", "flappy_bird_dodge_pipe"),
+        "darts_scoring": ("microgame", "darts_throw_for_score"),
+        "bowling_arcade": ("microgame", "bowling_knock_pins"),
+        "air_hockey": ("microgame", "air_hockey_strike_puck"),
     }
     app_mechanics = {
-        "kanban_workspace": "filter_search_and_select_records",
-        "crm_pipeline": "filter_search_and_select_records",
+        "task_board": "filter_search_and_select_records",
+        "sales_tracker": "filter_search_and_select_records",
         "invoice_builder": "configure_product_or_system",
-        "analytics_explorer": "sort_cards_into_meaningful_groups",
+        "dashboard_app": "sort_cards_into_meaningful_groups",
         "calendar_scheduler": "configure_product_or_system",
         "inventory_manager": "filter_search_and_select_records",
         "travel_booking": "configure_product_or_system",
@@ -1096,8 +1197,8 @@ def seeded_activity_contract(seed: int | None = None, archetype: str = "", loop_
         "marketplace_listing_page": "sort_cards_into_meaningful_groups",
         "limited_drop_countdown": "configure_product_or_system",
         "portfolio_builder": "assemble_machine_or_layout",
-        "resume_screener": "filter_search_and_select_records",
-        "support_triage": "sort_cards_into_meaningful_groups",
+        "hiring_tracker": "filter_search_and_select_records",
+        "helpdesk_app": "sort_cards_into_meaningful_groups",
         "habit_tracker": "collect_items_to_complete_set",
         "budget_planner": "configure_product_or_system",
         "recipe_planner": "sort_cards_into_meaningful_groups",
@@ -1260,4 +1361,12 @@ def _required_actions_for_mechanic(mechanic: str) -> List[str]:
         "choose_branching_path": ["choose", "branch", "reveal consequence"],
         "unlock_sequence_or_stages": ["attempt sequence", "unlock", "progress"],
         "inspect_compare_and_act": ["inspect", "compare", "act"],
+        "sudoku_fill_number_grid": ["place number", "check row", "complete grid"],
+        "connect_four_drop_disc": ["drop disc", "block opponent", "connect four"],
+        "solitaire_sort_stacks": ["draw card", "stack by suit", "clear tableau"],
+        "pong_bounce_ball": ["move paddle", "bounce ball", "score point"],
+        "flappy_bird_dodge_pipe": ["tap to flap", "dodge pipe", "avoid ground"],
+        "darts_throw_for_score": ["aim", "throw dart", "hit target"],
+        "bowling_knock_pins": ["aim", "roll ball", "knock pins"],
+        "air_hockey_strike_puck": ["move striker", "hit puck", "score goal"],
     }.get(mechanic, ["act", "observe result", "continue"])

@@ -25,7 +25,7 @@ services:
       - key: GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS
         value: '64000'
       - key: GEMINI_THINKING_LEVEL
-        value: medium
+        value: high
       - key: BURST_SITE_COUNT
         value: '12'
       - key: TEMPERATURE
