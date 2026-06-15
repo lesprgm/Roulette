@@ -9,6 +9,8 @@ from typing import Any, Dict, Iterable, Optional, Tuple, List, Set
 import requests
 from api import dedupe
 from api.design_kit import compact_design_kit_manifest
+from api.generation.activity_quality import score_activity_depth
+from api.generation.design_quality import score_design_discipline
 from api.generation.experience_quality import score_experience
 from api.generation.prompts import (
     FINAL_HTML_OUTPUT_FORMAT,
@@ -28,8 +30,15 @@ from api.preflight import first_js_syntax_error as _first_js_syntax_error
 from api.preflight import has_blocking_issues as _preflight_has_blocking_issues
 from api.preflight import preflight_doc as _preflight_doc
 from api.quality import PREMIUM_SCORE_THRESHOLD, score_page_doc
-from api.generation.redis_diversity import choose_experience_cell
+from api.generation.experience_grammar import (
+    seeded_activity_contract,
+    seeded_diverse_format_first_targets,
+    seeded_format_first_target,
+    seeded_genre_contract,
+)
+from api.generation.redis_diversity import recent_activity_memory
 from api.generation.semantic_anchors import select_semantic_anchors
+from api.generation.task_grammar import task_contract_for_variant
 
 
 def _testing_stub_enabled() -> bool:
@@ -53,9 +62,9 @@ except Exception:
 
 # Premium burst generation: number of sites requested from Gemini in one streaming call.
 try:
-    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "15"))
+    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "12"))
 except Exception:
-    BURST_SITE_COUNT = 15
+    BURST_SITE_COUNT = 12
 BURST_SITE_COUNT = max(1, min(BURST_SITE_COUNT, 50))
 
 # Token and timeout configuration
@@ -85,7 +94,7 @@ try:
     PREMIUM_BURST_MIN_HTML_BYTES = int(os.getenv("PREMIUM_BURST_MIN_HTML_BYTES", "3000"))
 except Exception:
     PREMIUM_BURST_MIN_HTML_BYTES = 3000
-GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low").strip().lower()
+GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "medium").strip().lower()
 GEMINI_STREAM_DEBUG = os.getenv("GEMINI_STREAM_DEBUG", "0").lower() in {"1", "true", "yes", "on"}
 try:
     GEMINI_STREAM_DEBUG_CHARS = int(os.getenv("GEMINI_STREAM_DEBUG_CHARS", "4000"))
@@ -173,6 +182,110 @@ def _attach_quality_score(doc: Dict[str, Any], mode: str) -> Dict[str, Any]:
     return out
 
 
+def _has_full_experience_plan(plan: Dict[str, Any]) -> bool:
+    if not isinstance(plan, dict):
+        return False
+    loop = plan.get("primary_loop")
+    if not isinstance(loop, dict):
+        return False
+    required = ("user_action", "visible_response", "state_change", "reward_or_payoff", "continue_reason")
+    return bool(
+        str(plan.get("first_interaction") or plan.get("onboarding_cue") or "").strip()
+        and all(str(loop.get(key) or "").strip() for key in required)
+    )
+
+
+def _semantic_translation_from_anchors(anchors: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    readable_format = str(task.get("format") or "the selected activity").replace("_", " ")
+    translation: Dict[str, Dict[str, str]] = {}
+    for key, value in (anchors or {}).items():
+        anchor = str(value or "").strip()
+        if not anchor:
+            continue
+        translation[key] = {
+            "visual_role": f"Use {anchor} as a subtle surface, palette, or object-detail flavor for {readable_format}.",
+            "interaction_role": f"Let {anchor} influence small feedback moments without replacing the {readable_format} behavior.",
+            "content_role": f"Use {anchor} only in labels or microcopy when it clarifies the task.",
+            "motion_role": f"Translate {anchor} into restrained motion accents tied to state changes.",
+        }
+    return translation
+
+
+def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
+    controls = task.get("controls") if isinstance(task.get("controls"), list) else []
+    first_control = controls[0] if controls and isinstance(controls[0], dict) else {}
+    first_label = str(first_control.get("label") or "Try the main action").strip()
+    user_goal = str(task.get("user_goal") or target.get("activity_contract", {}).get("activity_goal") or "Try the activity.").strip()
+    completion = str(task.get("completion_condition") or target.get("activity_contract", {}).get("payoff") or "a visible result updates").strip()
+    state_vars = task.get("state_variables") if isinstance(task.get("state_variables"), list) else []
+    state_change = ", ".join(str(item) for item in state_vars[:3]) or "the visible state"
+    activity_type = str(target.get("activity_type") or "")
+    if activity_type in {"microgame", "platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
+        visitor_role = "player"
+    elif activity_type == "product_or_storefront":
+        visitor_role = "shopper"
+    elif activity_type in {"saas_replica", "commerce_or_booking_flow", "fake_os_app"}:
+        visitor_role = "operator"
+    elif activity_type == "creative_tool":
+        visitor_role = "creator"
+    else:
+        visitor_role = "visitor"
+    return {
+        "visitor_role": visitor_role,
+        "visitor_goal": user_goal,
+        "first_interaction": first_label,
+        "primary_loop": {
+            "user_action": first_label,
+            "visible_response": f"The page updates the {completion}.",
+            "state_change": f"Updates {state_change}.",
+            "reward_or_payoff": completion,
+            "continue_reason": f"Improve, complete, compare, or replay the {str(task.get('format') or 'activity').replace('_', ' ')}.",
+        },
+        "secondary_interactions": [str(control.get("label")) for control in controls[1:3] if isinstance(control, dict) and control.get("label")],
+        "feedback_contract": f"Every control must visibly change {state_change} or show {completion}.",
+        "progression_model": completion,
+        "reset_or_replay": "Provide a Reset, Restart, Edit, or Try again affordance when the format needs replay.",
+        "onboarding_cue": first_label,
+        "mobile_interaction": "Support touch/click controls on mobile; keep keyboard controls as an enhancement for games.",
+    }
+
+
+def _attach_premium_evaluations(
+    scored: Dict[str, Any],
+    plan: Dict[str, Any],
+    *,
+    include_experience: Optional[bool] = None,
+) -> Dict[str, Any]:
+    debug = dict(scored.get("ndw_debug") or {})
+    debug["premium_plan"] = plan
+    should_score_experience = _has_full_experience_plan(plan) if include_experience is None else include_experience
+    if should_score_experience:
+        debug["experience_quality"] = score_experience(scored, plan)
+    else:
+        debug["experience_quality"] = {
+            "score": None,
+            "threshold": None,
+            "passes": True,
+            "skipped": True,
+            "reason": "full planner experience loop not available for this generation path",
+        }
+    debug["design_quality"] = score_design_discipline(scored, plan)
+    debug["activity_quality"] = score_activity_depth(scored, plan)
+    repair_signals: List[str] = []
+    for key in ("experience_quality", "design_quality", "activity_quality"):
+        result = debug.get(key)
+        if not isinstance(result, dict) or result.get("passes", True):
+            continue
+        tags = result.get("tags") or result.get("hard_failures") or []
+        if isinstance(tags, list):
+            repair_signals.extend(str(tag) for tag in tags[:8])
+        else:
+            repair_signals.append(str(tags))
+    debug["repair_signals"] = sorted(set(signal for signal in repair_signals if signal))
+    scored["ndw_debug"] = debug
+    return scored
+
+
 def generate_page(
     brief: str,
     seed: int,
@@ -227,10 +340,7 @@ def generate_page_premium(
     if _preflight_has_blocking_issues(preflight_issues):
         return {"error": "Premium build failed local preflight", "issues": preflight_issues}
     scored = _attach_quality_score(doc, "premium")
-    debug = dict(scored.get("ndw_debug") or {})
-    debug["premium_plan"] = plan
-    debug["experience_quality"] = score_experience(scored, plan)
-    scored["ndw_debug"] = debug
+    scored = _attach_premium_evaluations(scored, plan, include_experience=True)
     return scored
 
 
@@ -306,6 +416,24 @@ def _call_gemini_structured(
             logging.warning("Gemini structured %s request error: %r", label, exc)
             continue
 
+        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+            retry_config = dict(generation_config)
+            retry_config.pop("thinkingConfig", None)
+            retry_body = dict(body)
+            retry_body["generationConfig"] = retry_config
+            try:
+                resp = requests.post(
+                    target_endpoint,
+                    params={"key": GEMINI_API_KEY},
+                    json=retry_body,
+                    timeout=LLM_TIMEOUT_SECS,
+                )
+                if resp.status_code == 200:
+                    logging.info("Gemini structured %s succeeded after removing thinkingConfig", label)
+            except Exception as exc:
+                logging.warning("Gemini structured %s retry without thinkingConfig error: %r", label, exc)
+                continue
+
         if resp.status_code != 200:
             try:
                 msg = resp.text[:400]
@@ -358,6 +486,23 @@ def _call_gemini_text(
         except Exception as exc:
             logging.warning("Gemini text %s request error: %r", label, exc)
             continue
+        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+            retry_config = dict(generation_config)
+            retry_config.pop("thinkingConfig", None)
+            retry_body = dict(body)
+            retry_body["generationConfig"] = retry_config
+            try:
+                resp = requests.post(
+                    target_endpoint,
+                    params={"key": GEMINI_API_KEY},
+                    json=retry_body,
+                    timeout=LLM_TIMEOUT_SECS,
+                )
+                if resp.status_code == 200:
+                    logging.info("Gemini text %s succeeded after removing thinkingConfig", label)
+            except Exception as exc:
+                logging.warning("Gemini text %s retry without thinkingConfig error: %r", label, exc)
+                continue
         if resp.status_code != 200:
             try:
                 msg = resp.text[:400]
@@ -469,12 +614,11 @@ def extract_completed_premium_burst_sites(text: str) -> List[Tuple[int, str]]:
 
 
 def _premium_burst_rejection(doc: Dict[str, Any], quality: Dict[str, Any]) -> Optional[str]:
+    del quality
     html = str(doc.get("html") or "")
     html_bytes = len(html.encode("utf-8"))
     if html_bytes < PREMIUM_BURST_MIN_HTML_BYTES:
         return f"html too small ({html_bytes}B < {PREMIUM_BURST_MIN_HTML_BYTES}B)"
-    if not quality.get("passes"):
-        return f"quality score below threshold ({quality.get('score')}/{quality.get('threshold')})"
     return None
 
 
@@ -510,17 +654,20 @@ def _summarize_preflight_issues(issues: Sequence[Dict[str, Any]], limit: int = 4
 
 
 PREMIUM_SELF_REVIEW_CHECKLIST = f"""
-Before writing the final fenced HTML, the <self_review> block must explicitly verify:
+Before final HTML, verify and fix:
 - Forbidden APIs used? no. Do not use fetch, XMLHttpRequest, WebSocket, Worker, SharedWorker, eval, Function, or document.write.
 - Remote resources used? no. No remote scripts, styles, images, media, fonts, or CSS url() assets.
-- Script tags valid? yes. The only allowed script src values are `/static/vendor/tailwind-play.js`, `/static/vendor/gsap.min.js`, `/static/vendor/ScrollTrigger.min.js`, `/static/vendor/lucide.min.js`, and `/static/js/ndw.js`; do not invent plugin paths such as Draggable.
-- Module imports local and iframe-safe? yes. Three.js must use `/static/vendor/three.module.js`; addons may only use `/static/vendor/three-addons/controls/OrbitControls.js`, `/static/vendor/three-addons/postprocessing/EffectComposer.js`, `/static/vendor/three-addons/postprocessing/RenderPass.js`, or `/static/vendor/three-addons/postprocessing/UnrealBloomPass.js`.
-- DOM references safe? yes. Every getElementById/querySelector target exists, is created before use, or uses defensive optional access.
-- Complete document? yes. Include doctype, html, head, body, and a visible #ndw-content stage.
-- Substantial premium page? yes. Final HTML must be at least {PREMIUM_BURST_MIN_HTML_BYTES} bytes, not a stub or tiny shell.
-- Composition strong? yes. Use at least two major regions or one immersive full-viewport stage; do not ship a generic centered-card shell.
-- First action and state change visible? yes. The visitor sees what to do, and input visibly changes page state.
-If any answer is not exactly safe/yes/no as required, rewrite the draft before the final HTML block.
+- Local scripts/imports only? yes. Allowed script src values are `/static/vendor/tailwind-play.js`, `/static/vendor/gsap.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, and `/static/js/ndw.js`; do not invent plugin paths such as ScrollTrigger or Draggable. Three.js imports must use `/static/vendor/three.module.js`; addons may only use `/static/vendor/three-addons/controls/OrbitControls.js`, `EffectComposer.js`, `RenderPass.js`, or `UnrealBloomPass.js`.
+- Complete and substantial? yes. Include doctype/html/head/body, visible #ndw-content, and Final HTML must be at least {PREMIUM_BURST_MIN_HTML_BYTES} bytes.
+- Format and task intact? yes. activity_contract.activity_variant is the product; semantic anchors flavor it but must never rename, obscure, or replace it.
+- Useful first screen? yes. Show the board/stage/cards/player/products/sample records/starter artifact immediately; no blank splash, empty container, or generic centered-card shell.
+- Interaction real? yes. Controls visibly change state, score/progress/result, created output, saved selection, checkout/receipt, win/loss, or replay state.
+- Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
+- Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
+- Copy clean? yes. No literal "Onboarding", "Instructions", "Visitor Role", "Primary Loop", "Feedback Contract", jargon/host-brand words, `//`, TODO, undefined, null, markdown fences, raw JSON, or code-comment debris.
+- Game/app specifics correct? yes. Games show a high-contrast first frame, score/result/restart, and recognizable names such as Snake, Breakout, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game. Apps/products show sample content, one obvious action, and useful feedback.
+- Runtime safe? yes. DOM references exist before use; audio only starts from a click/tap/key/pointer handler; WebGL/canvas/particles stay lightweight.
+If any answer is not safe/yes, rewrite before the final fenced HTML block.
 """.strip()
 
 
@@ -550,8 +697,19 @@ Per-site creative targets. Each site must feel unrelated to the others:
 {json.dumps(targets, indent=2)}
 
 Experience contract for every site:
-- Make the visitor role, visitor goal, onboarding cue, and first interaction visible.
-- Implement a primary loop: user action -> visible response -> state change -> reward/payoff -> continue reason.
+- Build the activity_contract, not just the aesthetic. Each site must be a mini app/game/tool/workflow with goal, visible state, and payoff.
+- Use activity_contract.activity_variant as the exact concrete format. Do not collapse it into snake, tic-tac-toe, quiz, sliders, or a hidden-object reveal unless that exact variant was selected.
+- Retention first: within three seconds the visitor should know what it is, what to do, and why trying again could be fun/useful.
+- Static first content rule: Games need a visible board/stage/cards/player/towers on first paint, controls, score/result, restart, win/loss/completion, and at least one meta-reward: streak, combo, lives, best score, tickets, medals, levels, or unlocks. Use clear names such as Breakout, Minesweeper, 2048, Rhythm Tap, Maze, Snake, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game.
+- Simple game visibility rule: do not ship a splash-only start; show the playable board/stage/cards/player immediately.
+- Apps/workspaces/commerce/products, including saas_replica targets, must preload realistic sample data: representative cards, records, products, rows, items, thumbnails, or options directly in initial HTML; one click/edit must produce a useful result. No blank tables, empty slots, or placeholder-only workflow.
+- Product/storefront pages need product hero, price/plan, benefits/specs, variant selector, and add-to-cart/reserve/buy/compare action with checkout/cart/receipt/selected-plan payoff.
+- Creative tools need a created/configured/composed output. Puzzle boxes need clues or visible puzzle-state changes; do not default to hidden-object reveals.
+- Use physical metaphors only when they clarify interaction: arcade cabinet, board, deck, receipt, ticket printer, paper tray, counter, dial, workbench, cards, shelves, map, or machine.
+- Follow activity_contract.library_profile. Use the matching local primitive deeply: NDW for canvas/game loops, Alpine for app/tool/commerce UI state, Matter for physics games/toys, GSAP for DOM state choreography, Lucide for app/workspace affordances, or Three.js for one explorable spatial focal scene.
+- Make the premise and first action visible without literal planning labels or tutorial sections. Ban visible headings like "Onboarding", "Instructions", "Visitor Role", "Primary Loop", and "Feedback Contract" unless documentation_allowed.
+- Respect each site's genre_contract when present: copy density, instruction policy, chrome policy, palette strategy, and motion language.
+- Implement a primary loop: user action -> visible response -> state change -> reward/payoff -> continue reason. Avoid slider-only sites unless activity_type is interactive_instrument or simulation, and never let controls merely change ambient visuals.
 - Use semantic anchors as interaction/content/motion logic, not just labels or colors.
 - Include reset/replay when appropriate.
 - Include mobile-friendly pointer/touch/keyboard fallback.
@@ -564,6 +722,13 @@ Local design kit manifest:
 - Each site must be a complete document with `<html>`, `<head>`, and `<body>`.
 - Each site must have a different layout/composition and primary interaction model.
 - Use at least one local design-kit asset or font in each site.
+- Use GSAP for at least one timeline on non-canvas, non-game pages by including `<script src="/static/vendor/gsap.min.js"></script>` and calling `gsap.timeline(...)`; game pages may use requestAnimationFrame instead.
+- Keep one focal area, short human-facing copy, controls near what they affect, and no cluttered multi-panel shell unless genre_contract calls for dense/maximal.
+- Non-empty first screen rule: every site must show player/targets, sample cards, product hero, prefilled records, starter artwork, furnished layout, route, thumbnails, seed cards, or preview artifact before interaction.
+- Canvas/game first paint rule: draw a high-contrast stage immediately; a Play button may overlay gameplay but must not replace it with a blank/Initialize splash. Puzzle/game cue rule: one short cue near the board.
+- Background discipline: do not use wave/grid/contour/dot wallpaper as the default visual identity. Use surfaces, product visuals, cards, maps, boards, canvases, shelves, or app content as the visual mass.
+- Avoid visible jargon and host-brand leakage: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, non-deterministic. Ban visible artifacts: `//`, TODO, undefined, null, raw JSON, markdown fences, and visible planning terminology.
+- Every control must advance a goal, score/progress, created output, configured result, unlocked reveal, selected record, or saved state.
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
 - If you use overlays, reference `/static/design-kit/overlays/...` paths exactly.
 - Three.js must use: `import * as THREE from '/static/vendor/three.module.js';`.
@@ -600,10 +765,17 @@ def generate_page_premium_burst(
         yield {"error": "Premium burst requires GEMINI_API_KEY"}
         return
 
+    memory = recent_activity_memory(limit=20)
+    base_targets = seeded_diverse_format_first_targets(
+        seed_val,
+        target_count,
+        recent_variants=memory.get("variants"),
+        recent_families=memory.get("families"),
+    )
     targets = []
-    for idx in range(target_count):
+    for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
-        target = _premium_experience_target(site_seed)
+        target = _premium_experience_target(site_seed, base_target=base_target)
         target["site_index"] = idx + 1
         target["seed"] = site_seed
         targets.append(target)
@@ -639,6 +811,24 @@ def generate_page_premium_burst(
         except Exception as exc:
             logging.warning("Gemini premium burst %s request error: %r", label, exc)
             continue
+        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+            retry_config = dict(generation_config)
+            retry_config.pop("thinkingConfig", None)
+            retry_body = dict(body)
+            retry_body["generationConfig"] = retry_config
+            try:
+                resp = requests.post(
+                    endpoint,
+                    params={"key": GEMINI_API_KEY},
+                    json=retry_body,
+                    timeout=LLM_TIMEOUT_SECS,
+                    stream=True,
+                )
+                if resp.status_code == 200:
+                    logging.info("Gemini premium burst %s succeeded after removing thinkingConfig", label)
+            except Exception as exc:
+                logging.warning("Gemini premium burst %s retry without thinkingConfig error: %r", label, exc)
+                continue
         if resp.status_code != 200:
             logging.warning("Gemini premium burst %s HTTP %s: %s", label, resp.status_code, resp.text[:400])
             continue
@@ -677,6 +867,8 @@ def generate_page_premium_burst(
                 if issues:
                     doc = _annotate_preflight_doc(doc, issues)
                 scored = _attach_quality_score(doc, "premium_burst")
+                plan = targets[index - 1] if 0 < index <= len(targets) else {}
+                scored = _attach_premium_evaluations(scored, plan)
                 quality = (scored.get("ndw_debug") or {}).get("quality_score") or {}
                 rejection = _premium_burst_rejection(scored, quality)
                 if rejection:
@@ -689,12 +881,9 @@ def generate_page_premium_burst(
                             quality=quality,
                         )
                     continue
-                plan = targets[index - 1] if 0 < index <= len(targets) else {}
                 debug = dict(scored.get("ndw_debug") or {})
                 debug["generation_mode"] = "premium_burst"
                 debug["premium_burst_index"] = index
-                debug["premium_plan"] = plan
-                debug["experience_quality"] = score_experience(scored, plan)
                 scored["ndw_debug"] = debug
                 yield scored
                 emitted_count += 1
@@ -706,12 +895,24 @@ def generate_page_premium_burst(
     yield {"error": "Premium burst failed"}
 
 
-def _premium_experience_target(seed: int) -> Dict[str, Any]:
-    cell = choose_experience_cell(seed)
-    cell_key = f"{cell['experience_archetype']}:{cell['primary_loop_type']}"
+def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    target = base_target if isinstance(base_target, dict) else seeded_format_first_target(seed)
+    archetype = str(target["experience_archetype"])
+    loop_type = str(target["primary_loop_type"])
+    cell_key = f"{target['activity_contract']['activity_variant']}:{archetype}:{loop_type}"
+    anchors = select_semantic_anchors(seed, cell_key)
+    task = task_contract_for_variant(
+        str(target["activity_contract"]["activity_variant"]),
+        str(target["activity_type"]),
+    )
+    experience_fields = _experience_fields_from_task(target, task)
     return {
-        **cell,
-        "semantic_anchors": select_semantic_anchors(seed, cell_key),
+        **target,
+        **experience_fields,
+        "semantic_anchors": anchors,
+        "semantic_translation": _semantic_translation_from_anchors(anchors, task),
+        "task_contract": task,
+        "genre_contract": seeded_genre_contract(seed, archetype, loop_type),
     }
 
 
@@ -720,27 +921,34 @@ def _build_premium_plan_prompt(brief: str, seed: int, experience_target: Optiona
     target = experience_target if isinstance(experience_target, dict) else _premium_experience_target(seed)
     return f"""
 {_vision_grounding_note()}
-Plan one premium random interactive world/artifact.
+Plan one premium random interactive mini-site.
 Return JSON only matching the provided schema.
 
 Brief: {brief or 'Surprise me with a bold concept.'}
 Seed: {seed}
 
 Goals:
-- Choose one strong art direction instead of averaging multiple styles.
-- Use the local design kit manifest below. Select concrete keys from it.
-- Your output must explicitly choose palette_key, layout_key, motion_preset, overlay_key, display_font_key, and body_font_key.
-- Pick one signature interaction and one signature motion system.
-- Favor depth, atmosphere, and intentional hierarchy over generic product UI.
+- Resolve the concrete activity format first. The selected activity_contract.activity_variant is the product, not a vibe.
+- Choose one strong art direction and one signature interaction/motion system. Do not average styles.
+- Use the local design kit manifest below and explicitly choose palette_key, layout_key, motion_preset, overlay_key, display_font_key, and body_font_key.
 - Avoid recent visual trends from the novelty summary.
-- Prefer forms beyond dashboards: spatial maps, playable instruments, living posters, simulators, kinetic editorials, fictional tools, tactile panels, or weird civic systems.
+- Favor recognizable, useful formats people can immediately try: arcade games, puzzle games, card/word/quiz games, product pages, ecommerce storefronts, pricing pages, booking/catalog flows, workspace apps, map explorers, record investigations, drawing/music tools, simulators, and configurators.
+- Plan first-screen content and one obvious action. Apps/tools/commerce pages need sample records/items/options. Product/storefront pages need a hero product/offer, price/plan, benefits/specs, options, and a buy/reserve/add-to-cart/compare action. Games need score/result/restart plus one meta-reward: streak, combo, best score, lives, tickets, medals, levels, or unlocks.
+- Avoid generic dashboards unless activity_type is saas_replica or data_investigation and the dashboard has a real workflow: filtering records, saving selections, triaging tickets, or configuring a result.
+- Ban visible sci-fi filler and host-brand words: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, and non-deterministic.
+- Include a physical metaphor when it clarifies the activity: arcade cabinet, board, deck, receipt, ticket printer, paper tray, counter, dial, workbench, cards, shelves, map, or machine.
 - Avoid a single centered card unless the chosen layout explicitly calls for it.
 - Fill prompt_genome with a compact creative mutation for this generation only. Do not mutate runtime rules, output schema, allowed libraries, cleanup rules, or asset policy.
 - Fill fingerprint with how this plan should be remembered after serving.
 - Treat the experience target below as mandatory positive steering. Do not merely style around it; make it the behavior of the page.
+- Treat semantic anchors as Tier 2 flavor only: they may influence texture, object names, mood, copy, and micro-interactions, but they must not rename, obscure, or override the selected activity_variant.
+- Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
 - Fill semantic_translation by translating every semantic anchor into visual_role, interaction_role, content_role, and motion_role.
+- Fill activity_type, activity_contract.activity_variant, activity_contract.core_mechanic, and activity_contract.library_profile before style decisions. The activity must be a concrete mini app/game/tool/workflow, not a decorative control panel or abstract metaphor.
+- Fill genre_contract as the art-direction governor. Copy density, instruction policy, palette strategy, visual density, motion language, and chrome policy must form one coherent genre instead of independent random choices.
 - The primary_loop is the core product contract: user_action, visible_response, state_change, reward_or_payoff, and continue_reason must be specific.
-- The onboarding_cue must be visible in the generated page. The first interaction must visibly change page state.
+- Avoid slider-only plans unless activity_type is interactive_instrument or simulation, and even then sliders need a visible result/payoff.
+- The onboarding_cue must be a diegetic micro-cue, label, placeholder, cursor affordance, or short CTA. No tutorial panel unless genre_contract.instruction_policy is documentation_allowed.
 - Fill mobile_interaction with a specific touch/small-screen fallback. Fill reset_or_replay with a visible replay affordance.
 
 Experience target:
@@ -763,7 +971,7 @@ def _build_premium_page_prompt(
     retry_block = f"\nRetry note:\n- {retry_note}\n" if retry_note else ""
     return f"""
 {_vision_grounding_note()}
-Build one premium interactive web experience.
+Build one premium interactive mini-site.
 	Use one-shot meta-correction. Output in this exact order:
 	<thinking>Brief semantic plan, selected local libraries/assets, and one risk to avoid.</thinking>
 	<draft>Initial complete HTML draft.</draft>
@@ -782,20 +990,30 @@ Approved premium plan (follow exactly):
 {json.dumps(plan, indent=2)}
 
 Experience contract:
-- The visitor role, visitor goal, onboarding cue, and first interaction from the plan must be visible in the page.
-- The primary loop must be implemented, not just described. User input must update visible state.
-- The semantic_translation must drive interaction, content, motion, and visual treatment.
-- Include reset/replay if the plan declares it.
-- Include a mobile fallback matching mobile_interaction.
+- The activity_type and activity_contract are mandatory. Build the page as a specific mini activity, not as an abstract visual artifact.
+- The selected activity_contract.activity_variant is the product. Semantic anchors are flavor and must never rename, obscure, or replace the recognizable format.
+- The task_contract is mandatory. Implement its domain_objects, state_variables, controls, completion_condition, and allowed_patterns. Do not invent decorative controls outside that task model.
+- Static first content rule: show meaningful content immediately. Games show board/stage/player/targets/score; apps show sample records/cards/table; product/ecommerce pages show product visual, price/plan, benefits/specs, variants, and checkout/cart/receipt feedback; creative tools show a starter preview/artifact.
+- Format rules: breakout_paddle plays like Breakout, minesweeper_grid like Minesweeper, tile_merge_2048 like 2048, rhythm_tap like a timing game, etc. Games/quizzes need recognizable names, keyboard/touch/pointer controls, score/result, restart, win/loss/completion, and score plus one meta-reward.
+- Simple game visibility rule: do not ship a splash-only start; show the playable board/stage/cards/player immediately.
+- Workflow rules: saas_replica, commerce, booking, product_or_storefront, data, builder, editor, and tool pages need sample items/options and one obvious action that produces a useful result. A product_or_storefront target must feel like a product/ecommerce website. No blank tables, empty slots, placeholder-only panels, setup-first flows, or decorative-only controls.
+- Follow genre_contract.copy_density, palette_strategy, chrome_policy, instruction_policy, visual_density, and motion_language. Use one dominant accent, one optional secondary accent, readable contrast, and no generic fake telemetry.
+- The onboarding cue must be a diegetic micro-cue, placeholder, label, cursor affordance, or short CTA. Do not create a section titled "Onboarding", "Instructions", "How to use", "Primary Loop", or "Feedback Contract" unless documentation_allowed.
+- Keep the first screen legible in three seconds: clear title, obvious action target, visible score/progress/result, and no lecture. Puzzle/game cue rule: add one short cue near the board, e.g. "Use arrows", "Match two cards", or "Avoid mines".
+- Avoid recurring wave/grid wallpaper. Avoid visible jargon: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, non-deterministic.
+- The primary_loop must be implemented, not just described. Every planned task_contract control must visibly change at least one listed must_change_state value, and completion_condition must appear as result/status/score/saved state/preview/receipt/win-loss/final summary.
+- Do not ship a slider-only page unless activity_type is interactive_instrument or simulation; even then include a payoff/result/replay beyond changing meter values.
+- The semantic_translation must drive interaction, content, motion, and visual treatment. Include reset/replay and mobile_interaction when declared.
 
 Local design kit manifest:
 {compact_design_kit_manifest()}
 
 Premium build requirements:
-- Use at least one local design-kit asset or font selection from the approved plan.
-- A visible first paint is mandatory. The page must look alive before interaction.
-- Deliver one signature motion moment such as parallax drift, layered reveal, kinetic meter motion, or a restrained Three.js scene.
-- Keep controls readable and intentional; do not revert to a generic marketing-site shell.
+- Use at least one local design-kit asset or font selection from the approved plan, and deliver one signature motion moment such as parallax drift, layered reveal, kinetic meter motion, or a restrained Three.js scene.
+- Follow activity_contract.library_profile: include `/static/js/ndw.js` for NDW profiles, `/static/vendor/alpine.min.js` for Alpine UI state profiles, `/static/vendor/matter.min.js` for Matter physics profiles, `/static/vendor/gsap.min.js` for GSAP profiles, `/static/vendor/lucide.min.js` plus `lucide.createIcons()` for Lucide app chrome, and local Three module imports for Three profiles. Use the chosen library for the core interaction, not just a decorative flourish.
+- Maintain one clear focal area; controls stay near what they affect. Include an activity payoff within 10 seconds: completed set, saved configuration, unlocked reveal, created artifact, score/result, selected record, generated preview, cart/receipt, or selected plan.
+- Treat ambient backgrounds as optional. If task_contract.visual_budget says ambient_background is not primary, do not spend the main interaction on waves, ripples, particles, or atmospheric loops.
+- Visible copy must be human-facing, not plan-facing. Ban visible artifacts: `//`, TODO, undefined, null, markdown fences, raw JSON, "onboarding instructions", "visitor role", "primary loop".
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
 - If you use overlays, reference `/static/design-kit/overlays/...` paths exactly.
 	- Three.js must use the local import map style only: `import * as THREE from '/static/vendor/three.module.js';`.
@@ -825,9 +1043,15 @@ def _call_gemini_premium_plan(
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
     out = _call_gemini_structured(parts, PREMIUM_PLAN_SCHEMA, temperature=0.8, max_output_tokens=4096)
     if isinstance(out, dict):
-        out.setdefault("experience_archetype", experience_target["experience_archetype"])
-        out.setdefault("primary_loop_type", experience_target["primary_loop_type"])
-        out.setdefault("semantic_anchors", experience_target["semantic_anchors"])
+        # The model owns art direction; the backend owns the concrete product contract.
+        # This prevents the planner from drifting a Snake/booking/tool target into abstract FUI.
+        out["experience_archetype"] = experience_target["experience_archetype"]
+        out["primary_loop_type"] = experience_target["primary_loop_type"]
+        out["semantic_anchors"] = experience_target["semantic_anchors"]
+        out["activity_type"] = experience_target["activity_type"]
+        out["activity_contract"] = experience_target["activity_contract"]
+        out["task_contract"] = experience_target["task_contract"]
+        out["genre_contract"] = experience_target["genre_contract"]
     return out if isinstance(out, dict) else None
 
 
@@ -857,6 +1081,7 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
     try:
         candidates = payload.get("candidates") or []
         best_text = ""
+        best_structured = ""
         for cand in candidates:
             content = cand.get("content") or {}
             parts = content.get("parts") or []
@@ -869,25 +1094,32 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
                 joined = "".join(text_parts)
                 if joined.strip() and len(joined) > len(best_text):
                     best_text = joined
-                continue
             for part in parts:
                 function_call = part.get("functionCall")
                 if isinstance(function_call, dict):
                     args = function_call.get("arguments")
                     if isinstance(args, str) and args.strip():
-                        return args
+                        if len(args) > len(best_structured):
+                            best_structured = args
+                        continue
                     try:
-                        return json.dumps(function_call, ensure_ascii=False)
+                        encoded = json.dumps(function_call, ensure_ascii=False)
+                        if len(encoded) > len(best_structured):
+                            best_structured = encoded
                     except Exception:
                         pass
                 data_blob = part.get("data") or part.get("json") or part.get("structValue")
                 if data_blob:
                     try:
-                        return json.dumps(data_blob, ensure_ascii=False)
+                        encoded = json.dumps(data_blob, ensure_ascii=False)
+                        if len(encoded) > len(best_structured):
+                            best_structured = encoded
                     except Exception:
                         pass
         if best_text:
             return best_text
+        if best_structured:
+            return best_structured
     except Exception:
         pass
     return None

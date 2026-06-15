@@ -221,6 +221,45 @@ _GSAP_CDN_RE = re.compile(
     re.IGNORECASE,
 )
 _LUCIDE_CDN_RE = re.compile(r"^(?:https?:)?//unpkg\.com/lucide(?:@[^/]+)?(?:/.*)?$", re.IGNORECASE)
+_SCRIPT_STYLE_BLOCK_RE = re.compile(
+    r"(<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)\s*>)",
+    re.IGNORECASE,
+)
+
+
+def _strip_visible_text_artifacts(html: str) -> Tuple[str, List[Dict[str, str]]]:
+    """Clean visible model debris without touching JavaScript or CSS bodies."""
+    if not isinstance(html, str) or not html:
+        return html, []
+
+    issues: List[Dict[str, str]] = []
+
+    def clean_chunk(chunk: str) -> str:
+        original = chunk
+        # Text-node debris from LLM drafts, e.g. "ESTABLISHED // ARCHIVES" or "// Start".
+        chunk = re.sub(r"(?<=>)\s*//\s*(?=[A-Za-z])", "", chunk)
+        chunk = re.sub(r"(?<=[A-Za-z0-9])\s+//\s+(?=[A-Za-z0-9])", " - ", chunk)
+        chunk = re.sub(r"```(?:html|json|javascript|js)?|~~~", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"\bTODO\b", "", chunk, flags=re.IGNORECASE)
+        chunk = re.sub(r"(?<=>)\s*(?:undefined|null)\s*(?=<)", "", chunk, flags=re.IGNORECASE)
+        if chunk != original:
+            issues.append(
+                {
+                    "severity": "info",
+                    "field": "html",
+                    "message": "Removed visible draft/code artifact text from rendered HTML.",
+                }
+            )
+        return chunk
+
+    parts = _SCRIPT_STYLE_BLOCK_RE.split(html)
+    for idx, part in enumerate(parts):
+        if not part:
+            continue
+        if idx % 2 == 1 and _SCRIPT_STYLE_BLOCK_RE.fullmatch(part):
+            continue
+        parts[idx] = clean_chunk(part)
+    return "".join(parts), issues
 
 
 def _strip_external_assets(html: str) -> Tuple[str, List[Dict[str, str]]]:
@@ -294,10 +333,12 @@ def _sanitize_doc_external_assets(doc: Dict[str, Any]) -> Dict[str, Any]:
     issues: List[Dict[str, str]] = []
     if doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
         sanitized, removed = _strip_external_assets(doc["html"])
+        sanitized, cleaned = _strip_visible_text_artifacts(sanitized)
         if sanitized != doc["html"]:
             doc = dict(doc)
             doc["html"] = sanitized
         issues.extend(removed)
+        issues.extend(cleaned)
     comps = doc.get("components")
     if isinstance(comps, list):
         next_comps = []
@@ -310,6 +351,7 @@ def _sanitize_doc_external_assets(doc: Dict[str, Any]) -> Dict[str, Any]:
             html = props.get("html") if isinstance(props, dict) else None
             if isinstance(html, str):
                 sanitized, removed = _strip_external_assets(html)
+                sanitized, cleaned = _strip_visible_text_artifacts(sanitized)
                 if sanitized != html:
                     new_comp = dict(comp)
                     new_props = dict(props)
@@ -319,6 +361,11 @@ def _sanitize_doc_external_assets(doc: Dict[str, Any]) -> Dict[str, Any]:
                     changed = True
                 if removed:
                     for item in removed:
+                        item = dict(item)
+                        item["field"] = f"components[{comp.get('id') or ''}].html"
+                        issues.append(item)
+                if cleaned:
+                    for item in cleaned:
                         item = dict(item)
                         item["field"] = f"components[{comp.get('id') or ''}].html"
                         issues.append(item)
