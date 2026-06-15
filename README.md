@@ -1,98 +1,82 @@
-# Non-Deterministic Website
+# Roulette (Non-Deterministic Website)
 
-> **Enter a different world with every click.** This project is a randomness-first AI roulette that serves a new interactive website on each visit.
+**Live Website:** [Roulette](https://non-deterministic-website.onrender.com)
 
-**Live Demo:** [non-deterministic-website.onrender.com](https://non-deterministic-website.onrender.com)
+![Websites Generated](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnon-deterministic-website.onrender.com%2Fmetrics%2Ftotal&query=%24.total&label=websites%20generated&color=111827)
 
 ## What Is This?
 
-Non-Deterministic Website is an experimental platform that leverages large language models (LLMs) to generate interactive web experiences in real time. The product is intentionally **not** prompt-to-site. Users click into a random world, and the backend serves whichever generated experience is next in the lane they chose.
+I was wondering if a website could change every time you visited it (I need new wonders). What if every person sees an entirely different website during each visit. Imagine interdimensional cable from Rick and Morty, but for websites.
 
-Each generation can produce something different:
+Roulette is an experimental website that leverages large language models (LLMs) to generate interactive web experiences in real-time. Each generation produces something weird, differnet or unique(I dont know what you'll see so I hope it's not too weird).
 
-- **Interactive games** with canvas animations, player controls, and game loops
-- **Complete web pages** with layouts, styling, and interactive elements
-- **Dynamic content** that invents its own theme, mechanics, and visual direction
+The system combines:
 
-The system keeps novelty high through a few core ideas:
-
-- **Gemini-first fast lane**: `fast` mode is the cheap bulk path. It prefers the shared fast queue and Gemini burst generation before using any secondary providers.
-- **Shared premium lane**: `premium` is still random, but it uses a smaller Gemini high-effort queue with stricter compliance gating and a per-user quota.
-- **Local design kit + planning**: premium generations use a compact planning pass and bundled local assets to produce more art-directed outputs without requiring expensive external assets.
-- **Interactive-first runtime**: the generated app is always the centerpiece, with landing chrome disappearing as soon as the user enters a world.
+- **Combinatorial creative entropy** to keep generations from feeling like the same template each time
+- **Experience grammar** so each site has a role, first action, feedback loop, and reason to keep interacting. No boring generic websites
+- **burst queueing** so one LLM request can produce multiple usable websites(I needed to get around Gemini's free tier somehow)
+- **Iframe sandboxing** so every generated world can run safely and reset cleanly
 
 ## Screenshots
 
 <div align="center">
 
-### v1.5 Landing Page
-
-<table>
-  <tr>
-    <td width="100%" align="center">
-      <img src="screenshots/v1.5/landing%20page.png" alt="v1.5 Landing Page" width="100%"/>
-      <br/>
-      <em>Landing Page</em>
-    </td>
-  </tr>
-</table>
-
 ### v1.5 Generated Websites
 
 <table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="screenshots/v1.5/demo4.png" alt="v1.5 Generated Website 4" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-    <td width="50%" align="center">
-      <img src="screenshots/v1.5/demo1.png" alt="v1.5 Generated Website 1" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="screenshots/v1.5/demo2.png" alt="v1.5 Generated Website 2" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-    <td width="50%" align="center">
-      <img src="screenshots/v1.5/demo3.png" alt="v1.5 Generated Website 3" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-  </tr>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v1.5/demo4.png" alt="v1.5 Generated Website 4" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v1.5/demo1.png" alt="v1.5 Generated Website 1" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v1.5/demo2.png" alt="v1.5 Generated Website 2" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v1.5/demo3.png" alt="v1.5 Generated Website 3" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
 </table>
 
 ### v1 Generated Websites
 
 <table>
-  <tr>
-    <td width="50%" align="center">
-      <img src="screenshots/v1/demo1.png" alt="v1 Generated Website 1" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-    <td width="50%" align="center">
-      <img src="screenshots/v1/demo2.png" alt="v1 Generated Website 2" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <img src="screenshots/v1/demo3.png" alt="v1 Generated Website 3" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-    <td width="50%" align="center">
-      <img src="screenshots/v1/demo4.png" alt="v1 Generated Website 4" width="100%"/>
-      <br/>
-      <em>Generated Website</em>
-    </td>
-  </tr>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v1/demo1.png" alt="v1 Generated Website 1" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v1/demo2.png" alt="v1 Generated Website 2" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v1/demo3.png" alt="v1 Generated Website 3" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v1/demo4.png" alt="v1 Generated Website 4" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
 </table>
 
 </div>
@@ -102,29 +86,27 @@ The system keeps novelty high through a few core ideas:
 ```mermaid
 graph TD
     A[User Clicks Generate] --> B[Frontend App]
-    B --> C{Check Queue For Selected Lane}
+    B --> C{Queue Has Page?}
     C -->|Available| D[Return Queued Result]
-    C -->|Empty| E[Request New Generation]
-    E --> F[FastAPI Backend]
-    F --> G[LLM Orchestrator]
-    G --> H{Fast Or Premium}
-    H -->|Fast| H2[Gemini Burst / Shared Fast Queue]
-    H -->|Premium| H3[Gemini Premium Plan + Build]
-    H2 --> I[Normalize & Validate]
-    H3 --> I
-    I --> L{Compliance Review}
-    L -->|Pass/Corrected| M{Check Deduplication}
-    L -->|Rejected| E
+    C -->|Empty| E[Request Live Generation]
+    E --> F[Generate Page<br/>format → task → flavor → LLM plan + build]
+    F --> H{Primary Failed?}
+    H -->|No| I[Normalize & Validate]
+    H -->|Yes| H2[Fallback LLM Model]
+    H2 --> I
+    I --> Q[Visual + Activity + Experience Checks]
+    Q --> M{Check Deduplication}
     M -->|Unique| N[Render in Browser]
     M -->|Duplicate| E
     N --> O[Show Generated Experience]
-    O --> P[Queue Top-Up]
+    O --> R[Record Descriptor + Fingerprints]
+    R --> P[Queue Top-Up]
     P --> C
     D --> N
 
     subgraph Queue Fill
     P1[Request Batch]
-    P2[Streaming JSON Parser]
+    P2[Streaming HTML Parser]
     P3[Enqueue Site #1]
     P4[Enqueue Remaining Approved Sites]
     P1 --> P2
@@ -135,25 +117,53 @@ graph TD
 
     style A fill:#e1f5ff
     style O fill:#d4edda
-    style L fill:#ffeaa7
-    style M fill:#fff3cd
     style H fill:#f8d7da
     style H2 fill:#e1f5ff
 ```
 
+## Combinatorial Creative Entropy
+
+Roulette's novelty system is inspired by **Shannon entropy**, the information theory concept introduced by Claude Shannon in 1948 to describe uncertainty and surprise in a message.
+
+Roulette applies that idea to creative generation, but the randomness is not flat. Each generation starts from a recognizable format such as a game, quiz, editor, booking flow, planner, dashboard, simulator, or mini app. Then the system gives that format a task model: user goal, domain objects, state variables, controls, and a completion condition. Only after that does the LLM receive the stranger creative flavor: semantic anchors, palette, motion language, typography, texture, rendering mode, and tone.
+
+The semantic-anchor layer alone creates **759,375** combinations. Across all current creative buckets, Roulette has over **1,400 quadrillion** possible generation targets. This is **combinatorial creative entropy**: novelty created through structured combinations, while the task model keeps the result recognizable instead of incoherent.
+
+```mermaid
+flowchart TD
+ G["New Generation"] --> A["Concrete Format"]
+ A --> B["Task Contract"]
+ B --> C["Experience Loop"]
+ C --> D["Semantic Anchors"]
+ D --> E["Visual System"]
+ E --> F["Rendering + Motion"]
+ F --> H["One Generated Website"]
+```
+
+```mermaid
+flowchart LR
+ A["Breakout Game"] --> Z["Task Model"]
+ B["Paddle + Ball + Bricks"] --> Z
+ C["Score + Lives + Restart"] --> Z
+ Z --> V["Visual Flavor"]
+ D["Ceramic Market + Aurora Palette"] --> V
+ E["Elastic Motion + Canvas"] --> V
+ V --> W["Recognizable game, strange world"]
+```
+
 ### Architecture Components
 
-| Component                          | Location                                          | Purpose                                                                                        |
+| Component             | Location                     | Purpose                                            |
 | ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Frontend UI**                    | `templates/index.html`<br/>`static/ts-src/app.ts` | Landing page, generation controls, rendering engine                                            |
-| **NDW Runtime**                    | `static/ts-src/ndw.ts`                            | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG           |
-| **API Backend**                    | `api/main.py`                                     | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints                         |
-| **LLM Client**                     | `api/llm_client.py`                               | Gemini-first fast generation, Gemini premium planning/build, and emergency provider fallback.  |
-| **Prefetch Engine**                | `api/prefetch.py`                                 | Shared fast and premium queues, preview tokens, Redis/file storage, and lane isolation.        |
-| **Deduplication**                  | `api/dedupe.py`                                   | Content fingerprinting to prevent near-identical outputs                                       |
-| **Validators / Quality**           | `api/validators.py`<br/>`api/quality.py`          | Schema validation, preflight checks, and lightweight structure scoring                         |
-| **Compliance Reviewer (optional)** | `api/llm_client.py`                               | Calls Gemini to audit or auto-fix generations before serving and caches reviewer notes         |
-| **Node.js Tooling**                | `package.json`, `static/ts-src/`                  | Tailwind + TypeScript build pipeline for frontend assets                                       |
+| **Frontend UI**          | `templates/index.html`<br/>`static/ts-src/app.ts`<br/>`static/ts-src/frame_renderer.ts` | Landing tunnel, generation controls, and iframe sandbox renderer       |
+| **NDW Runtime**          | `static/ts-src/ndw.ts`              | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG      |
+| **API Backend**          | `api/main.py`                   | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints             |
+| **LLM Client**           | `api/llm_client.py`                | LLM planner, one-shot self-correcting raw-HTML build, fallback routing, and burst parsing |
+| **Prefetch Engine**        | `api/prefetch.py`                 | Shared queue, preview tokens, Redis/file storage, and lane isolation.         |
+| **Deduplication**         | `api/dedupe.py`                  | Content fingerprinting to prevent near-identical outputs                    |
+| **Generation Grammar**       | `api/generation/`                | Task contracts, experience grammar, semantic anchors, prompt contracts, Redis diversity steering, and activity/experience scoring |
+| **Validators / Quality**      | `api/preflight.py`<br/>`api/quality.py`     | Local asset/runtime preflight and visual scoring                  |
+| **Node.js Tooling**        | `package.json`, `static/ts-src/`         | Tailwind + TypeScript build pipeline for frontend assets                    |
 
 ## Quick Start
 
@@ -161,57 +171,54 @@ graph TD
 
 - Python 3.9+
 - Node.js 16+
-- A [Gemini API key](https://ai.google.dev/) for normal generation
-- Optional fallback provider keys for [Groq](https://groq.com) and/or [OpenRouter](https://openrouter.ai)
+- An LLM API key for normal generation
 
 ### Installation
 
 1. **Clone the repository**
 
-   ```bash
-   git clone https://github.com/lesprgm/non-deterministic-website.git
-   cd non-deterministic-website
-   ```
+  ```bash
+  git clone https://github.com/lesprgm/non-deterministic-website.git
+  cd non-deterministic-website
+  ```
 
 2. **Set up Python environment**
 
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+  ```bash
+  python3 -m venv venv
+  source venv/bin/activate # On Windows: venv\Scripts\activate
+  pip install -r requirements.txt
+  ```
 
 3. **Install Node dependencies**
 
-   ```bash
-   npm install
-   ```
+  ```bash
+  npm install
+  ```
 
 4. **Configure API keys**
 
-   Create a `.env` file in the project root:
+  Create a `.env` file in the project root:
 
-   ```bash
-   GEMINI_API_KEY=your_gemini_api_key_here
-   GROQ_API_KEY=your_groq_api_key_here
-   OPENROUTER_API_KEY=your_openrouter_api_key_here
-   ```
+  ```bash
+  GEMINI_API_KEY=your_gemini_api_key_here
+  ```
 
 5. **Build frontend assets**
 
-   ```bash
-   npm run build
-   ```
+  ```bash
+  npm run build
+  ```
 
 6. **Start the server**
 
-   ```bash
-   uvicorn api.main:app --reload
-   ```
+  ```bash
+  uvicorn api.main:app --reload
+  ```
 
 7. **Open your browser**
 
-   Navigate to `http://localhost:8000` and click a preview or generate a new world.
+  Navigate to `http://localhost:8000` and click a preview or generate a new world.
 
 ### Development Mode
 
@@ -230,21 +237,20 @@ uvicorn api.main:app --reload
 1. **Visit the landing page** at `http://localhost:8000`
 2. **Click a tunnel preview** to enter a queued random world instantly
 3. **Use Generate** inside the runtime to jump to another world
-4. **Switch Fast / Premium** from the generated-site controls if you want the scarcer premium lane
 
 ### API Endpoints
 
-| Endpoint           | Method | Description                                      |
+| Endpoint      | Method | Description                   |
 | ------------------ | ------ | ------------------------------------------------ |
-| `/`                | GET    | Landing page with generation controls            |
-| `/generate`        | POST   | Generate a new experience (returns JSON or HTML) |
-| `/generate/stream` | POST   | Streaming generation with progress updates       |
-| `/metrics/total`   | GET    | Count of sites actually served to users          |
-| `/prefetch/status` | GET    | Check fast and premium queue status              |
-| `/api/premium/previews` | GET | Admin/dev inspection of the premium lane       |
-| `/prefetch/fill`   | POST   | Manually refill prefetch queue                   |
-| `/llm/status`      | GET    | LLM provider configuration and status            |
-| `/llm/probe`       | GET    | Test LLM provider connectivity                   |
+| `/`        | GET  | Landing page with roulette tunnel previews    |
+| `/generate`    | POST  | Serve or generate a new experience    |
+| `/generate/stream` | POST  | Streaming generation with progress updates    |
+| `/metrics/total`  | GET  | Count of sites actually served to users     |
+| `/prefetch/status` | GET  | Check queue status and refill settings      |
+| `/api/premium/previews` | GET | Admin/dev inspection of the shared queue |
+| `/prefetch/fill`  | POST  | Manually refill prefetch queue          |
+| `/llm/status`   | GET  | LLM provider configuration and status      |
+| `/llm/probe`    | GET  | Test LLM provider connectivity          |
 
 ## Configuration
 
@@ -252,56 +258,58 @@ Configure behavior via environment variables:
 
 ### LLM Provider Settings
 
-| Variable                      | Description                           | Default                                     |
+| Variable           | Description              | Default                   |
 | ----------------------------- | ------------------------------------- | ------------------------------------------- |
-| `GROQ_API_KEY`                | Groq API authentication key           | (optional emergency fallback)               |
-| `GROQ_MODEL`                  | Groq fallback model                   | `openai/gpt-oss-120b`                       |
-| `GROQ_FALLBACK_MODEL`         | Backup model if Groq primary fails    | `qwen/qwen3-32b`                            |
-| `GROQ_MAX_TOKENS`             | Max output tokens for Groq            | `15000`                                     |
-| `OPENROUTER_API_KEY`          | OpenRouter API key                    | (optional emergency fallback)               |
-| `OPENROUTER_MODEL`            | Primary OpenRouter fallback model     | `z-ai/glm-4.7-flash`                        |
-| `OPENROUTER_FALLBACK_MODEL_1` | First OpenRouter backup               | `google/gemini-2.0-flash-exp:free`          |
-| `OPENROUTER_FALLBACK_MODEL_2` | Second OpenRouter backup              | `deepseek/deepseek-chat-v3.1:free`          |
-| `FORCE_OPENROUTER_ONLY`       | Force skipping Gemini fast routing    | `false`                                     |
-| `LLM_TIMEOUT_SECS`            | Request timeout in seconds            | `75`                                        |
-| `GEMINI_GENERATION_MODEL`     | Primary Gemini generation model       | `gemini-3-flash-preview`                    |
-| `GEMINI_REVIEW_ENABLED`       | Enable Gemini-based compliance review | `true`                                      |
-| `GEMINI_API_KEY`              | Google AI Studio API key              | (optional)                                  |
-| `GEMINI_REVIEW_MODEL`         | Gemini reviewer model slug            | `gemini-3-flash-preview`                    |
-| `OPENROUTER_REVIEW_MODEL`     | OpenRouter compliance fallback model  | `openai/gpt-5-nano`                         |
+| `GEMINI_GENERATION_MODEL`   | Primary Gemini generation model    | `gemini-3.5-flash`             |
+| `GEMINI_FALLBACK_MODEL`    | Gemini fallback generation model   | `gemini-3-flash-preview`          |
+| `GEMINI_THINKING_LEVEL`    | Gemini thinking budget        | `medium`                  |
+| `GEMINI_MAX_OUTPUT_TOKENS`  | Gemini generation output cap     | `64000`                   |
+| `GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS` | Build/burst output cap | `64000` |
+| `GEMINI_API_KEY`       | Google AI Studio API key       | required for live generation        |
+| `LLM_TIMEOUT_SECS`      | Request timeout in seconds      | `105`                    |
 
-### Prefetch & Caching
+The product path is Gemini-only. Queueing and local gates are the reliability layer; secondary
+provider routing has been removed from the active architecture.
 
-| Variable                 | Description                                 | Default                 |
+### Queue & Caching
+
+| Variable         | Description                 | Default         |
 | ------------------------ | ------------------------------------------- | ----------------------- |
-| `PREFETCH_ENABLED`       | Enable background prefetch                  | `true`                  |
-| `PREFETCH_DIR`           | Directory for cached generations            | `cache/prefetch`        |
-| `PREFETCH_LOW_WATER`     | Queue size to trigger refill                | `15`                    |
-| `PREFETCH_FILL_TO`       | Target queue size after refill              | `20`                    |
-| `DEDUPE_ENABLED`         | Enable duplicate detection                  | `true`                  |
-| `DEDUPE_RECENT_FILE`     | Deduplication database file                 | `cache/seen_pages.json` |
-| `PREFETCH_REVIEW_BATCH`  | Number of items reviewed per batch during prefetch filling/top-up | `20`                     |
-| `PREMIUM_QUEUE_ENABLED`  | Enable the shared premium queue lane     | `true`                  |
-| `PREMIUM_FILL_TO`        | Target premium queue size after refill   | `10`                    |
-| `PREMIUM_LOW_WATER`      | Trigger premium top-up when queue drops  | `3`                     |
-| `PREMIUM_BATCH_SIZE`     | Number of premium candidates per live/top-up batch | `5`              |
-| `PREMIUM_DAILY_LIMIT`    | Premium serves allowed per user per day  | `5`                     |
-| `PREMIUM_TOKEN_TTL_SECONDS` | Premium preview token lifetime        | `900`                   |
-| `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup   | `0`                     |
+| `DEDUPE_ENABLED`     | Enable duplicate detection         | `true`         |
+| `DEDUPE_RECENT_FILE`   | Deduplication database file         | `cache/seen_pages.json` |
+| `PREMIUM_QUEUE_ENABLED` | Enable the shared queue lane | `true` |
+| `PREMIUM_FILL_TO` | Target queue size after refill | `10` |
+| `PREMIUM_LOW_WATER` | Trigger top-up when queue drops | `3` |
+| `PREMIUM_BATCH_SIZE` | Number of candidates per live/top-up burst | `12` |
+| `PREMIUM_BURST_MIN_HTML_BYTES` | Reject tiny/minimal burst candidates before serving or queueing | `3000` |
+| `PREFLIGHT_HTML_WARN_BYTES` | Warn on unusually large generated pages | `180000` |
+| `PREFLIGHT_HTML_BLOCK_BYTES` | Block extreme generated pages before serving or queueing | `280000` |
+| `PREMIUM_TOKEN_TTL_SECONDS` | Preview token lifetime | `900` |
+| `PREMIUM_TOPUP_ENABLED` | Allow background queue refill | `false` |
+| `PREMIUM_REFILL_MISSING_ENABLED` | Run one replacement burst after an interrupted or partially rejected live burst | `true` |
+| `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup  | `0`           |
+| `REDIS_DIVERSITY_ENABLED` | Store served-site descriptors and QD counters in Redis when `REDIS_URL` exists | `true` |
+| `DIVERSITY_HTML_CACHE_TTL_SECONDS` | Optional TTL for cached generated HTML descriptors | `604800` |
+| `DIVERSITY_FINGERPRINT_TTL_SECONDS` | Short-term descriptor/structure fingerprint TTL | `604800` |
 
-Fast and premium queues are shared random lanes. Background jobs may enqueue many docs, but
-the public `Sites generated` metric only increments when a user is actually served a site.
-When the fast queue is empty, the backend falls back to live Gemini burst generation before
-considering secondary providers. When the premium queue is empty, the backend runs a small
-premium Gemini batch, serves the first acceptable page immediately, and stores the remaining
-approved pages in the premium lane.
+The public product uses the shared queue. Background jobs may enqueue docs, but the
+public `Sites generated` metric only increments when a user is actually served a site.
+When the queue is empty, the backend starts one live streaming burst,
+serves the first locally valid page, and drains later valid pages from that same stream
+into the queue. If that burst leaves missing slots because candidates fail or
+the upstream stream drops, the backend can run one replacement burst and queue accepted
+pages up to the queue target. By default, startup/top-up refill is disabled to
+avoid burning Gemini free-tier request quota in the background.
+
+Legacy/admin prefill tooling still has `PREFETCH_*` knobs in code because the route names and
+storage module predate the only product path. Those knobs are not a separate public mode.
 
 ### Other Settings
 
-| Variable                   | Description                              | Default |
+| Variable          | Description               | Default |
 | -------------------------- | ---------------------------------------- | ------- |
 | `ALLOW_OFFLINE_GENERATION` | Use stub generation (no LLM) for testing | `false` |
-| `ALLOW_ORIGINS`            | CORS allowed origins (comma-separated)   | `*`     |
+| `ALLOW_ORIGINS`      | CORS allowed origins (comma-separated)  | `*`   |
 
 ## Testing
 
@@ -315,25 +323,25 @@ Run specific test categories:
 
 ```bash
 # Test LLM generation and prompt engineering
-pytest tests/test_llm_generation.py
+pytest tests/generation/test_llm_generation.py
 
 # Test frontend rendering
-pytest tests/test_snippet_render_dom.py
+pytest tests/quality/test_snippet_render_dom.py
 
 # Test prefetch system
-pytest tests/test_prefetch.py
+pytest tests/storage/test_prefetch.py
 
 # Test with coverage
 pytest --cov=api --cov-report=html
 
-# Generate a paired fast vs premium manual review pack
+# Generate a manual review pack
 python3 scripts/run_generation_review_pack.py \
-  --benchmark benchmarks/review_pack_v1.json \
-  --modes fast premium \
-  --out artifacts/evals
+ --benchmark benchmarks/review_pack_v1.json \
+ --modes \
+ --out artifacts/evals
 ```
 
-The test suite includes **70+ tests** covering:
+The test suite includes **170+ tests** covering:
 
 - Prompt engineering and LLM response validation
 - NDW runtime behavior and safety checks
@@ -341,8 +349,8 @@ The test suite includes **70+ tests** covering:
 - Deduplication logic
 - Prefetch queue management
 - API endpoint behavior
-- Frontend rendering (full HTML and NDW snippets)
-- Gemini compliance reviewer integration (when enabled)
+- Frontend iframe rendering (full HTML and NDW snippets)
+- One-shot self-correction and local preflight validation
 
 ## Deployment
 
@@ -352,31 +360,29 @@ This project includes a `render.yaml` blueprint for one-click deployment:
 
 1. **Push to GitHub**
 
-   ```bash
-   git push origin main
-   ```
+  ```bash
+  git push origin main
+  ```
 
 2. **Create Render Service**
-   - Go to [Render Dashboard](https://dashboard.render.com/)
-   - Click **New > Blueprint**
-   - Connect your GitHub repository
-   - Render will detect `render.yaml` automatically
+  - Go to [Render Dashboard](https://dashboard.render.com/)
+  - Click **New > Blueprint**
+  - Connect your GitHub repository
+  - Render will detect `render.yaml` automatically
 
 3. **Configure Environment Variables**
 
-   Add these in the Render dashboard under "Environment":
-   - `GROQ_API_KEY`
-   - `OPENROUTER_API_KEY` (optional)
-   - Any other custom settings from the Configuration section
+  Add `GEMINI_API_KEY` and `REDIS_URL` in the Render dashboard. Other settings can use
+  the defaults in `render.yaml` unless you are intentionally changing queue or model behavior.
 
 4. **Deploy**
 
-   Render will automatically:
-   - Install Python dependencies
-   - Install Node dependencies
-   - Build frontend assets with `npm run build`
-   - Start the server with Uvicorn
-   - Auto-deploy on future pushes
+  Render will automatically:
+  - Install Python dependencies
+  - Install Node dependencies
+  - Build frontend assets with `npm run build`
+  - Start the server with Uvicorn
+  - Auto-deploy on future pushes
 
 ### Manual Deployment
 
@@ -384,16 +390,16 @@ For other platforms (Heroku, Railway, Fly.io, etc.):
 
 1. **Build step**:
 
-   ```bash
-   pip install -r requirements.txt
-   npm install
-   npm run build
-   ```
+  ```bash
+  pip install -r requirements.txt
+  npm install
+  npm run build
+  ```
 
 2. **Start command**:
-   ```bash
-   uvicorn api.main:app --host 0.0.0.0 --port $PORT
-   ```
+  ```bash
+  uvicorn api.main:app --host 0.0.0.0 --port $PORT
+  ```
 
 ## Project Goals & Design Principles
 
@@ -403,38 +409,40 @@ Traditional websites show the same content every time. This project explores the
 
 - **Infinite variety** - No two generations are identical
 - **Shared randomness** - The app is roulette-first; it does not ask users to prompt a site into existence
-- **Gemini-first lanes** - `fast` is bulk Gemini, `premium` is a scarcer Gemini high-effort lane
-- **Interactive-First** - Apps are the centerpiece; titles are compact and centered to avoid scroll fatigue
+- **Gemini-first queue** - planner/builder generation is the default user-facing path
+- **Interactive-first** - generated worlds are coherent mini-experiences, not static landing pages
 - **Creative surprise** - Unexpected combinations and themes
 - **Instant gratification** - Prefetching makes it feel instantaneous
 
 ### Key Technical Decisions
 
 1. **Two Rendering Modes**
-   - **Full HTML pages**: Complete standalone experiences
-   - **NDW snippets**: Lightweight canvas-based games/visuals using our custom runtime
+  - **Full HTML pages**: Complete standalone experiences
+  - **NDW snippets**: Lightweight canvas-based games/visuals using our custom runtime
 
-2. **Smart Prefetching**
-   - Background generation keeps a queue ready
-   - Users get instant results without waiting for LLM latency
-   - Queue automatically refills in the background
+2. **queue**
+  - The app serves from a shared queue first
+  - If the queue is empty, one Gemini streaming burst serves the first valid page and queues later valid pages
+  - Background refill is disabled by default to avoid burning free-tier Gemini quota
 
 3. **Deduplication System**
-   - Content fingerprinting prevents boring repetition
-   - Recent generations are tracked and rejected if too similar
-   - Ensures fresh, varied outputs
+  - Content fingerprinting prevents boring repetition
+  - Recent generations are tracked and rejected if too similar
+  - Ensures fresh, varied outputs
 
 4. **Prompt Engineering**
-   - Fast mode uses seeded layout/motion/tone axes instead of a fixed category box
-   - Premium mode uses a small planning pass plus a stronger builder prompt
-   - Runtime constraints keep outputs renderable inside the NDW host
-   - Emergency fallback providers stay available for fast mode only when Gemini fails
+  - Planner prompts start from a concrete format and task contract before style decisions
+  - Semantic anchors are translated into visual, interaction, content, and motion roles
+  - Builder prompts receive stable runtime rules, local design-kit keys, and novelty guidance
+  - Runtime constraints keep outputs renderable inside the NDW host
+  - Emergency fallback providers stay available only when Gemini generation fails
 
 5. **Quality Guardrails**
-   - Schema validation catches malformed responses
-   - Optional compliance review via Gemini API for safety and accessibility checks
-   - Runtime safety checks (canvas creation, error overlays)
-   - Comprehensive test coverage
+  - Raw HTML extraction avoids JSON escaping failures
+  - One-shot self-review plus local preflight checks for safety and reliability
+  - Experience scoring checks visible first action, meaningful state change, feedback clarity, mobile support, and decorative-only interaction risk
+  - Runtime safety checks (canvas creation, error overlays)
+  - Comprehensive test coverage
 
 ## Development
 
@@ -442,25 +450,25 @@ Traditional websites show the same content every time. This project explores the
 
 ```
 non-deterministic-website/
-├── api/                    # FastAPI backend
-│   ├── main.py            # API routes and server
-│   ├── llm_client.py      # Gemini-first generation + premium planner/builder
-│   ├── prefetch.py        # Fast/premium shared queues
-│   ├── premium_credits.py # Premium refund compensation ledger
-│   ├── dedupe.py          # Duplicate detection
-│   └── validators.py      # Schema validation
+├── api/          # FastAPI backend
+│  ├── main.py      # API routes and server
+│  ├── llm_client.py   # Gemini planner/builder + burst parser
+│  ├── prefetch.py    # Shared queue storage lanes
+│  ├── novelty.py     # Served-site novelty ledger
+│  ├── dedupe.py     # Duplicate detection
+│  └── validators.py   # Schema validation
 ├── static/
-│   ├── ts-src/            # TypeScript source
-│   │   ├── app.ts         # Main frontend logic
-│   │   └── ndw.ts         # NDW runtime
-│   └── ts-build/          # Compiled JavaScript
+│  ├── ts-src/      # TypeScript source
+│  │  ├── app.ts     # Main frontend logic
+│  │  └── ndw.ts     # NDW runtime
+│  └── ts-build/     # Compiled JavaScript
 ├── templates/
-│   └── index.html         # Landing page
-├── tests/                 # Test suite
-├── screenshots/           # Demo images by version
-│   ├── v1.5/             # Latest screenshots
-│   └── v1/               # Original release screenshots
-└── package.json           # Node dependencies
+│  └── index.html     # Landing page
+├── tests/         # Test suite
+├── screenshots/      # Demo images by version
+│  ├── v1.5/       # Latest screenshots
+│  └── v1/        # Original release screenshots
+└── package.json      # Node dependencies
 ```
 
 ### Code Style
@@ -494,12 +502,11 @@ serves them directly—no Node.js runtime is required in production.
 
 ## Additional Resources
 
-- [docs/PREMIUM_QUEUE.md](docs/PREMIUM_QUEUE.md) - Premium lane architecture, quota semantics, and refund compensation
-- [docs/PREFETCH_QUEUE.md](docs/PREFETCH_QUEUE.md) - Fast/premium queue behavior and counter semantics
-- [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) - Gemini-first generation routing and premium planner/builder flow
+- [docs/PREMIUM_QUEUE.md](docs/PREMIUM_QUEUE.md) - Queue architecture, queue storage, serving policy, refill behavior, and counter semantics
+- [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) - Gemini-first generation routing and planner/builder flow
+- [docs/EXPERIENCE_GRAMMAR.md](docs/EXPERIENCE_GRAMMAR.md) - Visitor roles, primary loops, semantic translation, and experience-quality scoring
+- [docs/REDIS_DIVERSITY_TRACKING.md](docs/REDIS_DIVERSITY_TRACKING.md) - Redis descriptor archive, QD counters, fingerprints, and event stream
 
-- **Groq API Docs**: https://console.groq.com/docs
-- **OpenRouter API Docs**: https://openrouter.ai/docs
 - **FastAPI Documentation**: https://fastapi.tiangolo.com/
 - **Mermaid Diagrams**: https://mermaid.js.org/
 
@@ -512,7 +519,7 @@ Contributions welcome! Areas for improvement:
 - NDW runtime features (WebGL, audio, etc.)
 - Metrics dashboard
 - Visual diff testing for generated pages
-- Better premium queue moderation/inspection UI
+- Better queue moderation/inspection UI
 
 ## License
 

@@ -1,177 +1,81 @@
-## Non-Deterministic Website – Deep-Dive Architecture Guide
+# Non-Deterministic Website Overview
 
-This document explains how the “Roulette” experience is assembled, what guarantees each layer provides, and which environment knobs influence behaviour. Use it as a companion to the code when you need to trace a request or reason about production configuration.
+Roulette is a non-deterministic website generator for polished, one-off interactive web experiences. Users do not prompt websites into existence. They enter a queue-backed stream of random pages and can jump to the next world.
 
----
+For deeper detail, use:
 
-### 1. Startup Sequence
+- `docs/ARCHITECTURE.md` for the full system map.
+- `docs/PREMIUM_QUEUE.md` for queue behavior and counter semantics.
+- `docs/LLM_ORCHESTRATION.md` for Gemini planner/build routing.
+- `docs/EXPERIENCE_GRAMMAR.md` for visitor-role and primary-loop requirements.
+- `docs/REDIS_DIVERSITY_TRACKING.md` for descriptor storage and quality-diversity steering.
 
-1. **Dotenv loading** – `api/__init__.py` reads `.env` (unless `PYTEST_CURRENT_TEST` is set) without clobbering existing OS variables. Everything that follows assumes those variables are already in `os.environ`.
-2. **FastAPI lifespan hook** – When Uvicorn starts, the `lifespan` context manager in `api/main.py` runs:
-   - `_prefill_prefetch_queue()` generates `PREFETCH_PREWARM_COUNT` documents up front, *blocking startup* until it finishes. If the configured LLM credentials are missing or `llm_status()` reports no token, the prewarm quietly skips.
-   - `_prefetch_topup_enabled()` checks `PREFETCH_TOPUP_ENABLED`. When true *and* the LLM is available, a daemon thread is spawned to keep the prefetch queue above water in the background.
-   - **Production note:** Render now pins `PREFETCH_PREWARM_COUNT=0` and `PREFETCH_TOPUP_ENABLED=0` so cold starts and idle periods stop consuming LLM tokens. Re-enable only if you truly need a warm cache and have rate limit headroom.
-3. **Middleware & static assets** – CORS is configured from `ALLOW_ORIGINS`; `/static` mounts if the folder exists; the request middleware adds a UUID-based `request_id` and prints structured latency logs to stdout (`INFO:root:rid=...`).
+## Current Product Path
 
-Key takeaway: large values for `PREFETCH_PREWARM_COUNT` can delay boot long enough for Render/hosts to time out. When rolling out, prefer `0` or a small number unless you have high rate limits.
+1. The landing tunnel displays preview tiles from the shared queue.
+2. Clicking a preview consumes that queued page and renders it in the iframe sandbox.
+3. Pressing Generate first tries the queue.
+4. If the queue is empty, the backend starts one Gemini streaming burst and serves the first locally valid page.
+5. Later valid pages from the same stream can be drained into the queue for future users.
+6. The served page increments the public `Sites generated` counter.
+7. After serving, Redis can record compact descriptors, quality-diversity counters, fingerprints, and generation events.
 
----
+There is no public mode split. User-facing generation is only.
 
-### 2. Request Lifecycle (`/generate`)
+## Generation Model
 
-1. **Rate limiting & identity**
-   - `require_api_key` checks `API_KEYS`. If absent, auth is effectively open (dev default).
-   - `_safe_rate_check` picks Redis + `api/redis_ratelimit.py` when `REDIS_URL` is defined, otherwise falls back to the in-process limiter (`api/ratelimit.py`). Both enforce `RATE_MAX_REQUESTS` requests per `RATE_WINDOW_SECONDS`.
-   - Responses always include `X-RateLimit-Remaining` and `X-RateLimit-Reset`; 429 payloads add `Retry-After`.
+The generator uses Gemini as the primary provider:
 
-2. **Prefetch fast path**
-   - `prefetch.dequeue()` delivers the oldest JSON file from `PREFETCH_DIR` (`cache/prefetch` by default).
-   - When served, the handler optionally sleeps `PREFETCH_DELAY_MS / 1000` to pace delivery (defaults to 3000 ms but drops to zero during pytest).
-   - Once a prefetched page is used, the response is returned immediately and a background task checks queue depth: if `prefetch.size() <= PREFETCH_LOW_WATER` (default 55), `_top_up_prefetch` is scheduled.
+- Planner: chooses semantic anchors, experience cell, visitor role, first interaction, primary loop, visual axes, and local design-kit assets.
+- Builder: outputs raw HTML in a final fenced `html` block after a single-call self-review sequence.
+- Backend gates: normalize HTML, rewrite unsafe assets, run preflight/static checks, score visual richness, score experience quality, and dedupe.
 
-3. **LLM fallback path**
-   - If the queue is empty, `llm_generate_page` is called synchronously.
-   - Offline mode: if the LLM is unavailable and `ALLOW_OFFLINE_GENERATION` is truthy, a deterministic canned experience is returned (see `generate_endpoint` for markup).
-   - Successful generations increment the total counter (`api/counter.py`), which writes to Redis when configured, otherwise `cache/counter.json`.
+## Experience Grammar
 
----
+Every strong generated site should answer:
 
-### 2.5 Landing: Tunnel “Roulette” Previews
+- What is the visitor’s role?
+- What should the visitor do first?
+- What visibly changes after that action?
+- What state changed?
+- Why would the visitor keep interacting?
 
-The landing page is a 3D “tunnel” of clickable preview tiles that represent prefetched websites:
-- The frontend polls `GET /api/prefetch/previews?limit=...` to obtain preview metadata.
-- Clicking a tile “enters” that website by fetching `GET /api/prefetch/{token}` (tokenized so the client never needs direct file paths).
-- If the queue is empty, the UI can still fall back to on-demand generation via `/generate` or `/generate/stream`.
+This is tracked in the plan and evaluated by `api/generation/experience_quality.py`.
 
----
+## Queue And Redis
 
-### 3. Prefetch Subsystem (Always Be Stocked)
+`api/prefetch.py` is still the queue implementation name, but the public lane is the shared queue.
 
-- **Storage** – `api/prefetch.py` keeps FIFO ordering by naming files with `time.time_ns()` prefixes. Writes go through a `.tmp` file then `Path.replace()` for durability.
-- **Dedupe** – Every enqueue computes a signature via `api/dedupe.py`. If the signature already exists and the queue is non-empty, the item is skipped. Signatures persist in `DEDUPE_RECENT_FILE` (`cache/seen_pages.json`) with a max size of `DEDUPE_MAX` (default 200).
-- **Top-up loop** (`_top_up_prefetch`)
-  - Reads current queue size and computes a target: `max(min_fill, _prefetch_target_size(current))`.
-  - `_prefetch_target_size` raises the target to `PREFETCH_FILL_TO` (defaults to `max(PREFETCH_BATCH_MAX, PREFETCH_LOW_WATER)`, so 55 with stock settings) whenever the queue dips below `PREFETCH_LOW_WATER`.
-  - **Burst Workers**: Generation runs through a bounded worker pool (`PREFETCH_MAX_WORKERS`, default 2). Each worker calls `llm_generate_page_burst`, which yields up to **20 websites per single LLM request** (Gemini-only). Workers are streaming-aware: they consume the generator and enqueue each site immediately as it is parsed from the stream, allowing the cache to refill in real-time.
-  - Results arriving after the queue reaches the target are discarded instead of written.
-  - Each successful doc is enqueued immediately (skipping duplicates via `dedupe`) and batched for review. Prefetch generation no longer blocks on Gemini; `_schedule_prefetch_review` processes files asynchronously.
+Redis is used for production state:
 
-Operational tips:
-- Set `PREFETCH_TOPUP_ENABLED=0` in environments with strict rate limits or when running tests manually.
-- Combine a small `PREFETCH_PREWARM_COUNT` with a relatively high `PREFETCH_LOW_WATER` so steady-state traffic rarely waits for the LLM.
-- Tune `PREFETCH_MAX_WORKERS` alongside provider rate limits; higher values refill faster but increase concurrent LLM calls.
+- queued docs and preview tokens
+- served-site descriptors
+- quality-diversity counters
+- event streams
+- fingerprint dedupe
+- counters and rate limits when configured
 
----
+Redis is not used as a giant prompt memory. The model receives positive targets like `museum_exhibit:scan_to_discover`, not long lists of prior websites to avoid.
 
-### 4. LLM Orchestration (`api/llm_client.py`)
+## Runtime
 
-- **Category rotation** – `_CATEGORY_ROTATION_NOTES` defines five prompts (Interactive Entertainment, Utility Micro-Tools, Generative Randomizers, Interactive Art, Quizzes/Learning Cards). `_next_category_note` uses a per-user ring buffer with thread locking so each caller walks the themes in order, keeping output varied even across concurrent requests.
-- **Provider order & fallbacks**
-  1. **OpenRouter / Groq**: Prioritized for ad-hoc single-page requests via `/generate` (non-prefetched path). This preserves the strict Gemini quota for high-efficiency bursting.
-  2. **Gemini Bursting**: Technically the primary model for **Burst Streaming**. Gemini is the only provider that attempts to batch multiple sites per request (currently up to 20). It is skipped for ad-hoc requests unless fallbacks fail.
-  3. **Streaming & Partial JSON**: The system uses a depth-aware bracket-counter to extract completed `{...}` objects from streaming JSON arrays. This "salvages" completed sites from truncated streams and allows immediate enqueuing before the final `]` arrives.
-  4. If all providers fail, a `{"error": "Model generation failed"}` payload is returned.
-- **Normalization pipeline**
-  - `_json_from_text` extracts JSON from completions that may have stray prose.
-  - `_normalize_doc` standardises to one of the supported shapes and guarantees required properties exist.
-  - `_collect_js_blocks` + `_first_js_syntax_error` use Node.js (`node -e`) to verify inline scripts compile, while additional static heuristics ensure DOM selectors match real nodes and guard against obvious low-contrast CSS.
-- **Compliance review**
-  - Individual documents: `_call_gemini_review` receives the draft, the category note, and the user brief. JS syntax validation now runs *before* Gemini is called; only syntactically sound docs go to the reviewer, and the corrected payload is validated again afterward.
-  - Prefetch review: completed JSON files land on an asynchronous queue powered by `_schedule_prefetch_review`. Worker threads pick up batches, call `_call_gemini_review_batch`, rewrite or discard docs as needed, and retry failures with short delays (up to three passes). A warning log records batches that exceeded the retry budget so operators can revisit them manually.
-- **Testing shortcuts**
-  - When `PYTEST_CURRENT_TEST` is set and `RUN_LIVE_LLM_TESTS` is false, `_testing_stub_enabled` switches the module to a deterministic stub so unit tests never hit live providers.
+Generated pages render inside a full-screen iframe sandbox. Replacing the iframe destroys old timers, WebGL contexts, styles, and event listeners without relying on generated code cleanup.
 
----
+The parent app keeps host controls, counter display, JSON overlay, and Generate behavior outside the generated page. Generated pages can request the next world through `postMessage`.
 
-### 5. Front-End Contract & Rendering
+## Operational Defaults
 
-- **Payload formats**
-  1. `{"kind": "full_page_html", "html": "<!doctype html>..."}` – entire HTML document.
-  2. `{"kind": "ndw_snippet_v1", "html": "...", "css": "...", "js": "...", ...}` – widget embedded into the NDW shell.
-  3. `{"components": [...], "layout": {...}, "palette": {...}}` – component manifest for the React/TypeScript front-end.
-- **NDW runtime expectations**
-  - Scripts must rely on `NDW.loop`, `NDW.makeCanvas`, `NDW.onPointer`, etc., instead of raw `requestAnimationFrame`.
-  - Inline external resources (no remote fonts or fetch calls).
-  - Maintain accessibility: labelled controls, high-contrast palettes, no duplicated IDs.
+For low-cost Render deployments:
 
-The TypeScript app (`static/ts-src/app.ts`) receives the API response, mounts the appropriate renderer, and ensures each experience is sandboxed under `#ndw-sandbox` to avoid global CSS leakage.
+- keep startup prewarm disabled
+- keep background top-up disabled unless you have rate-limit headroom
+- use Redis if queue persistence matters across restarts
+- run review-pack evals in fixture mode for harness checks and live mode only when intentionally spending Gemini quota
 
----
+Key commands:
 
-### 6. Metrics & Observability
-
-- **Usage counter** – `api/counter.py` exposes `counter.get_total()` via `/metrics/total`. It writes to Redis when `REDIS_URL` is set, falling back to a local JSON file. Redis reads/writes include timeouts (`REDIS_COUNTER_TIMEOUT`) so transient failures do not block the request.
-- **Logging**
-  - HTTP middleware prints structured request info to stdout.
-  - The LLM client emits `WARNING` logs describing provider order, fallback decisions, rate-limit backoffs, and schema issues.
-  - Prefetch routines log queue size transitions (`prefetch.top_up`, `prefetch.fill`, `prefetch.prewarm`).
-- **Health checks**
-  - `/health` returns `{"status": "ok"}` with no dependencies.
-  - `/llm/status` reveals the provider currently active, whether a token is present, and if Gemini review is live.
-  - `/llm/probe` performs a lightweight availability check and returns `{ok: bool, using: "openrouter|groq|stub"}`.
-
----
-
-### 7. Configuration Cheat Sheet
-
-| Concern | Key Variables | Notes |
-|---------|---------------|-------|
-| LLM providers | `GEMINI_GENERATION_MODEL`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `GROQ_API_KEY`, `GROQ_MODEL` | Gemini is first; set `FORCE_OPENROUTER_ONLY=1` to skip Groq/Gemini fallbacks. |
-| Compliance review | `GEMINI_REVIEW_ENABLED`, `GEMINI_API_KEY`, `GEMINI_REVIEW_MODEL` | When disabled, compliance hooks simply return `None`. |
-| Prefetch | `PREFETCH_TOPUP_ENABLED`, `PREFETCH_PREWARM_COUNT`, `PREFETCH_LOW_WATER`, `PREFETCH_FILL_TO`, `PREFETCH_DELAY_MS`, `PREFETCH_BATCH_MIN/MAX`, `PREFETCH_REVIEW_BATCH`, `PREFETCH_DIR` | High `PREFETCH_PREWARM_COUNT` + strict rate limits can stall boot. |
-| Deduping | `DEDUPE_ENABLED`, `DEDUPE_RECENT_FILE`, `DEDUPE_MAX` | Dedupe writes on every enqueue; consider a shared store for multi-instance deployments. |
-| Rate limit | `API_KEYS`, `RATE_MAX_REQUESTS`, `RATE_WINDOW_SECONDS`, `REDIS_URL` | Without `API_KEYS`, generation is open to the world. |
-| Metrics | `REDIS_COUNTER_KEY`, `REDIS_COUNTER_TIMEOUT`, `COUNTER_FILE` | Redis writes mirror to the local file for resiliency. |
-| Offline/dev | `ALLOW_OFFLINE_GENERATION`, `PYTEST_CURRENT_TEST`, `RUN_LIVE_LLM_TESTS` | Offline mode serves a canned app; tests disable background threads automatically. |
-
----
-
-### 8. Failure Modes & Operational Guidance
-
-- **Provider rate limits** – The OpenRouter client applies exponential backoff and logs “OpenRouter rate limited; backing off…” messages. Sustained 429s inside `_prefill_prefetch_queue` will keep the lifespan hook alive, preventing the HTTP server from listening. Mitigation: lower `PREFETCH_PREWARM_COUNT` or temporarily disable prewarm (`0`).
-- **Prefetch starvation** – If Gemini rejects many prefetched docs, the top-up loop can spin without increasing queue size. Monitor logs for repeated “generation returned error” / “continuing refill” lines. Consider counting rejections toward `failures` if this becomes common.
-- **Redis outages** – Rate limiting and counters fall back to in-process implementations; logs warn but requests continue. Restarting the process reinitialises Redis clients automatically.
-- **File-system constraints** – The project expects write access to `cache/`. On platforms with ephemeral storage (Render free tier), the queue and counters reset on each deploy; attach a persistent disk if durability matters.
-- **Concurrency** – Background threads (`_top_up_prefetch`) and request handlers both touch the prefetch queue and dedupe store. There is no file locking beyond Python’s GIL for JSON reads/writes; in multi-process setups, move to a shared datastore.
-- **Quality drift** – Even with Gemini review, subtle animation bugs can slip through (e.g., canvas content faded to transparency). Consider adding automated heuristics or lightweight simulations to lint generated JS/HTML before enqueueing, especially for canvas-heavy categories.
-
----
-
----
-
-### 11. Vision Grounding & Design Matrix
-
-To achieve "Premium Aesthetics" without massive text prompts, the system uses **Vision Grounding**:
-- **Design Matrix**: A single JPEG image (`static/design_matrix.jpg`) containing 4 visual quadrants: **Professional**, **Playful**, **Brutalist**, and **Cozy**.
-- **The "Color Universe"**: The image includes a 24-color palette strip that the LLM samples from to ensure vibrant, non-repetitive designs.
-- **Multimodal Prompting**: Gemini 1.5+ receives this image in its context window. The text prompt instructs the model to "vibe-check" the brief and select the matching quadrant for its design language.
-- **Token Optimization**: Moving design rules into an image saves ~1,500 text tokens per request, as image input costs a flat 258 tokens.
-
-### 12. Interactive-First Hierarchy
-
-The system follows a strict **Interactive-First** design philosophy to maximize user engagement:
-- **Compact Header**: Titles and category labels are rendered in a small, centered, top-aligned header.
-- **The "Main Stage"**: The interactive portion of the app (`#ndw-content`) must be the largest visual element on first paint, occupying at least 50% of the viewport height.
-- **Zero Scroll**: The primary call-to-action or interaction point must be visible above the fold on standard desktop and mobile resolutions.
-
----
-
-### 13. Burst Streaming Generation
-
-To maximize the 20 requests/day Gemini quota, the system implements a "Burst" strategy:
-- **Batching**: A single Gemini request generates up to **20** items in a JSON array.
-- **Streaming Parser**: A custom iterator uses bracket-depth-counting to extract completed objects from the stream. This allows the prefetcher to process site #1 while site #2 is still being generated by the LLM.
-- **Salvage Mechanism**: If a stream is truncated by token limits, the prefetcher retains all fully formed objects identified by the parser.
-- **Review Batching**: Prefetch fill/top-up reviews are grouped into `PREFETCH_REVIEW_BATCH` (default 20) so we can review/enqueue in fewer round-trips.
-
----
-
-### 13. Local Development Tips
-...
-
-- **Main entry points** – `api/main.py` (FastAPI app), `api/llm_client.py` (generation + compliance), `static/ts-src/app.ts` (frontend).
-- **Background jobs** – Prefetch thread (daemon) + on-demand background tasks via FastAPI’s `BackgroundTasks`.
-- **Extending categories** – Update `_CATEGORY_ROTATION_NOTES`, provide new inspirational examples, and ensure the frontend can render the novel content.
-- **Deploying** – The provided `render.yaml` installs Python + Node dependencies, builds the frontend, and launches `uvicorn`. Remember to set runtime env vars (`PREFETCH_TOPUP_ENABLED`, provider keys, Redis URL) via Render’s dashboard or infrastructure pipeline.
-
-With these pieces in mind you can reason about why generation sometimes feels instant (prefetch), why logs mention category assignments (prompt rotation), and how compliance corrections end up in cached files. The overall system is deliberately modular: each component can be tuned—or disabled—via environment variables without modifying code.
+```bash
+npm run build
+pytest -q
+python3 scripts/run_generation_review_pack.py --fixture-mode --no-screenshots --out /tmp/ndw_eval_harness
+```
