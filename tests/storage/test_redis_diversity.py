@@ -115,7 +115,7 @@ def test_choose_experience_cell_prefers_underused_cells():
     redis = FakeRedis()
     redis.zsets["qd:count:experience_cell"] = {
         "interactive_instrument:type_to_reveal": 99,
-        "museum_exhibit:scan_to_discover": 0,
+        "museum_exhibit:scan_to_compare": 0,
     }
     cell = choose_experience_cell(seed=3, client=redis)
     assert cell["experience_archetype"]

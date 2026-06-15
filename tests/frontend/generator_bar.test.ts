@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 let ensureFloatingGenerate: typeof import('../../static/ts-src/app').__ndwTestEnsureFloatingGenerate;
 let setBodyMode: typeof import('../../static/ts-src/app').__ndwTestSetBodyMode;
+let resolveTunnelCardAction: typeof import('../../static/ts-src/app').__ndwResolveTunnelCardAction;
 
 describe('Generator bar', () => {
   beforeEach(async () => {
@@ -10,6 +11,7 @@ describe('Generator bar', () => {
     const mod = await import('../../static/ts-src/app');
     ensureFloatingGenerate = mod.__ndwTestEnsureFloatingGenerate;
     setBodyMode = mod.__ndwTestSetBodyMode;
+    resolveTunnelCardAction = mod.__ndwResolveTunnelCardAction;
     window.localStorage.clear();
     document.body.className = '';
     document.body.innerHTML = `
@@ -59,5 +61,11 @@ describe('Generator bar', () => {
     expect(document.getElementById('floatingGenerate')).not.toBeNull();
     expect(document.getElementById('generationModeWrap')).toBeNull();
     expect(window.localStorage.getItem('ndw_generation_quality')).toBeNull();
+  });
+
+  it('routes placeholder tunnel cards to live generation', () => {
+    expect(resolveTunnelCardAction('placeholder:0')).toBe('generate');
+    expect(resolveTunnelCardAction('placeholder:generate')).toBe('generate');
+    expect(resolveTunnelCardAction('file:queued-site.json')).toBe('prefetch');
   });
 });

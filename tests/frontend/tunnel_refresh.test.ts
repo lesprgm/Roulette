@@ -77,4 +77,33 @@ describe('Tunnel refresh loop', () => {
     const changedCount = countCards();
     expect(changedCount).toBeGreaterThanOrEqual(initialCount);
   });
+
+  it('emits placeholder ids when empty-queue cards are clicked', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => [],
+    }));
+    (globalThis as any).fetch = fetchMock;
+    const container = document.getElementById('tunnel-container') as HTMLElement;
+    const tunnel = new InfiniteTunnel(container);
+    const clicks: string[] = [];
+    tunnel.setOnCardClick((id) => clicks.push(id));
+    await tunnel.init();
+    await Promise.resolve();
+
+    let placeholderCard: any = null;
+    ((tunnel as any).segments as any[]).forEach(segment => {
+      segment.traverse((child: any) => {
+        if (!placeholderCard && child?.name === 'card' && child.userData?.isPlaceholder) {
+          placeholderCard = child;
+        }
+      });
+    });
+    expect(placeholderCard).toBeTruthy();
+    (tunnel as any).raycaster.intersectObjects = () => [{ object: placeholderCard }];
+    (tunnel as any).handleClick();
+
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]).toMatch(/^placeholder:/);
+  });
 });

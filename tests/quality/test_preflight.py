@@ -77,6 +77,48 @@ def test_preflight_blocks_bare_three_import_in_iframe_full_page():
     assert any("Unsupported module import 'three'" in issue.get("message", "") for issue in issues)
 
 
+def test_preflight_allows_local_alpine_and_matter_scripts_in_full_page():
+    doc = {
+        "kind": "full_page_html",
+        "html": """<!doctype html><html><body>
+        <main id="ndw-content"></main>
+        <script defer src="/static/vendor/alpine.min.js"></script>
+        <script src="/static/vendor/matter.min.js"></script>
+        <script>
+          const engine = Matter.Engine.create();
+          Alpine.data('cart', () => ({ count: 0 }));
+          Matter.Engine.update(engine, 16);
+        </script>
+        </body></html>""",
+    }
+    issues = preflight_doc(doc)
+    assert has_blocking_issues(issues) is False
+
+
+def test_preflight_blocks_inline_event_handlers_but_allows_alpine_events():
+    inline_doc = {
+        "kind": "full_page_html",
+        "html": """<!doctype html><html><body>
+        <main id="ndw-content"><button onclick="startGame()">Start</button></main>
+        <script>function startGame() {}</script>
+        </body></html>""",
+    }
+    inline_issues = preflight_doc(inline_doc)
+    assert has_blocking_issues(inline_issues) is True
+    assert any("Inline event handlers" in issue.get("message", "") for issue in inline_issues)
+
+    alpine_doc = {
+        "kind": "full_page_html",
+        "html": """<!doctype html><html><body>
+        <main id="ndw-content" x-data="{ count: 0 }">
+          <button @click="count++">Add</button><span x-text="count"></span>
+        </main>
+        <script defer src="/static/vendor/alpine.min.js"></script>
+        </body></html>""",
+    }
+    assert has_blocking_issues(preflight_doc(alpine_doc)) is False
+
+
 def test_preflight_warns_cleanup_registered_inside_animation_loop():
     doc = {
         "kind": "full_page_html",
@@ -126,6 +168,25 @@ def test_preflight_blocks_direct_missing_element_dereference():
     assert has_blocking_issues(issues) is True
     assert any("directly dereferences missing element id 'missing'" in issue.get("message", "") for issue in issues)
     assert any("directly dereferences missing selector '.missing-class'" in issue.get("message", "") for issue in issues)
+
+
+def test_preflight_warns_for_visible_code_artifacts_and_planning_labels_without_blocking():
+    doc = {
+        "kind": "full_page_html",
+        "html": """<!doctype html><html><body>
+        <main id="ndw-content">
+          <h1>// Onboarding Instructions</h1>
+          <p>Primary Loop: click the button. TODO undefined null.</p>
+          <button id="go">Go</button>
+        </main>
+        <script>document.getElementById('go')?.addEventListener('click', () => {});</script>
+        </body></html>""",
+    }
+    issues = preflight_doc(doc)
+    assert has_blocking_issues(issues) is False
+    assert any("Visible code/debug artifact" in issue.get("message", "") for issue in issues)
+    assert any("Planner/internal labels" in issue.get("message", "") for issue in issues)
+    assert all(issue.get("severity") == "warn" for issue in issues)
 
 
 def test_preflight_allows_optional_missing_element_access_as_warning():

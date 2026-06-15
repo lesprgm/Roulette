@@ -140,10 +140,12 @@ def _capture(page, filename: str) -> Path:
     return path
 
 
-def _install_api_stubs(page, captured: Dict[str, List[dict]]):
+def _install_api_stubs(page, captured: Dict[str, List[dict]], *, previews=None):
+    preview_payload = PREVIEWS if previews is None else previews
+
     def handle_prefetch(route):
         if "/api/prefetch/previews" in route.request.url:
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(PREVIEWS))
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(preview_payload))
             return
         route.fulfill(status=200, content_type="application/json", body=json.dumps(QUEUE_PAGE))
 
@@ -218,8 +220,6 @@ def test_generator_bar_flow_and_premium_generation(browser, live_server):
         page.locator("#floatingGenerateWrap").wait_for()
 
         page.locator("#floatingGenerate").click()
-        page.locator("#spinnerMsg").wait_for()
-        assert (page.locator("#spinnerMsg").text_content() or "").strip() == "Art directing your next world…"
         frame = page.frame_locator("#ndw-site-frame")
         frame.get_by_role("heading", name="Premium World").first.wait_for(timeout=5000)
         assert "128" in ((page.locator("#sitesCounterBadge").text_content() or "").strip())

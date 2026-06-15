@@ -70,6 +70,22 @@ def test_normalize_strips_external_assets():
     assert doc["ndw_debug"]["external_assets_removed"]
 
 
+def test_normalize_removes_visible_code_artifacts_without_touching_scripts():
+    html = (
+        "<!doctype html><html><body>"
+        "<main id='ndw-content'><p>ESTABLISHED 1974 // COASTAL ARCHIVES</p><h1>// Start Booking</h1></main>"
+        "<script>// Keep this script comment\nconst label = 'A // B';</script>"
+        "</body></html>"
+    )
+    doc = llm_client._normalize_doc({"kind": "full_page_html", "html": html})
+
+    assert "ESTABLISHED 1974 - COASTAL ARCHIVES" in doc["html"]
+    assert "<h1>Start Booking</h1>" in doc["html"]
+    assert "// Keep this script comment" in doc["html"]
+    assert "const label = 'A // B';" in doc["html"]
+    assert doc["ndw_debug"]["external_assets_removed"]
+
+
 def test_first_js_syntax_error_exposes_preflight_helper():
     doc = {
         "kind": "full_page_html",

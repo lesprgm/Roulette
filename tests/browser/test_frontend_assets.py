@@ -19,9 +19,17 @@ def test_index_includes_tunnel_scaffold():
     assert '"three": "/static/vendor/three.module.js"' in html
 
 
+def test_new_local_generation_libraries_are_vendored():
+    from pathlib import Path
+
+    assert Path("static/vendor/alpine.min.js").exists()
+    assert Path("static/vendor/matter.min.js").exists()
+
+
 def test_index_keeps_landing_configuration_free():
     with open("templates/index.html", "r", encoding="utf-8") as f:
         html = f.read()
     assert 'id="landingGenerate"' not in html
     assert "Premium: slower, better art direction." not in html
-    assert 'id="landingFallback"' in html
+    assert 'id="landingFallback"' not in html
+    assert "Generate one anyway" not in html

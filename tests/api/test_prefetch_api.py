@@ -14,6 +14,7 @@ def isolated_queue(monkeypatch, tmp_path):
     monkeypatch.setenv("PREFETCH_DIR", str(pf_dir))
     monkeypatch.setenv("PREMIUM_PREFETCH_DIR", str(premium_pf_dir))
     monkeypatch.setenv("DEDUPE_RECENT_FILE", str(seen_file))
+    monkeypatch.setenv("PREFETCH_DROP_TEST_FIXTURES", "0")
 
     from api import prefetch as pf
     importlib.reload(pf)

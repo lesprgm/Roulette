@@ -240,11 +240,12 @@ def test_generate_single_premium_doc_fail_opens_on_review_timeout(monkeypatch):
     assert elapsed < 0.75
 
 
-def test_generate_single_premium_doc_drops_weak_fail_open_doc(monkeypatch):
+def test_generate_single_premium_doc_does_not_drop_weak_advisory_doc(monkeypatch):
     from api import main as main_mod
 
-    weak_page = {"kind": "full_page_html", "html": "<!doctype html><html><body><div>hi</div></body></html>"}
+    weak_page = {"kind": "full_page_html", "html": "<!doctype html><html><body><main><button>Try</button></main></body></html>"}
     monkeypatch.setattr(main_mod, "llm_generate_page_premium", lambda brief, seed, user_key=None: dict(weak_page))
 
     out = main_mod._generate_single_premium_doc("", seed=4, user_key="student", context="premium.stream.first")
-    assert out is None
+    assert isinstance(out, dict)
+    assert out["html"] == weak_page["html"]

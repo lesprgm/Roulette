@@ -63,6 +63,51 @@ def test_premium_lane_isolated_from_fast(isolated_prefetch):
     assert "premium" in pf.dequeue("premium")["html"]
 
 
+def test_file_queue_drops_stale_test_fixture_docs(isolated_prefetch):
+    pf = isolated_prefetch
+    premium_dir = pf._lane_dir("premium")  # noqa: SLF001 - regression coverage for file fallback.
+    premium_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = premium_dir / "stale-test-fixture.json"
+    fixture_path.write_text(
+        (
+            '{"kind":"full_page_html","title":"Premium Preview","category":"unit-test",'
+            '"vibe":"testing","html":"<!doctype html><html><body><h1>Premium Preview</h1></body></html>"}'
+        ),
+        encoding="utf-8",
+    )
+
+    assert pf.peek(lane="premium") == []
+    assert not fixture_path.exists()
+
+    fixture_path.write_text(
+        (
+            '{"kind":"full_page_html","title":"Premium Preview","category":"unit-test",'
+            '"vibe":"testing","html":"<!doctype html><html><body><h1>Premium Preview</h1></body></html>"}'
+        ),
+        encoding="utf-8",
+    )
+    assert pf.dequeue("premium") is None
+    assert not fixture_path.exists()
+
+
+def test_redis_failure_disables_redis_and_falls_back_to_file_queue(isolated_prefetch, monkeypatch):
+    pf = isolated_prefetch
+
+    class BrokenRedis:
+        def llen(self, *_args, **_kwargs):
+            raise RuntimeError("dns failed")
+
+    monkeypatch.setattr(pf, "_REDIS_CLIENT", BrokenRedis())
+    monkeypatch.setattr(pf, "_REDIS_DISABLED_REASON", "")
+
+    assert pf.size("premium") == 0
+    assert pf.backend() == "file"
+    assert pf.redis_disabled_reason() == "size_failed"
+
+    assert pf.enqueue(_make_doc("fallback"), lane="premium")
+    assert pf.size("premium") == 1
+
+
 def test_prefetch_fill_enqueues_premium_docs(monkeypatch, isolated_prefetch):
     from api.main import app
     from api import main as main_mod
@@ -293,3 +338,4 @@ def test_prefetch_status_reports_both_lanes(isolated_prefetch):
     assert body["premium_fill_to"] >= body["premium_low_water"]
     assert body["premium_refill_missing_enabled"] is True
     assert body["dir"] == os.getenv("PREFETCH_DIR")
+    assert "redis_disabled_reason" in body
