@@ -60,7 +60,7 @@ def _dominant_terms(html: str, limit: int = 8) -> List[str]:
     counts = Counter(
         w.lower()
         for w in _WORD_RE.findall(text)
-        if w.lower() not in _GENERIC_WORDS and not w.isdigit()
+        if w.lower() not in _GENERIC_WORDS
     )
     return [word for word, _count in counts.most_common(limit)]
 

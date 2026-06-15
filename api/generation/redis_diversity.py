@@ -8,7 +8,12 @@ import re
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from api.generation.experience_grammar import all_experience_cell_keys, parse_cell_key, seeded_experience_cell
+from api.generation.experience_grammar import (
+    activity_family_for_variant,
+    all_experience_cell_keys,
+    parse_cell_key,
+    seeded_experience_cell,
+)
 from api.generation.experience_quality import score_experience
 from api.quality import score_page_doc
 
@@ -113,7 +118,7 @@ def _input_modalities(html: str) -> List[str]:
         ("keyboard", r"keydown|keyup|<input\b|<textarea\b"),
         ("pointer", r"pointer|mousemove|mousedown|click|drag"),
         ("touch", r"touchstart|touchmove|pointerdown"),
-        ("scroll", r"scroll|wheel|ScrollTrigger"),
+        ("scroll", r"scroll|wheel|IntersectionObserver"),
     ]
     for label, pattern in checks:
         if re.search(pattern, html or "", re.IGNORECASE):
@@ -126,7 +131,7 @@ def _dominant_terms(html: str, limit: int = 8) -> List[str]:
     stop = {"with", "from", "this", "that", "into", "your", "html", "body", "main", "section"}
     counts: Dict[str, int] = {}
     for word in _WORD_RE.findall(text):
-        if word in stop or word.isdigit():
+        if word in stop:
             continue
         counts[word] = counts.get(word, 0) + 1
     return [word for word, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
@@ -144,6 +149,9 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
     experience_quality = score_experience(doc, plan)
     loop = plan.get("primary_loop") if isinstance(plan.get("primary_loop"), dict) else {}
     anchors = plan.get("semantic_anchors") or plan.get("anchors") or {}
+    activity_contract = plan.get("activity_contract") if isinstance(plan.get("activity_contract"), dict) else {}
+    task_contract = plan.get("task_contract") if isinstance(plan.get("task_contract"), dict) else {}
+    activity_variant = activity_contract.get("activity_variant") or task_contract.get("format") or ""
     cell = {
         "experience_archetype": plan.get("experience_archetype") or "unknown",
         "primary_loop_type": plan.get("primary_loop_type") or "unknown",
@@ -154,6 +162,15 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "experience_archetype": cell["experience_archetype"],
         "visitor_role": plan.get("visitor_role") or "",
         "visitor_goal": plan.get("visitor_goal") or "",
+        "activity_type": plan.get("activity_type") or activity_contract.get("activity_type") or "",
+        "activity_variant": activity_variant,
+        "activity_family": activity_family_for_variant(str(activity_variant)),
+        "task_format": task_contract.get("format") or "",
+        "task_goal": task_contract.get("user_goal") or "",
+        "task_domain_objects": task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else [],
+        "task_state_variables": task_contract.get("state_variables") if isinstance(task_contract.get("state_variables"), list) else [],
+        "task_completion_condition": task_contract.get("completion_condition") or "",
+        "task_allowed_patterns": task_contract.get("allowed_patterns") if isinstance(task_contract.get("allowed_patterns"), list) else [],
         "primary_loop_type": cell["primary_loop_type"],
         "state_change_type": _slug(loop.get("state_change") if isinstance(loop, dict) else ""),
         "input_modality": _input_modalities(html),
@@ -228,7 +245,11 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:experience_cell", 1, cell_key)
         pipe.zincrby("qd:count:experience_archetype", 1, str(descriptor["experience_archetype"]))
         pipe.zincrby("qd:count:primary_loop_type", 1, str(descriptor["primary_loop_type"]))
+        pipe.zincrby("qd:count:activity_variant", 1, str(descriptor["activity_variant"]))
+        pipe.zincrby("qd:count:activity_family", 1, str(descriptor["activity_family"]))
         pipe.zadd("qd:last_used:experience_cell", {cell_key: int(time.time())})
+        pipe.zadd("qd:last_used:activity_variant", {str(descriptor["activity_variant"]): int(time.time())})
+        pipe.zadd("qd:last_used:activity_family", {str(descriptor["activity_family"]): int(time.time())})
         pipe.zadd("qd:avg_quality:experience_cell", {cell_key: quality_norm})
         pipe.hincrby(f"qd:cell:{cell_key}", "count", 1)
         pipe.hset(
@@ -252,3 +273,18 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
     except Exception:
         return descriptor
     return descriptor
+
+
+def recent_activity_memory(limit: int = 20, client: Any = None) -> Dict[str, List[str]]:
+    redis_client = _client(client)
+    if redis_client is None:
+        return {"variants": [], "families": []}
+    try:
+        variants = redis_client.zrevrange("qd:last_used:activity_variant", 0, max(0, limit - 1)) or []
+        families = redis_client.zrevrange("qd:last_used:activity_family", 0, max(0, limit - 1)) or []
+        return {
+            "variants": [str(item) for item in variants if item],
+            "families": [str(item) for item in families if item],
+        }
+    except Exception:
+        return {"variants": [], "families": []}
