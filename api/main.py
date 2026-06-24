@@ -28,6 +28,7 @@ from api.validators import validate_page_doc as _validate_with_jsonschema
 PrefetchHandle = str
 _PREMIUM_TOPUP_LOCK = threading.Lock()
 TAILWIND_CSS_PATH = Path("static/tailwind.css")
+NO_STORE_HEADERS = {"Cache-Control": "no-store, max-age=0"}
 
 
 def _record_user_visible_serve(doc: Dict[str, Any]) -> None:
@@ -649,19 +650,22 @@ def llm_probe_endpoint() -> Dict[str, Any]:
 
 
 @app.get("/metrics/total")
-def metrics_total() -> Dict[str, int]:
+def metrics_total() -> JSONResponse:
     """Return the total number of websites generated across all users."""
-    return {"total": counter.get_total()}
+    return JSONResponse({"total": counter.get_total()}, headers=NO_STORE_HEADERS)
 
 
 @app.get("/metrics/badge")
-def metrics_badge() -> Dict[str, Any]:
-    return {
-        "schemaVersion": 1,
-        "label": "websites generated",
-        "message": str(counter.get_total()),
-        "color": "111827",
-    }
+def metrics_badge() -> JSONResponse:
+    return JSONResponse(
+        {
+            "schemaVersion": 1,
+            "label": "websites generated",
+            "message": str(counter.get_total()),
+            "color": "111827",
+        },
+        headers=NO_STORE_HEADERS,
+    )
 
 
 @app.get("/metrics/status")

@@ -826,6 +826,7 @@ async function generateNew(e?: Event) {
       await openShutter();
       shutterOpened = true;
     }
+    await refreshSitesCounter();
   };
 
   const renderFollowupPage = async (page: any) => {
@@ -836,6 +837,7 @@ async function generateNew(e?: Event) {
       await enterSite(page);
     }
     updateJsonOut(page);
+    await refreshSitesCounter();
   };
 
   const handleEvent = async (event: string, data: any) => {

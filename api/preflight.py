@@ -30,10 +30,25 @@ _VISIBLE_PLANNING_TERMS_RE = re.compile(
     r"\b(onboarding instructions?|visitor role|visitor goal|primary loop|feedback contract)\b",
     re.IGNORECASE,
 )
+_VISIBLE_EMPTY_CONTENT_RE = re.compile(
+    r"\b(empty slot|placeholder only|coming soon|image missing|content missing|insert (?:image|content)|lorem ipsum)\b",
+    re.IGNORECASE,
+)
 _INLINE_EVENT_ATTR_RE = re.compile(
     r"\son(?:click|input|change|submit|keydown|keyup|pointerdown|mousedown|touchstart|mousemove)\s*=",
     re.IGNORECASE,
 )
+_INTERACTIVE_CONTROL_RE = re.compile(
+    r"<(?:button|input|select|textarea)\b|role\s*=\s*['\"](?:button|slider|tab|checkbox|radio|switch)['\"]",
+    re.IGNORECASE,
+)
+_CONTROL_BINDING_RE = re.compile(
+    r"(addEventListener\(\s*['\"](?:click|input|change|submit|keydown|keyup|pointerdown|mousedown|touchstart)"
+    r"|\.on(?:click|input|change|submit|keydown|keyup)\s*="
+    r"|\s(?:x-on:|@)(?:click|input|change|submit|keydown|keyup|pointerdown|mousedown|touchstart)\s*=)",
+    re.IGNORECASE,
+)
+_EMPTY_MEDIA_RE = re.compile(r"<(?:img|video|audio|source)\b[^>]*\bsrc\s*=\s*['\"]\s*['\"]", re.IGNORECASE)
 
 _GET_BY_ID_RE = re.compile(r"(?:document\.)?getElementById\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _QUERY_SELECTOR_RE = re.compile(r"querySelector(?:All)?\(\s*['\"]([#.][^'\"]+)['\"]\s*\)")
@@ -503,6 +518,10 @@ def _inspect_html(
         issues.append(_issue("warn", field, "Visible code/debug artifact text such as //, TODO, undefined, null, or raw JSON leaked into the page."))
     if _VISIBLE_PLANNING_TERMS_RE.search(visible_text):
         issues.append(_issue("warn", field, "Planner/internal labels leaked into visible page copy."))
+    if _VISIBLE_EMPTY_CONTENT_RE.search(visible_text) or _EMPTY_MEDIA_RE.search(html or ""):
+        issues.append(_issue("warn", field, "Visible placeholder or missing-content copy/assets leaked into the page."))
+    if _INTERACTIVE_CONTROL_RE.search(html or "") and not _CONTROL_BINDING_RE.search(html or ""):
+        issues.append(_issue("warn", field, "Interactive controls are present but no obvious event or Alpine binding was found."))
 
     ids = _extract_ids(html)
     classes = _extract_classes(html)
