@@ -78,8 +78,8 @@ services:
         value: '180000'
       - key: PREFLIGHT_HTML_BLOCK_BYTES
         value: '280000'
-      - key: PREMIUM_REFILL_MISSING_ENABLED
-        value: '1'
+      - key: STREAM_KEEPALIVE_SECONDS
+        value: '8'
       - key: PREMIUM_TOKEN_TTL_SECONDS
         value: '900'
       - key: REDIS_DIVERSITY_ENABLED

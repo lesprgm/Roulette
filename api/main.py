@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import queue
 import time
 import uuid
 import threading
@@ -26,6 +27,7 @@ from api.validators import validate_page_doc as _validate_with_jsonschema
 
 PrefetchHandle = str
 _PREMIUM_TOPUP_LOCK = threading.Lock()
+TAILWIND_CSS_PATH = Path("static/tailwind.css")
 
 
 def _record_user_visible_serve(doc: Dict[str, Any]) -> None:
@@ -101,7 +103,7 @@ def _log_startup_checks() -> None:
         log.warning("startup.check: PREFETCH_TOKEN_SECRET not set; preview tokens reset on restart")
 
     required_assets = [
-        Path("static/tailwind.css"),
+        TAILWIND_CSS_PATH,
         Path("static/vendor/tailwind-play.js"),
         Path("static/vendor/gsap.min.js"),
         Path("static/vendor/lucide.min.js"),
@@ -244,6 +246,23 @@ def _safe_rate_check(bucket: str, key: str) -> Tuple[bool, int, int]:
     return True, 9999, int(time.time()) + 60
 
 
+def _safe_rate_inspect(bucket: str, key: str) -> Tuple[bool, int, int]:
+    if is_admin_key(key):
+        return True, 9999, int(time.time()) + 60
+    use_redis = _rl_instance and not os.getenv("PYTEST_CURRENT_TEST")
+    if use_redis:
+        try:
+            return _rl_instance.inspect(bucket, key)
+        except Exception:
+            pass
+    if _rl_mod and hasattr(_rl_mod, "inspect"):
+        try:
+            return _rl_mod.inspect(bucket, key)
+        except Exception:
+            pass
+    return True, 9999, int(time.time()) + 60
+
+
 def _rate_limit_headers(remaining: int, reset_ts: int, *, limited: bool = False) -> Dict[str, str]:
     headers = {
         "X-RateLimit-Remaining": str(remaining),
@@ -297,12 +316,10 @@ if PREMIUM_LOW_WATER > PREMIUM_FILL_TO:
     PREMIUM_LOW_WATER = PREMIUM_FILL_TO
 PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "12") or 12)
 PREMIUM_TOPUP_ENABLED = os.getenv("PREMIUM_TOPUP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
-PREMIUM_REFILL_MISSING_ENABLED = os.getenv("PREMIUM_REFILL_MISSING_ENABLED", "1").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+try:
+    STREAM_KEEPALIVE_SECONDS = float(os.getenv("STREAM_KEEPALIVE_SECONDS", "8") or 8)
+except Exception:
+    STREAM_KEEPALIVE_SECONDS = 8.0
 
 def _premium_queue_enabled() -> bool:
     return PREMIUM_QUEUE_ENABLED
@@ -418,10 +435,9 @@ def _drain_premium_burst_to_queue(
     *,
     context: str,
     max_queue: int = PREMIUM_FILL_TO,
-    requested_count: Optional[int] = None,
     brief: str = "",
 ) -> None:
-    accepted_count = 0
+    del brief
     try:
         for doc in iterator:
             if not isinstance(doc, dict) or doc.get("error"):
@@ -430,55 +446,10 @@ def _drain_premium_burst_to_queue(
             if not approved:
                 continue
             stored = _enqueue_premium_docs(approved, context=context, max_queue=max_queue)
-            accepted_count += len(stored)
             if _premium_queue_enabled() and prefetch.size("premium") >= max_queue:
                 break
     except Exception:
         log.exception("%s: failed draining premium burst leftovers", context)
-    finally:
-        if requested_count is not None:
-            missing_slots = max(0, int(requested_count) - accepted_count)
-            if missing_slots > 0:
-                _refill_missing_premium_slots(
-                    brief,
-                    missing_slots=missing_slots,
-                    max_queue=max_queue,
-                    context=f"{context}.missing_refill",
-                )
-
-
-def _refill_missing_premium_slots(
-    brief: str,
-    *,
-    missing_slots: int,
-    max_queue: int,
-    context: str,
-) -> None:
-    if missing_slots <= 0 or not PREMIUM_REFILL_MISSING_ENABLED:
-        return
-    if not _premium_queue_enabled() or not llm_premium_available():
-        return
-    if not _PREMIUM_TOPUP_LOCK.acquire(blocking=False):
-        log.info("%s: skipped missing-slot refill because another premium refill is running", context)
-        return
-    try:
-        target = int(max_queue or PREMIUM_FILL_TO)
-        if prefetch.size("premium") >= target:
-            return
-        seed = int(time.time() * 1000) % 1_000_000_007
-        approved = _generate_premium_batch_candidates(
-            brief or "",
-            batch_size=PREMIUM_BATCH_SIZE,
-            seed=seed,
-            user_key="premium-missing-refill",
-            context=context,
-        )
-        if approved:
-            _enqueue_premium_docs(approved, context=context, max_queue=target)
-    except Exception:
-        log.exception("%s: failed missing-slot refill", context)
-    finally:
-        _PREMIUM_TOPUP_LOCK.release()
 
 
 def _start_premium_burst(
@@ -621,7 +592,6 @@ def _stream_premium_first_page(
             leftovers,
             context="premium.stream.leftovers",
             max_queue=PREMIUM_FILL_TO,
-            requested_count=max(0, PREMIUM_BATCH_SIZE - 1),
             brief=brief or "",
         )
     if background_tasks and _premium_queue_enabled():
@@ -657,7 +627,7 @@ def root() -> str:
 @app.get("/tailwind.css", response_class=PlainTextResponse)
 def serve_tailwind():
     """Serve the built Tailwind CSS at root level (for frontend compatibility)."""
-    path = Path("static/tailwind.css")
+    path = TAILWIND_CSS_PATH
     if path.exists():
         return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/css")
     return PlainTextResponse("", status_code=404)
@@ -819,8 +789,8 @@ def generate_endpoint(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
-    log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
+    allowed, remaining, reset_ts = _safe_rate_inspect("gen", client_key)
+    log.info("rate_limit inspect allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
             status_code=429,
@@ -840,6 +810,13 @@ def generate_endpoint(
             background_tasks=background_tasks,
         )
     if isinstance(page, dict) and not page.get("error"):
+        allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content=_rate_limit_payload(reset_ts),
+                headers=_rate_limit_headers(remaining, reset_ts, limited=True),
+            )
         try:
             counter.increment(1)
         except Exception:
@@ -874,8 +851,8 @@ def generate_stream(
             headers=_rate_limit_headers(9999, int(time.time())),
         )
 
-    allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
-    log.info("rate_limit check allowed=%s remaining=%s", allowed, remaining)
+    allowed, remaining, reset_ts = _safe_rate_inspect("gen", client_key)
+    log.info("rate_limit inspect allowed=%s remaining=%s", allowed, remaining)
     if not allowed:
         return JSONResponse(
             status_code=429,
@@ -887,22 +864,43 @@ def generate_stream(
         meta = {"event": "meta", "request_id": getattr(request.state, "request_id", None)}
         yield json.dumps(meta) + "\n"
 
-        try:
-            page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
-            if page:
-                if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
-                    _schedule_premium_topup(background_tasks, req.brief or "", PREMIUM_FILL_TO, context="site.stream")
-            else:
-                page = _stream_premium_first_page(
-                    req.brief or "",
-                    seed=req.seed or 0,
-                    user_key=client_key,
-                    background_tasks=background_tasks,
-                )
-        except Exception:
-            yield json.dumps({"event": "error", "data": {"error": "Generation failed"}}) + "\n"
+        result_queue: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=1)
+
+        def _work() -> None:
+            try:
+                page = prefetch.dequeue("premium") if _premium_queue_enabled() else None
+                if page:
+                    if _premium_queue_enabled() and PREMIUM_TOPUP_ENABLED and prefetch.size("premium") <= PREMIUM_LOW_WATER:
+                        _schedule_premium_topup(background_tasks, req.brief or "", PREMIUM_FILL_TO, context="site.stream")
+                else:
+                    page = _stream_premium_first_page(
+                        req.brief or "",
+                        seed=req.seed or 0,
+                        user_key=client_key,
+                        background_tasks=background_tasks,
+                    )
+                result_queue.put({"page": page})
+            except Exception:
+                log.exception("site.stream: generation failed")
+                result_queue.put({"error": {"error": "Generation failed"}})
+
+        worker = threading.Thread(target=_work, daemon=True)
+        worker.start()
+        while True:
+            try:
+                result = result_queue.get(timeout=max(1.0, STREAM_KEEPALIVE_SECONDS))
+                break
+            except queue.Empty:
+                yield json.dumps({"event": "ping", "data": {"ts": int(time.time())}}) + "\n"
+        if isinstance(result, dict) and result.get("error"):
+            yield json.dumps({"event": "error", "data": result["error"]}) + "\n"
             return
+        page = result.get("page") if isinstance(result, dict) else None
         if isinstance(page, dict) and not page.get("error"):
+            allowed, remaining, reset_ts = _safe_rate_check("gen", client_key)
+            if not allowed:
+                yield json.dumps({"event": "error", "data": _rate_limit_payload(reset_ts)}) + "\n"
+                return
             try:
                 counter.increment(1)
             except Exception:
@@ -936,7 +934,7 @@ def prefetch_status() -> Dict[str, Any]:
         "premium_fill_to": PREMIUM_FILL_TO,
         "premium_batch_size": PREMIUM_BATCH_SIZE,
         "premium_topup_enabled": PREMIUM_TOPUP_ENABLED,
-        "premium_refill_missing_enabled": PREMIUM_REFILL_MISSING_ENABLED,
+        "stream_keepalive_seconds": STREAM_KEEPALIVE_SECONDS,
         "dir": str(prefetch.PREFETCH_DIR),
         "premium_dir": str(getattr(prefetch, "PREMIUM_PREFETCH_DIR", prefetch.PREFETCH_DIR)),
         "backend": prefetch.backend(),

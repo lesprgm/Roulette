@@ -8,7 +8,7 @@ const path = require("path");
 function copyIfExists(src, dest, options = {}) {
   if (!fs.existsSync(src)) {
     if (!options.optional) {
-      console.warn(`[build_vendor] missing: ${src}`);
+      throw new Error(`[build_vendor] missing required source: ${src}`);
     }
     return false;
   }
@@ -16,6 +16,12 @@ function copyIfExists(src, dest, options = {}) {
   fs.copyFileSync(src, dest);
   console.log(`[build_vendor] copied: ${src} -> ${dest}`);
   return true;
+}
+
+function requireAsset(file) {
+  if (!fs.existsSync(file)) {
+    throw new Error(`[build_vendor] missing required runtime asset after build: ${file}`);
+  }
 }
 
 function main() {
@@ -70,6 +76,19 @@ function main() {
     path.join(vendorDir, "ScrollTrigger.min.js"),
     { optional: true }
   );
+
+  [
+    path.join(vendorDir, "three.module.js"),
+    path.join(vendorDir, "three-addons", "controls", "OrbitControls.js"),
+    path.join(vendorDir, "three-addons", "postprocessing", "EffectComposer.js"),
+    path.join(vendorDir, "three-addons", "postprocessing", "RenderPass.js"),
+    path.join(vendorDir, "three-addons", "postprocessing", "UnrealBloomPass.js"),
+    path.join(vendorDir, "alpine.min.js"),
+    path.join(vendorDir, "matter.min.js"),
+    path.join(vendorDir, "gsap.min.js"),
+    path.join(vendorDir, "lucide.min.js"),
+    path.join(vendorDir, "tailwind-play.js"),
+  ].forEach(requireAsset);
 }
 
 main();
