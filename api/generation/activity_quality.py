@@ -21,7 +21,7 @@ _STATE_RE = re.compile(
     re.IGNORECASE,
 )
 _PAYOFF_RE = re.compile(
-    r"\b(score|points?|correct|incorrect|complete|completed|clear|cleared|lost|game over|unlock|unlocked|saved|result|output|created|cart|booking|checkout|report|rank|level|win|winner|finish|mission|collection|selected|configured|filtered|matched|streak|lives|timer)\b",
+    r"\b(score|points?|correct|incorrect|complete|completed|clear|cleared|lost|game over|unlock|unlocked|saved|result|output|created|cart|booking|checkout|receipt|delivery|courier|eta|route|ticket|itinerary|report|rank|level|win|winner|finish|mission|collection|selected|configured|filtered|matched|streak|lives|timer|preview|export)\b",
     re.IGNORECASE,
 )
 _TASK_RE = re.compile(
@@ -68,6 +68,12 @@ def _has_any_term(text: str, values: List[Any]) -> bool:
     return any(str(value or "").strip().lower() in text for value in values if str(value or "").strip())
 
 
+def _payoff_keywords(value: str) -> List[str]:
+    words = re.findall(r"\b[a-z][a-z0-9-]{3,}\b", value.lower())
+    stop = {"after", "user", "show", "with", "toward", "state", "action", "change", "primary", "another"}
+    return [word for word in words if word not in stop][:10]
+
+
 def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
     html = _extract_html(doc)
     text = _visible_text(html)
@@ -89,6 +95,8 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
     task_state_variables = task_contract.get("state_variables") if isinstance(task_contract.get("state_variables"), list) else []
     task_domain_objects = task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else []
     task_completion = str(task_contract.get("completion_condition") or "").strip()
+    payoff_scene = task_contract.get("payoff_scene") if isinstance(task_contract.get("payoff_scene"), dict) else {}
+    payoff_scene_text = " ".join(str(payoff_scene.get(key) or "") for key in ("trigger", "scene", "continue_action")).strip()
 
     if controls and ranges == controls and activity_type not in {"interactive_instrument", "simulation"}:
         tags.append("slider_only_activity")
@@ -148,6 +156,19 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             tags.append("completion_condition_not_visible")
             notes.append("completion condition is not visible as result/status/score/preview")
             score -= 10
+
+        if not payoff_scene:
+            tags.append("payoff_scene_missing")
+            notes.append("task_contract does not define a specific payoff_scene")
+            score -= 10
+        elif not _PAYOFF_RE.search(text):
+            tags.append("payoff_scene_not_visible")
+            notes.append("payoff_scene exists but no visible receipt/result/score/route/ticket/preview payoff appears")
+            score -= 10
+        elif payoff_scene_text and not any(term in text for term in _payoff_keywords(payoff_scene_text)):
+            tags.append("payoff_scene_weakly_integrated")
+            notes.append("visible payoff language does not clearly match the planned payoff scene")
+            score -= 6
 
         controls_with_state = 0
         for item in task_controls:
@@ -357,6 +378,7 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             "has_state": has_state,
             "has_task_language": has_task_language,
             "has_payoff": has_payoff,
+            "has_payoff_scene": bool(payoff_scene),
             "task_contract_present": bool(task_contract),
             "task_control_count": len(task_controls),
             "task_state_variable_count": len(task_state_variables),

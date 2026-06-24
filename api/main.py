@@ -315,7 +315,7 @@ PREMIUM_LOW_WATER = int(os.getenv("PREMIUM_LOW_WATER", "3") or 3)
 PREMIUM_FILL_TO = int(os.getenv("PREMIUM_FILL_TO", "10") or 10)
 if PREMIUM_LOW_WATER > PREMIUM_FILL_TO:
     PREMIUM_LOW_WATER = PREMIUM_FILL_TO
-PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "12") or 12)
+PREMIUM_BATCH_SIZE = int(os.getenv("PREMIUM_BATCH_SIZE", "10") or 10)
 PREMIUM_TOPUP_ENABLED = os.getenv("PREMIUM_TOPUP_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 try:
     STREAM_KEEPALIVE_SECONDS = float(os.getenv("STREAM_KEEPALIVE_SECONDS", "8") or 8)

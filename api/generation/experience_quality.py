@@ -36,6 +36,10 @@ _FEEDBACK_RE = re.compile(
     r"(textContent|innerText|classList\.|style\.|dataset\.|setAttribute|appendChild|animate\(|gsap\.|requestAnimationFrame|progress|meter|unlock|reveal)",
     re.IGNORECASE,
 )
+_PAYOFF_RE = re.compile(
+    r"\b(score|result|receipt|cart|checkout|delivery|courier|eta|route|ticket|itinerary|saved|preview|export|report|win|loss|level|streak|complete|completed|configured|selected)\b",
+    re.IGNORECASE,
+)
 _RESET_RE = re.compile(r"\b(reset|replay|restart|again|clear|new variant|shuffle)\b", re.IGNORECASE)
 _MOBILE_RE = re.compile(r"(@media|touchstart|touchmove|pointerdown|pointermove|viewport|max-width|clamp\()", re.IGNORECASE)
 _CUE_RE = re.compile(
@@ -154,7 +158,7 @@ def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) ->
         reasons.append("visible feedback contract")
 
     continue_reason_present = bool(loop.get("continue_reason") or plan.get("progression_model")) and (
-        "progress" in text or "unlock" in text or "complete" in text or bool(plan.get("progression_model"))
+        "progress" in text or "unlock" in text or "complete" in text or bool(_PAYOFF_RE.search(text)) or bool(plan.get("progression_model"))
     )
     flags["continue_reason_present"] = continue_reason_present
     if continue_reason_present:
@@ -197,6 +201,13 @@ def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) ->
     if not semantic_integration and plan.get("semantic_translation"):
         reasons.append("semantic anchors weakly integrated")
 
+    task_contract = plan.get("task_contract") if isinstance(plan.get("task_contract"), dict) else {}
+    payoff_scene = task_contract.get("payoff_scene") if isinstance(task_contract.get("payoff_scene"), dict) else {}
+    payoff_scene_visible = bool(payoff_scene) and bool(_PAYOFF_RE.search(text))
+    flags["payoff_scene_visible"] = payoff_scene_visible
+    if payoff_scene and payoff_scene_visible:
+        reasons.append("visible payoff scene")
+
     hard_failures: List[str] = []
     if not primary_interaction_defined:
         hard_failures.append("No primary interaction.")
@@ -222,5 +233,6 @@ def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) ->
             "has_event_handlers": bool(_EVENT_RE.search(html)),
             "has_state_updates": bool(_STATE_RE.search(html)),
             "semantic_integration": semantic_integration,
+            "payoff_scene_visible": payoff_scene_visible,
         },
     }

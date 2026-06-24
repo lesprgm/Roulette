@@ -374,7 +374,7 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
         "activity_goal": "Implement the selected recognizable format as the product, with semantic anchors used only as flavor.",
         "required_actions": _required_actions_for_mechanic(mechanic),
         "required_state": "Track score, progress, selections, records, cart, created output, unlocked stages, or configured choices in visible state.",
-        "payoff": "Show a recognizable result for the selected format: score, win/loss, saved workflow state, checkout/booking result, preview, or created artifact.",
+        "payoff": "Show a recognizable result for the selected format: score, win/loss, saved workflow state, checkout/booking result, preview, delivery/route tracker, or created artifact.",
         "boredom_risks": disallowed,
         "success_signal": "The visitor can identify the format, use its core mechanic, and see a concrete result.",
         "retention_contract": _retention_contract_for_activity(activity_type, activity_variant),

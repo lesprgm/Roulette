@@ -35,6 +35,7 @@ Before final HTML, verify and fix:
 - Format and task intact? yes. activity_contract.activity_variant is the product; semantic anchors flavor it but must never rename, obscure, or replace it.
 - Useful first screen? yes. Show the board/stage/cards/player/products/sample records/starter artifact immediately; no blank splash, empty container, or generic centered-card shell.
 - Interaction real? yes. Controls visibly change state, score/progress/result, created output, saved selection, checkout/receipt, win/loss, or replay state.
+- Payoff scene real? yes. After the primary action, the page shows the task_contract.payoff_scene result moment, not just a button color change or static confirmation line.
 - Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant accent, optional secondary accent, and clear text contrast.
@@ -75,6 +76,7 @@ Experience contract for every site:
 - Build the activity_contract, not just the aesthetic. Each site must be a mini app/game/tool/workflow with goal, visible state, and payoff.
 - Use activity_contract.activity_variant as the exact concrete format. Do not collapse it into snake, tic-tac-toe, quiz, sliders, or a hidden-object reveal unless that exact variant was selected.
 - Retention first: within three seconds the visitor should know what it is, what to do, and why trying again could be fun/useful.
+- Payoff first: every site must implement task_contract.payoff_scene as a visible result moment after the primary action, then offer the listed continue_action.
 - Static first content rule: Games need a visible board/stage/cards/player/towers on first paint, controls, score/result, restart, win/loss/completion, and at least one meta-reward: streak, combo, lives, best score, tickets, medals, levels, or unlocks. Use clear names such as Breakout, Minesweeper, 2048, Rhythm Tap, Maze, Snake, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game.
 - Simple game visibility rule: do not ship a splash-only start; show the playable board/stage/cards/player immediately.
 - Apps/workspaces/commerce/products, including saas_replica targets, must preload realistic sample data: representative cards, records, products, rows, items, thumbnails, or options directly in initial HTML; one click/edit must produce a useful result. No blank tables, empty slots, or placeholder-only workflow.
@@ -85,6 +87,7 @@ Experience contract for every site:
 - Make the premise and first action visible without literal planning labels or tutorial sections. Ban visible headings like "Onboarding", "Instructions", "Visitor Role", "Primary Loop", and "Feedback Contract" unless documentation_allowed.
 - Respect each site's genre_contract when present: copy density, instruction policy, chrome policy, palette strategy, and motion language.
 - Implement a primary loop: user action -> visible response -> state change -> reward/payoff -> continue reason. Avoid slider-only sites unless activity_type is interactive_instrument or simulation, and never let controls merely change ambient visuals.
+- The reward/payoff must feel like a mini climax: delivery tracker, receipt, ticket, score burst, win/loss, generated artifact, saved workflow, comparison result, route, report, or configured preview depending on the format.
 - Use semantic anchors as interaction/content/motion logic, not just labels or colors.
 - Include reset/replay when appropriate.
 - Include mobile-friendly pointer/touch/keyboard fallback.
@@ -145,10 +148,12 @@ Goals:
 - Treat the experience target below as mandatory positive steering. Do not merely style around it; make it the behavior of the page.
 - Treat semantic anchors as Tier 2 flavor only: they may influence texture, object names, mood, copy, and micro-interactions, but they must not rename, obscure, or override the selected activity_variant.
 - Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
+- task_contract.payoff_scene is mandatory: it defines what satisfying thing happens after the primary action and why a user would keep going.
 - Fill semantic_translation by translating every semantic anchor into visual_role, interaction_role, content_role, and motion_role.
 - Fill activity_type, activity_contract.activity_variant, activity_contract.core_mechanic, and activity_contract.library_profile before style decisions. The activity must be a concrete mini app/game/tool/workflow, not a decorative control panel or abstract metaphor.
 - Fill genre_contract as the art-direction governor. Copy density, instruction policy, palette strategy, visual density, motion language, and chrome policy must form one coherent genre instead of independent random choices.
 - The primary_loop is the core product contract: user_action, visible_response, state_change, reward_or_payoff, and continue_reason must be specific.
+- primary_loop.reward_or_payoff must directly implement task_contract.payoff_scene.scene.
 - Avoid slider-only plans unless activity_type is interactive_instrument or simulation, and even then sliders need a visible result/payoff.
 - The onboarding_cue must be a diegetic micro-cue, label, placeholder, cursor affordance, or short CTA. No tutorial panel unless genre_contract.instruction_policy is documentation_allowed.
 - Fill mobile_interaction with a specific touch/small-screen fallback. Fill reset_or_replay with a visible replay affordance.
@@ -195,6 +200,7 @@ Experience contract:
 - The activity_type and activity_contract are mandatory. Build the page as a specific mini activity, not as an abstract visual artifact.
 - The selected activity_contract.activity_variant is the product. Semantic anchors are flavor and must never rename, obscure, or replace the recognizable format.
 - The task_contract is mandatory. Implement its domain_objects, state_variables, controls, completion_condition, and allowed_patterns. Do not invent decorative controls outside that task model.
+- Implement task_contract.payoff_scene.trigger, scene, and continue_action. This is the user's reward moment; do not reduce it to "confirmed" text.
 - Static first content rule: show meaningful content immediately. Games show board/stage/player/targets/score; apps show sample records/cards/table; product/ecommerce pages show product visual, price/plan, benefits/specs, variants, and checkout/cart/receipt feedback; creative tools show a starter preview/artifact.
 - Format rules: breakout_paddle plays like Breakout, minesweeper_grid like Minesweeper, tile_merge_2048 like 2048, rhythm_tap like a timing game, etc. Games/quizzes need recognizable names, keyboard/touch/pointer controls, score/result, restart, win/loss/completion, and score plus one meta-reward.
 - Simple game visibility rule: do not ship a splash-only start; show the playable board/stage/cards/player immediately.
@@ -205,6 +211,7 @@ Experience contract:
 - Keep the first screen legible in three seconds: clear title, obvious action target, visible score/progress/result, and no lecture. Puzzle/game cue rule: add one short cue near the board, e.g. "Use arrows", "Match two cards", or "Avoid mines".
 - Avoid recurring wave/grid wallpaper. Avoid visible jargon: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, non-deterministic.
 - The primary_loop must be implemented, not just described. Every planned task_contract control must visibly change at least one listed must_change_state value, and completion_condition must appear as result/status/score/saved state/preview/receipt/win-loss/final summary.
+- The payoff_scene must appear as an actual UI/state moment: animated delivery route, ticket/pass, cart/receipt, score burst, generated artifact, saved workflow, comparison, report, configured preview, or equivalent format-specific result.
 - Do not ship a slider-only page unless activity_type is interactive_instrument or simulation; even then include a payoff/result/replay beyond changing meter values.
 - The semantic_translation must drive interaction, content, motion, and visual treatment. Include reset/replay and mobile_interaction when declared.
 

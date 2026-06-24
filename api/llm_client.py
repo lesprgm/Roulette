@@ -74,9 +74,9 @@ except Exception:
 
 # Premium burst generation: number of sites requested from Gemini in one streaming call.
 try:
-    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "12"))
+    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "10"))
 except Exception:
-    BURST_SITE_COUNT = 12
+    BURST_SITE_COUNT = 10
 BURST_SITE_COUNT = max(1, min(BURST_SITE_COUNT, 50))
 
 # Token and timeout configuration
@@ -210,6 +210,9 @@ def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -
     first_label = str(first_control.get("label") or "Try the main action").strip()
     user_goal = str(task.get("user_goal") or target.get("activity_contract", {}).get("activity_goal") or "Try the activity.").strip()
     completion = str(task.get("completion_condition") or target.get("activity_contract", {}).get("payoff") or "a visible result updates").strip()
+    payoff_scene = task.get("payoff_scene") if isinstance(task.get("payoff_scene"), dict) else {}
+    payoff_scene_text = str(payoff_scene.get("scene") or completion).strip()
+    payoff_continue = str(payoff_scene.get("continue_action") or f"Improve, complete, compare, or replay the {str(task.get('format') or 'activity').replace('_', ' ')}.").strip()
     state_vars = task.get("state_variables") if isinstance(task.get("state_variables"), list) else []
     state_change = ", ".join(str(item) for item in state_vars[:3]) or "the visible state"
     activity_type = str(target.get("activity_type") or "")
@@ -229,14 +232,14 @@ def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -
         "first_interaction": first_label,
         "primary_loop": {
             "user_action": first_label,
-            "visible_response": f"The page updates the {completion}.",
+            "visible_response": f"The page updates visible state and then shows: {payoff_scene_text}.",
             "state_change": f"Updates {state_change}.",
-            "reward_or_payoff": completion,
-            "continue_reason": f"Improve, complete, compare, or replay the {str(task.get('format') or 'activity').replace('_', ' ')}.",
+            "reward_or_payoff": payoff_scene_text,
+            "continue_reason": payoff_continue,
         },
         "secondary_interactions": [str(control.get("label")) for control in controls[1:3] if isinstance(control, dict) and control.get("label")],
-        "feedback_contract": f"Every control must visibly change {state_change} or show {completion}.",
-        "progression_model": completion,
+        "feedback_contract": f"Every control must visibly change {state_change} or advance the payoff scene: {payoff_scene_text}.",
+        "progression_model": payoff_scene_text,
         "reset_or_replay": "Provide a Reset, Restart, Edit, or Try again affordance when the format needs replay.",
         "onboarding_cue": first_label,
         "mobile_interaction": "Support touch/click controls on mobile; keep keyboard controls as an enhancement for games.",

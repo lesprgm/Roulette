@@ -79,6 +79,7 @@ def _fallback_task(activity_variant: str, activity_type: str) -> Dict[str, Any]:
 
 def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict[str, Any]:
     base = dict(VARIANT_TASK_OVERRIDES.get(activity_variant) or _fallback_task(activity_variant, activity_type))
+    payoff_scene = _payoff_scene_for(base["format"], activity_type)
     controls = [
         {
             "label": _primary_action_label(base["format"]),
@@ -98,6 +99,7 @@ def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict
         )
     return {
         **base,
+        "payoff_scene": payoff_scene,
         "controls": controls,
         "retention_contract": _retention_contract_for_category(_category_for_variant(activity_variant, activity_type)),
         "error_states": _error_states_for(base["format"]),
@@ -105,6 +107,51 @@ def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict
             "ambient_background": "optional_subtle",
             "motion_only_for": ["state feedback", "progress", "success", "failure", "focus"],
         },
+    }
+
+
+def _payoff_scene_for(format_name: str, activity_type: str) -> Dict[str, str]:
+    lowered = format_name.lower()
+    if any(term in lowered for term in ["ordering", "restaurant", "delivery"]):
+        return {
+            "trigger": "after the user adds or places an order",
+            "scene": "show a receipt plus an animated courier bike/car route moving toward a destination with ETA/status updates",
+            "continue_action": "edit cart, track progress, or reorder",
+        }
+    if any(term in lowered for term in ["booking", "ticket", "travel", "event"]):
+        return {
+            "trigger": "after the user selects/reserves an option",
+            "scene": "show a ticket/pass, itinerary or route timeline, confirmation code, and next-step status",
+            "continue_action": "change option, compare another route, or reserve again",
+        }
+    if activity_type == "product_or_storefront" or any(term in lowered for term in ["product", "sneaker", "skincare", "coffee", "furniture", "pricing", "template", "drop"]):
+        return {
+            "trigger": "after variant selection or add-to-cart",
+            "scene": "show selected configuration, cart drawer or checkout/receipt summary, total, and availability/state feedback",
+            "continue_action": "adjust variant, compare, checkout, or reset selection",
+        }
+    if activity_type in {"platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game", "microgame"}:
+        return {
+            "trigger": "after a scored move, round, win, loss, or completion",
+            "scene": "show score burst, result state, best score/progress, and restart/next-round affordance",
+            "continue_action": "restart, beat score, next level, or replay",
+        }
+    if activity_type in {"saas_replica", "fake_os_app", "data_investigation"}:
+        return {
+            "trigger": "after select/filter/save/create action",
+            "scene": "show changed record status, saved summary, generated report, or completed workflow result",
+            "continue_action": "open another record, refine filter, or save another result",
+        }
+    if activity_type in {"creative_tool", "interactive_instrument", "simulation"}:
+        return {
+            "trigger": "after direct manipulation or parameter change",
+            "scene": "show a finished preview/artifact, before-after comparison, capture/export state, or simulation result",
+            "continue_action": "remix, export, randomize, reset, or tune again",
+        }
+    return {
+        "trigger": "after the primary action",
+        "scene": "show a concrete result, progress state, saved state, created output, or completion moment",
+        "continue_action": "try again, refine, compare, or reset",
     }
 
 

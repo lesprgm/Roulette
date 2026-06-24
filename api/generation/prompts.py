@@ -238,6 +238,15 @@ PREMIUM_PLAN_SCHEMA = {
                     },
                 },
                 "completion_condition": {"type": "string", "minLength": 8},
+                "payoff_scene": {
+                    "type": "object",
+                    "properties": {
+                        "trigger": {"type": "string", "minLength": 4},
+                        "scene": {"type": "string", "minLength": 8},
+                        "continue_action": {"type": "string", "minLength": 4},
+                    },
+                    "required": ["trigger", "scene", "continue_action"],
+                },
                 "error_states": {"type": "array", "items": {"type": "string"}},
                 "allowed_patterns": {"type": "array", "items": {"type": "string"}},
                 "visual_budget": {
@@ -256,6 +265,7 @@ PREMIUM_PLAN_SCHEMA = {
                 "state_variables",
                 "controls",
                 "completion_condition",
+                "payoff_scene",
                 "error_states",
                 "allowed_patterns",
                 "visual_budget",
