@@ -25,7 +25,7 @@ services:
       - key: GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS
         value: '64000'
       - key: GEMINI_THINKING_LEVEL
-        value: high
+        value: medium
       - key: BURST_SITE_COUNT
         value: '12'
       - key: TEMPERATURE
@@ -42,6 +42,12 @@ services:
         value: '0'
       - key: REDIS_URL
         sync: false
+      - key: REDIS_COUNTER_KEY
+        value: ndw:metrics:total
+      - key: REDIS_COUNTER_TIMEOUT
+        value: '2.0'
+      - key: VARIANT_CATALOG_PATH
+        value: /etc/secrets/variant_catalog.yaml
       - key: PREFETCH_PREWARM_COUNT
         value: 0
       - key: PREFETCH_TOPUP_ENABLED

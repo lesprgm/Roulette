@@ -1,20 +1,22 @@
 # Roulette (Non-Deterministic Website)
 
-**Live Website:** [Roulette](https://non-deterministic-website.onrender.com)
+**Live Website:** [Roulette](https://non-deterministic-website-cor0.onrender.com)
 
-![Websites Generated](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fnon-deterministic-website.onrender.com%2Fmetrics%2Ftotal&query=%24.total&label=websites%20generated&color=111827)
+![Websites Generated](https://img.shields.io/endpoint?url=https%3A%2F%2Fnon-deterministic-website-cor0.onrender.com%2Fmetrics%2Fbadge&cacheSeconds=300)
 
 ## What Is This?
 
 I was wondering if a website could change every time you visited it (I need new wonders). What if every person sees an entirely different website during each visit. Imagine interdimensional cable from Rick and Morty, but for websites.
 
-Roulette is an experimental website that leverages large language models (LLMs) to generate interactive web experiences in real-time. Each generation produces something weird, differnet or unique(I dont know what you'll see so I hope it's not too weird).
+Roulette is a generative UI system that uses large language models (LLMs) to create complete interactive web experiences at runtime. It is not an AI website builder: users do not prompt it into existence. The fun is that each click opens a random one-off interface, game, tool, storefront, simulator, dashboard, or tiny internet object that probably should not exist but somehow does.
+
+Each generation produces something weird, different, or unique (I don't know what you'll see, so I hope it's not too weird).
 
 The system combines:
 
 - **Combinatorial creative entropy** to keep generations from feeling like the same template each time
 - **Experience grammar** so each site has a role, first action, feedback loop, and reason to keep interacting. No boring generic websites
-- **burst queueing** so one LLM request can produce multiple usable websites(I needed to get around Gemini's free tier somehow)
+- **Burst queueing** so one LLM request can produce multiple usable websites (I needed to get around rate limits somehow)
 - **Iframe sandboxing** so every generated world can run safely and reset cleanly
 
 ## Screenshots
@@ -289,6 +291,10 @@ provider routing has been removed from the active architecture.
 | `PREMIUM_REFILL_MISSING_ENABLED` | Run one replacement burst after an interrupted or partially rejected live burst | `true` |
 | `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup  | `0`           |
 | `REDIS_DIVERSITY_ENABLED` | Store served-site descriptors and QD counters in Redis when `REDIS_URL` exists | `true` |
+| `REDIS_COUNTER_KEY` | Durable Redis key used by the public served-site counter | `ndw:metrics:total` |
+| `REDIS_COUNTER_TIMEOUT` | Redis counter connection/read timeout in seconds | `2.0` |
+| `COUNTER_BASELINE` | Optional one-time migration floor for an empty replacement database | `0` |
+| `VARIANT_CATALOG_PATH` | Combined private YAML generation catalog supplied as a Render Secret File | `/etc/secrets/variant_catalog.yaml` |
 | `DIVERSITY_HTML_CACHE_TTL_SECONDS` | Optional TTL for cached generated HTML descriptors | `604800` |
 | `DIVERSITY_FINGERPRINT_TTL_SECONDS` | Short-term descriptor/structure fingerprint TTL | `604800` |
 
@@ -303,6 +309,10 @@ avoid burning Gemini free-tier request quota in the background.
 
 Legacy/admin prefill tooling still has `PREFETCH_*` knobs in code because the route names and
 storage module predate the only product path. Those knobs are not a separate public mode.
+
+The catalog loader and schema stay versioned in Python. The proprietary YAML weights and
+variants are intentionally gitignored; production reads the combined catalog from the Render
+Secret File `variant_catalog.yaml`, while local development can use split files under `data/`.
 
 ### Other Settings
 

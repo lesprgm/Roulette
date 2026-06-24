@@ -23,6 +23,11 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Proprietary generation catalog (provided as a Render Secret File)
+data/variant_weights.yaml
+data/variant_catalog.yaml
+data/variants/*.yaml
+
 # Build artifacts
 dist/
 build/
