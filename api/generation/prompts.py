@@ -4,13 +4,12 @@ from api.design_kit import DESIGN_KIT_MANIFEST
 from api.generation.experience_grammar import (
     AFFORDANCE_PATTERNS,
     ACTIVITY_TYPES,
-    APP_FORMATS,
+    ALL_FORMATS,
     BORING_INTERACTION_PATTERNS,
     CHROME_POLICIES,
     COPY_DENSITIES,
     EXPERIENCE_ARCHETYPES,
     FEEDBACK_PATTERNS,
-    GAME_FORMATS,
     GENRE_VISUAL_DENSITIES,
     INSTRUCTION_POLICIES,
     LIBRARY_PROFILES,
@@ -19,10 +18,8 @@ from api.generation.experience_grammar import (
     PAGE_GENRES,
     PALETTE_STRATEGIES,
     PRIMARY_LOOP_TYPES,
-    PRODUCT_FORMATS,
     PROGRESSION_PATTERNS,
     REPLAYABILITY_PATTERNS,
-    TOOL_FORMATS,
 )
 
 FINAL_HTML_OUTPUT_FORMAT = """
@@ -38,7 +35,8 @@ PREMIUM BUILD GUIDANCE:
 - Treat the approved plan as a creative director's brief.
 - Obey the activity_contract before visual decoration: the page must have a concrete task, a real mechanic, visible state, and a payoff.
 - Obey the genre_contract above all style impulses: copy density, palette strategy, instruction policy, chrome policy, and motion language must match the page genre.
-- Use the selected layout, palette, motion preset, and overlay intentionally.
+- Use the selected layout, palette, and motion preset intentionally. A local overlay is optional.
+- Prefer original inline SVG, CSS-generated artwork, Canvas, or Three.js when it better serves the format. Do not force a stock texture onto every page.
 - Favor cinematic depth, layered parallax, responsive canvases, or restrained Three.js over flat static UI.
 - Preserve clarity through hierarchy and affordances, not tutorial panels.
 - Aim for genre-appropriate polish: weird is fine, tacky clutter is not.
@@ -51,6 +49,7 @@ PREMIUM BUILD GUIDANCE:
 HARD_RUNTIME_RULES = """
 GENERAL RULES:
 - STRICT: No external scripts or styles via CDN. No external fonts/images/fetch. No iframes or document.write.
+  Inline SVG, data:image/svg+xml, Lucide icons, and CSS-generated visuals are allowed and preferred.
 - Tailwind runtime is local; do not include CDN imports. GSAP core and Lucide are available through local scripts; include the matching local script before using those globals inside the iframe.
 - Alpine.js and Matter.js are local-only optional primitives. Include `/static/vendor/alpine.min.js` only for app/tool/commerce UI state. Include `/static/vendor/matter.min.js` only for physics-first games/toys.
 - Three.js is available locally in module scripts via `import * as THREE from '/static/vendor/three.module.js'`.
@@ -80,6 +79,11 @@ SELF QA:
 PREMIUM_RUNTIME_GUIDANCE = """
 PREMIUM ICONOGRAPHY:
 - Use Lucide icons through local runtime only: `<i data-lucide="icon-name"></i>` and call `lucide.createIcons()` after render.
+
+PRODUCT VISUALS:
+- For product/storefront pages: generate SVG product illustrations inline using `<svg>` elements with gradients, paths, and shapes. Draw the product hero — book cover, candle, sneaker, jewelry, skincare bottle, electronics device — as a styled SVG illustration in the product hero area.
+- For app pages: Lucide icons cover UI chrome. Use CSS-styled cards, badges, colored sections, and gradients for visual richness.
+- Never use `<img>` tags pointing to remote URLs. All visuals must be inline SVG, data:image/svg+xml, Lucide icons, CSS gradients/shapes, or Canvas/Three.js.
 
 PREMIUM UI STATE:
 - Alpine.js is available locally through `<script defer src="/static/vendor/alpine.min.js"></script>`. Use it for app/tool/commerce state such as filters, carts, drawers, tabs, selected records, and multi-step forms. Do not use Alpine for canvas/game loops.
@@ -184,13 +188,7 @@ PREMIUM_PLAN_SCHEMA = {
                 "activity_type": {"type": "string", "enum": ACTIVITY_TYPES},
                 "activity_variant": {
                     "type": "string",
-                    "enum": GAME_FORMATS + APP_FORMATS + PRODUCT_FORMATS + TOOL_FORMATS + [
-                        "record_investigation",
-                        "map_explorer",
-                        "timeline_compare",
-                        "case_file_sorter",
-                        "operating_panel",
-                    ],
+                    "enum": ALL_FORMATS,
                 },
                 "core_mechanic": {"type": "string", "enum": MECHANIC_PATTERNS},
                 "library_profile": {"type": "string", "enum": LIBRARY_PROFILES},
@@ -337,7 +335,7 @@ PREMIUM_PLAN_SCHEMA = {
         },
         "layout_archetype": {
             "type": "string",
-            "enum": ["split_lens", "stage_focus", "bento_magazine", "immersive_poster"],
+            "enum": list(DESIGN_KIT_MANIFEST["layouts"].keys()),
         },
         "motion_archetype": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["motion_presets"].keys())},
         "visual_density": {"type": "string", "enum": ["airy", "layered", "dense"]},
@@ -355,7 +353,6 @@ PREMIUM_PLAN_SCHEMA = {
         "palette_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["palettes"].keys())},
         "layout_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["layouts"].keys())},
         "motion_preset": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["motion_presets"].keys())},
-        "overlay_key": {"type": "string", "enum": list(DESIGN_KIT_MANIFEST["overlays"].keys())},
         "display_font_key": {
             "type": "string",
             "enum": ["display_orbit", "display_editorial", "display_grotesk"],
@@ -434,7 +431,6 @@ PREMIUM_PLAN_SCHEMA = {
         "palette_key",
         "layout_key",
         "motion_preset",
-        "overlay_key",
         "display_font_key",
         "body_font_key",
         "three_scene_key",

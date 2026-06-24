@@ -56,3 +56,16 @@ refpics/
 artifacts/
 artifacts/evals/
 artifacts/playwright/
+
+# Local evaluation/review harness files
+benchmarks/
+api/review_pack.py
+scripts/run_constraint_ablation.py
+scripts/run_generation_review_pack.py
+scripts/run_premium_ablation_pack.py
+scripts/run_premium_burst_probe.py
+scripts/test_image_urls.py
+tests/generation/test_constraint_ablation.py
+tests/generation/test_premium_ablation_pack.py
+tests/generation/test_review_pack.py
+tests/generation/test_variant_catalog.py

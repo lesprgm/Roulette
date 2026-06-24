@@ -2,80 +2,111 @@
 
 This doc is intentionally a hybrid:
 - **High-level:** to help a new reader understand what Roulette *is* and how data flows.
-- **Deep dive:** to highlight why the system is more complex than a “simple LLM demo” (guardrails, persistence, quotas, UX transitions, and operational knobs).
+- **Deep dive:** to highlight why the system is more complex than a “simple LLM demo” (guardrails, persistence, generation routing, UX transitions, and operational knobs).
 
-Roulette has two user-facing modes:
+Roulette has two user-facing states:
 
-1. **Landing (Roulette tunnel):** a 3D tunnel of preview tiles representing prefetched sites.
+1. **Landing (Roulette tunnel):** a 3D tunnel of preview tiles representing queued sites.
 2. **Runtime (entered site):** renders a generated website/app inside a sandboxed container and manages lifecycle/cleanup between “worlds.”
 
 ## Main Components
 
 - **Frontend**
-  - `templates/index.html`: initial HTML shell (landing + runtime container).
-  - `static/js/app.js`: main frontend controller (landing, enter, transitions/shutter, JSON overlay).
-  - `static/js/ndw.js`: the NDW runtime API used by many generated pages.
-  - `static/js/tunnel.js`: 3D tunnel visual.
+ - `templates/index.html`: initial HTML shell (landing + runtime container).
+ - `static/ts-src/app.ts`: main frontend controller (landing, enter, transitions/shutter, JSON overlay).
+ - `static/ts-src/frame_renderer.ts`: generated-site iframe creation, title extraction, and `postMessage` bridge injection.
+ - `static/ts-src/ndw.ts`: the NDW runtime API used by many generated pages.
+ - `static/ts-src/tunnel.ts`: 3D tunnel visual.
+ - `static/js/*.js`: generated build output, not source.
 
 - **API**
-  - `api/main.py`: FastAPI routes (`/generate`, `/generate/stream`, `/api/prefetch/*`, `/prefetch/fill`, `/metrics/*`).
-  - `api/llm_client.py`: Gemini-first generation orchestration, premium planner/builder, parsing, and compliance calls.
-  - `api/prefetch.py`: queue implementation (Redis-first, file fallback) + preview tokening.
-  - `api/dedupe.py`: “seen” signatures to reduce near-duplicate outputs.
-  - `api/auth.py`: API key parsing / admin bypass.
-  - `api/redis_ratelimit.py`: optional Redis-backed rate limiting.
-  - `api/counter.py`: usage counter (Redis-first, file fallback).
-  - `api/premium_credits.py`: compensation ledger for failed premium quota refunds.
+ - `api/main.py`: FastAPI routes (`/generate`, `/generate/stream`, `/api/prefetch/*`, `/api/premium/previews`, `/prefetch/fill`, `/metrics/*`).
+ - `api/llm_client.py`: Gemini planner/builder orchestration, raw-HTML extraction, and fallback routing.
+ - `api/generation/experience_grammar.py`: concrete activity formats, interaction archetypes, primary loop types, feedback patterns, and failure modes.
+ - `api/generation/task_grammar.py`: task-model contracts for each concrete format: user goal, objects, state, controls, completion, and allowed UI patterns.
+ - `api/generation/experience_quality.py`: deterministic checks for visible first action, state change, feedback, replay, and mobile fallback.
+ - `api/generation/activity_quality.py`: deterministic activity-depth and task-contract checks for games, apps, tools, quizzes, and simulations.
+ - `api/generation/prompts.py`: shared prompt contracts and planner response schema.
+ - `api/generation/redis_diversity.py`: Redis descriptor archive, quality-diversity counters, fingerprints, and event logging.
+ - `api/prefetch.py`: shared queue implementation (Redis-first, file fallback) + preview tokening.
+ - `api/dedupe.py`: “seen” signatures to reduce near-duplicate outputs.
+ - `api/auth.py`: API key parsing / admin bypass.
+ - `api/redis_ratelimit.py`: optional Redis-backed rate limiting.
+ - `api/counter.py`: usage counter (Redis-first, file fallback).
 
 ## System Layers (Why This Is More Than a Demo)
 
 Think of Roulette as multiple planes stacked together:
 
 1. **UX plane (what users see)**
-   - Tunnel previews, click-to-enter, transitions/shutter, and consistent “generate” controls.
-2. **Orchestration plane (LLM + batching)**
-   - Provider ordering, burst generation, streaming parsing, salvage of partial outputs.
+  - Tunnel previews, click-to-enter, transitions/shutter, and consistent “generate” controls.
+2. **Orchestration plane (LLM + queue refill)**
+  - Gemini planning/building, queue-first serving, and optional queue refill.
 3. **Guardrails plane (quality/safety + runtime compatibility)**
-   - Normalization, asset rewriting (avoid external CDNs), JS syntax checks, “review” step(s).
+  - Normalization, asset rewriting (avoid external CDNs), JS syntax checks, preflight, visual scoring, and experience scoring.
 4. **Persistence plane (queues + state)**
-   - Redis-first queue and “seen” memory; file fallback for local/dev.
+ - Redis-first queue, compact descriptors, quality-diversity counters, event logs, fingerprints, and file fallback for local/dev.
 5. **Ops plane (rate limits + knobs)**
-   - App-level rate limiting, admin keys, feature flags, deploy constraints (free-tier restarts).
+  - App-level rate limiting, admin keys, feature flags, deploy constraints (free-tier restarts).
 
 ## System Map (Mermaid)
 
 ```mermaid
 flowchart LR
-  subgraph Frontend["Frontend (Browser)"]
-    L["Landing (Tunnel UI)"]
-    R["Runtime (NDW host)"]
-    T["Transitions (Shutter + Cleanup)"]
-  end
+ subgraph Frontend["Frontend (Browser)"]
+  L["Landing (Tunnel UI)"]
+  R["Runtime (NDW host)"]
+  T["Transitions (Shutter + Cleanup)"]
+ end
 
-  subgraph API["API (FastAPI)"]
-    P["Prefetch API\\n/previews + /prefetch/{token}"]
-    G["Generate API\\n/generate + /generate/stream"]
-    F["Prefetch Fill\\n/prefetch/fill (admin)"]
-  end
+ subgraph API["API (FastAPI)"]
+  P["Preview API\\n/previews + /prefetch/{token}"]
+  G["Generate API\\n/generate + /generate/stream"]
+  F["Queue Fill\\n/prefetch/fill (admin)"]
+ end
 
-  subgraph Core["Core Services"]
-    Q["Queue\\nRedis-first, file fallback"]
-    D["Dedupe\\nseen signatures"]
-    N["Normalize/Sanitize\\nasset rewrite + JS checks"]
-    C["Compliance Review\\nsingle + batch (fail-open optional)"]
-    O["LLM Orchestrator\\nGemini burst + fallbacks"]
-  end
+ subgraph Core["Core Services"]
+  Q["Queue\\nRedis-first, file fallback"]
+  D["Dedupe\\nseen signatures"]
+  N["Normalize/Sanitize\\nasset rewrite + JS checks"]
+  C["Local Acceptance\\npreflight + visual + experience flags"]
+  X["Format + Task Grammar\\nformat + goal + state + controls"]
+  E["Experience Grammar\\nrole + first action + primary loop"]
+  A["Redis Diversity\\ndescriptors + QD counters"]
+  O["LLM Orchestrator\\nGemini planner/build + fallbacks"]
+ end
 
-  L --> P
-  P --> Q
-  L -->|click tile| P
-  P -->|doc| T --> R
+ L --> P
+ P --> Q
+ L -->|click tile| P
+ P -->|doc| T --> R
 
-  R -->|user requests new| G
-  F --> Q
-  G -->|queue hit| Q --> P
-  G -->|queue miss| O --> N --> D --> C --> Q
+ R -->|user requests new| G
+ F --> Q
+ G -->|queue hit| Q --> P
+ G -->|queue miss| X --> E --> O --> N --> D --> C --> Q
+ C --> A
 ```
+
+## Generation Order
+
+The generator is intentionally format-first. Randomness is still present, but it is not allowed to overpower the core product shape.
+
+```mermaid
+flowchart TD
+ A["Choose concrete format\\nSnake, invoice builder, booking flow, quiz, sequencer"]
+ B["Instantiate task contract\\nGoal, objects, state variables, controls, completion"]
+ C["Derive experience contract\\nVisitor role, first action, primary loop, feedback"]
+ D["Apply semantic and visual flavor\\nMaterial, palette, motion, texture, rendering mode"]
+ E["Plan with the LLM\\nStructured JSON contract"]
+ F["Build with the LLM\\nRaw HTML + self-review"]
+ G["Local gates\\npreflight + activity/experience repair signals"]
+ H["Serve or queue\\niframe sandbox + Redis descriptor archive"]
+
+ A --> B --> C --> D --> E --> F --> G --> H
+```
+
+This order matters. A Snake game can be styled like a lunar warehouse or a clay arcade, but it should still visibly play like Snake. A booking flow can have strange art direction, but it still needs destinations, dates, selections, price/result state, and a completion action. Semantic anchors are flavor, not the product.
 
 ## Data Flow
 
@@ -91,48 +122,55 @@ flowchart LR
 1. User clicks a tile.
 2. Frontend fetches `GET /api/prefetch/{token}`.
 3. API validates token, retrieves the doc (Redis or file), increments the user-facing served-sites counter, and returns it.
-4. Frontend renders the doc into the runtime container and removes landing-only styling.
+4. Frontend renders the doc into an iframe sandbox and removes landing-only styling.
 
 ### Generating when queue is empty
 
 1. Frontend calls `/generate` or `/generate/stream`.
-2. API attempts to serve from queue first; if empty, it calls the LLM path.
-3. First doc is returned to the user; burst followups are optionally queued (and reviewed in batches).
+2. API attempts to serve from the shared queue first.
+3. If the queue is empty, the API starts one Gemini streaming burst.
+4. The first locally valid doc from that stream is returned to the user.
+5. Later valid docs from the same stream are drained into the queue.
+6. Optional background top-up can refill the queue later.
 
-### Premium generation
+### generation
 
-1. Frontend selects `quality: premium` from the generated-site controls.
-2. API checks premium quota for the user.
-3. API tries the shared premium queue first.
-4. If empty, API runs a small premium Gemini batch, serves the first acceptable page, and stores approved leftovers in the premium lane.
-5. If a premium refund cannot be written back to the limiter backend, a one-time premium credit is stored and automatically applied on the next premium request.
+1. Frontend has no quality switch; All user-facing generations use this path.
+2. API tries the shared queue first.
+3. If empty, API runs one live Gemini streaming burst.
+4. Live serving returns the first doc that passes local preflight plus the fail-open gate.
+5. Remaining valid docs from the same stream are queued for later requests.
+6. Queue/top-up candidates use the same local acceptance gate before storage.
 
-### What “Burst + Review + Queue” Really Means
+### What “Generate + Self-Correct + Queue” Really Means
 
 Behind the simple “generate” action, the backend can do a multi-stage pipeline:
 
-1. **Generate burst** (multiple pages per call) for quota efficiency.
-2. **Extract usable docs** from streaming output (including salvage if truncated).
-3. **Normalize/sanitize** docs so they render in the host runtime (and don’t rely on external CDNs).
-4. **Dedupe** to avoid near-identical pages.
-5. **Review** followups in batches (fail-open configurable) so the first page isn’t blocked by reviewer flakiness.
-6. **Enqueue** remaining docs for future instant delivery.
+1. **Select** a recognizable activity format first.
+2. **Instantiate** the task contract: goal, domain objects, state variables, controls, completion condition, and allowed UI patterns.
+3. **Plan** semantic translation, visitor role, first interaction, primary loop, and art direction with the LLM.
+4. **Build** a complete renderable page with one-shot self-review and a final fenced HTML block.
+5. **Normalize/sanitize** docs so they render in the host runtime and don’t rely on external CDNs.
+6. **Dedupe and annotate** visual/render quality, task coherence, and experience behavior as repair signals.
+7. **Record descriptors** after user-visible serving so Redis can steer future formats and experience cells without prompt bloat.
 
-Premium follows the same broad idea, but with a planner/builder path and a smaller queue.
+Generation has one active product path: raw-HTML sites produced by Gemini, accepted by local gates, then served immediately or cached in the queue.
 
 ## Why These Design Choices
 
 - **Shared queues:** make the UX “instant” most of the time and amortize LLM cost across users.
-- **Burst generation:** maximizes throughput for the fast lane by generating multiple pages per call.
-- **Separate premium lane:** keeps premium random, but scarcer and more heavily filtered than fast.
+- **only generation:** keeps quality consistent instead of exposing users to mixed output tiers.
+- **Format-first task grammar:** prevents abstract anchor soup by making every page start from a recognizable game, app, tool, quiz, simulator, or workflow.
+- **Experience grammar:** forces pages to define what the visitor does, what changes, and why to continue.
+- **Redis descriptor tracking:** reduces repeated behavioral cells without injecting prior full websites into prompts.
 - **Redis-first storage:** enables persistence across restarts and avoids “free-tier wipes” (file-only queues reset).
-- **Fail-open compliance (configurable):** avoids blocking user-visible generation when the reviewer is overloaded.
+- **Iframe sandbox rendering:** destroys the previous site iframe on each generation, isolating WebGL, timers, styles, and event listeners from the host app.
 - **Local vendor scripts (tailwind-play, gsap, lucide):** reduces external dependency breakage and makes generated pages more consistent.
 
 ## Operational Reality (Render Free Tier)
 
 On free-tier hosts, restarts can happen and file storage can be wiped. Without Redis:
-- the prefetch queue drains to zero after a restart,
+- the queue drains to zero after a restart,
 - “seen” memory resets (more repeats),
 - counters reset.
 

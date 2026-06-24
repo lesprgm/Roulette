@@ -684,6 +684,22 @@ def metrics_total() -> Dict[str, int]:
     return {"total": counter.get_total()}
 
 
+@app.get("/metrics/badge")
+def metrics_badge() -> Dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "label": "websites generated",
+        "message": str(counter.get_total()),
+        "color": "111827",
+    }
+
+
+@app.get("/metrics/status")
+def metrics_status(api_key: str = Depends(optional_api_key)) -> Dict[str, object]:
+    _require_admin_or_dev(api_key)
+    return counter.status()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Prefetch Preview API (for 3D Tunnel Hero)
 # ─────────────────────────────────────────────────────────────────────────────

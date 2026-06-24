@@ -89,7 +89,6 @@ def fingerprint_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
         "motion": plan.get("motion_preset") or plan.get("motion_archetype") or _motion_bucket(flags),
         "interaction": plan.get("interaction_model") or ("interactive" if flags.get("interaction") else "ambient"),
         "rendering": plan.get("rendering_mode") or ("three" if layout.get("canvas_or_three") else "dom"),
-        "overlay": plan.get("overlay_key") or "",
         "terms": _dominant_terms(html),
         "title_terms": _title_terms(html),
     }

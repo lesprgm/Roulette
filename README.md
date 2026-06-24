@@ -270,8 +270,7 @@ Configure behavior via environment variables:
 | `GEMINI_API_KEY`       | Google AI Studio API key       | required for live generation        |
 | `LLM_TIMEOUT_SECS`      | Request timeout in seconds      | `105`                    |
 
-The product path is Gemini-only. Queueing and local gates are the reliability layer; secondary
-provider routing has been removed from the active architecture.
+The live provider is configured through these env vars. Queueing and local gates are the reliability layer; legacy secondary provider routing has been removed from the active architecture.
 
 ### Queue & Caching
 
@@ -288,7 +287,7 @@ provider routing has been removed from the active architecture.
 | `PREFLIGHT_HTML_BLOCK_BYTES` | Block extreme generated pages before serving or queueing | `280000` |
 | `PREMIUM_TOKEN_TTL_SECONDS` | Preview token lifetime | `900` |
 | `PREMIUM_TOPUP_ENABLED` | Allow background queue refill | `false` |
-| `PREMIUM_REFILL_MISSING_ENABLED` | Run one replacement burst after an interrupted or partially rejected live burst | `true` |
+| `STREAM_KEEPALIVE_SECONDS` | Keepalive ping interval while stream generation waits for the first page | `8` |
 | `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup  | `0`           |
 | `REDIS_DIVERSITY_ENABLED` | Store served-site descriptors and QD counters in Redis when `REDIS_URL` exists | `true` |
 | `REDIS_COUNTER_KEY` | Durable Redis key used by the public served-site counter | `ndw:metrics:total` |
@@ -302,10 +301,9 @@ The public product uses the shared queue. Background jobs may enqueue docs, but 
 public `Sites generated` metric only increments when a user is actually served a site.
 When the queue is empty, the backend starts one live streaming burst,
 serves the first locally valid page, and drains later valid pages from that same stream
-into the queue. If that burst leaves missing slots because candidates fail or
-the upstream stream drops, the backend can run one replacement burst and queue accepted
-pages up to the queue target. By default, startup/top-up refill is disabled to
-avoid burning Gemini free-tier request quota in the background.
+into the queue. Failed candidates and unattempted burst slots are discarded; the next
+queue miss naturally starts a new burst. By default, startup/top-up refill is disabled to
+avoid burning provider request quota in the background.
 
 Legacy/admin prefill tooling still has `PREFETCH_*` knobs in code because the route names and
 storage module predate the only product path. Those knobs are not a separate public mode.
@@ -419,7 +417,7 @@ Traditional websites show the same content every time. This project explores the
 
 - **Infinite variety** - No two generations are identical
 - **Shared randomness** - The app is roulette-first; it does not ask users to prompt a site into existence
-- **Gemini-first queue** - planner/builder generation is the default user-facing path
+- **Primary LLM queue** - planner/builder generation is the default user-facing path
 - **Interactive-first** - generated worlds are coherent mini-experiences, not static landing pages
 - **Creative surprise** - Unexpected combinations and themes
 - **Instant gratification** - Prefetching makes it feel instantaneous
@@ -432,8 +430,8 @@ Traditional websites show the same content every time. This project explores the
 
 2. **queue**
   - The app serves from a shared queue first
-  - If the queue is empty, one Gemini streaming burst serves the first valid page and queues later valid pages
-  - Background refill is disabled by default to avoid burning free-tier Gemini quota
+  - If the queue is empty, one LLM streaming burst serves the first valid page and queues later valid pages
+  - Background refill is disabled by default to avoid silently burning provider quota
 
 3. **Deduplication System**
   - Content fingerprinting prevents boring repetition
@@ -445,7 +443,7 @@ Traditional websites show the same content every time. This project explores the
   - Semantic anchors are translated into visual, interaction, content, and motion roles
   - Builder prompts receive stable runtime rules, local design-kit keys, and novelty guidance
   - Runtime constraints keep outputs renderable inside the NDW host
-  - Emergency fallback providers stay available only when Gemini generation fails
+  - Emergency fallback providers stay available only when primary generation fails
 
 5. **Quality Guardrails**
   - Raw HTML extraction avoids JSON escaping failures
@@ -462,7 +460,7 @@ Traditional websites show the same content every time. This project explores the
 non-deterministic-website/
 ├── api/          # FastAPI backend
 │  ├── main.py      # API routes and server
-│  ├── llm_client.py   # Gemini planner/builder + burst parser
+│  ├── llm_client.py   # LLM planner/builder + burst parser
 │  ├── prefetch.py    # Shared queue storage lanes
 │  ├── novelty.py     # Served-site novelty ledger
 │  ├── dedupe.py     # Duplicate detection
@@ -513,7 +511,7 @@ serves them directly—no Node.js runtime is required in production.
 ## Additional Resources
 
 - [docs/PREMIUM_QUEUE.md](docs/PREMIUM_QUEUE.md) - Queue architecture, queue storage, serving policy, refill behavior, and counter semantics
-- [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) - Gemini-first generation routing and planner/builder flow
+- [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) - Primary LLM generation routing and planner/builder flow
 - [docs/EXPERIENCE_GRAMMAR.md](docs/EXPERIENCE_GRAMMAR.md) - Visitor roles, primary loops, semantic translation, and experience-quality scoring
 - [docs/REDIS_DIVERSITY_TRACKING.md](docs/REDIS_DIVERSITY_TRACKING.md) - Redis descriptor archive, QD counters, fingerprints, and event stream
 

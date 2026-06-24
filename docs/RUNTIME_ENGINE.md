@@ -24,24 +24,24 @@ This is what turns “random HTML” into a platform.
 The engine works best when generated pages treat NDW as their runtime:
 
 - **`NDW.loop(fn)`**
-  - Your world’s update loop. The host can stop it during teardown to prevent background CPU usage.
+ - Your world’s update loop. The host can stop it during teardown to prevent background CPU usage.
 - **`NDW.onPointer(fn)` + `NDW.pointer`**
-  - Consistent pointer state across devices; enables “read pointer inside loop” patterns without wiring events per page.
+ - Consistent pointer state across devices; enables “read pointer inside loop” patterns without wiring events per page.
 - **`NDW.makeCanvas({ parent, width, height })`**
-  - Standardized canvas creation + scaling. This avoids a common class of blurry/incorrect DPI canvases.
+ - Standardized canvas creation + scaling. This avoids a common class of blurry/incorrect DPI canvases.
 - **`NDW.utils.rng(seed)`**
-  - Reproducibility: two runs with the same seed can behave consistently (useful for debugging and dedupe).
+ - Reproducibility: two runs with the same seed can behave consistently (useful for debugging and dedupe).
 - **`NDW.particles.*` (if present)**
-  - A common “visual feedback” system. It keeps effects consistent and reduces copy-paste JS.
+ - A common “visual feedback” system. It keeps effects consistent and reduces copy-paste JS.
 
 Even when a model emits raw JS, keeping these primitives stable reduces the chance that “one world” breaks the host for all subsequent worlds.
 
-### 2) Sandbox + lifecycle management
+### 2) Iframe sandbox + lifecycle management
 
 Roulette repeatedly mounts and unmounts entire experiences in one session. The engine therefore:
 
-- Renders each doc under a controlled root (e.g. `#ndw-sandbox`) to limit CSS bleed.
-- Runs cleanup between worlds (stop loops, remove listeners, clear timers) so old worlds don’t keep running.
+- Renders each doc inside a sandboxed iframe to stop CSS/JS bleed into the host.
+- Destroys the previous iframe between worlds so old WebGL contexts, timers, listeners, and animation loops are killed.
 - Removes landing-only effects (tunnel, overlays, blobs) so the generated page can own the screen.
 
 #### Lifecycle: mount -> run -> teardown (why it matters)
@@ -57,10 +57,10 @@ Roulette is different: it is a long-lived controller that swaps entire apps repe
 
 So the host treats each generated page as a *world* with a lifecycle:
 
-1. **Prepare:** close shutter, clear runtime root, freeze/cleanup previous world.
-2. **Mount:** inject new DOM, apply minimal host framing.
-3. **Run:** NDW loop + handlers operate normally.
-4. **Teardown:** stop loops, remove listeners, clear timers, wipe root.
+1. **Prepare:** close shutter, hide landing chrome, and remove the previous iframe.
+2. **Mount:** create a new sandboxed iframe with the generated HTML as `srcdoc`.
+3. **Run:** generated scripts, NDW helpers, GSAP, Lucide, or Three operate inside the iframe.
+4. **Teardown:** destroy the iframe on the next generation.
 
 This is the practical difference between “LLM output” and “platform that can run hundreds of outputs.”
 
@@ -88,7 +88,7 @@ To keep outputs renderable and reliable:
 
 - External assets may be rewritten or stripped (no CDNs required for core vendor libs).
 - JS syntax checks and basic heuristics help prevent obviously broken pages from entering the queue.
-- Compliance review (optional/fail-open) can correct common issues at scale.
+- Model self-review plus local preflight and deterministic quality checks keep validation out of the user-visible model hot path.
 
 ## What This Enables (At the Product Level)
 
@@ -107,8 +107,9 @@ Think of Roulette as:
 
 - an app shell (landing + router + transitions)
 - a queue (prefetch)
-- a compiler-ish layer (normalize/sanitize/review)
-- a game-engine-ish runtime (NDW)
+- a compiler-ish layer (normalize/sanitize/preflight/score)
+- a sandboxed generated-site iframe
+- a game-engine-ish runtime (NDW) available to iframe pages when included
 
 That is why the project feels like a platform rather than a single demo page.
 
@@ -117,13 +118,13 @@ That is why the project feels like a platform rather than a single demo page.
 If you want to expand what the engine can host, the safest places to invest are:
 
 - **NDW primitives** (add small, well-tested helpers rather than letting models re-invent them)
-  - ex: audio helpers, physics helpers, UI widgets that are safe-by-default
+ - ex: audio helpers, physics helpers, UI widgets that are safe-by-default
 - **Cleanup hooks** (make it easy for worlds to register teardown work)
-  - ex: a standard `NDW.registerCleanup(fn)` so models don’t forget to unsubscribe
+ - ex: a standard `NDW.registerCleanup(fn)` so models don’t forget to unsubscribe
 - **Asset policy** (keep a predictable set of vendor scripts available locally)
-  - tailwind-play / gsap / lucide are examples of “available primitives”
+ - tailwind-play / gsap / lucide are examples of “available primitives”
 - **Validation** (fast checks that catch obvious breakage before users see it)
-  - ex: JS syntax compile check, DOM selector sanity checks, optional review step
+ - ex: JS syntax compile check, DOM selector sanity checks, visual scoring, experience scoring
 
 ## Debugging A World
 

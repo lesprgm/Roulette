@@ -1133,7 +1133,7 @@ function ensureSitesCounterOverlay() {
   wrap.id = 'sitesCounterFloating';
   wrap.className = 'ndw-sites-panel';
   wrap.innerHTML = `
-    <div id="sitesCounterBadge" class="ndw-sites-badge">Sites generated: 0</div>
+    <div id="sitesCounterBadge" class="ndw-sites-badge">Sites generated: —</div>
     <div id="sitesCounterModeMount" class="ndw-sites-mode-mount"></div>
   `;
   document.body.appendChild(wrap);
@@ -1148,9 +1148,11 @@ async function refreshSitesCounter() {
     });
     if (!resp.ok) throw new Error(String(resp.status));
     const data = await resp.json();
-    const n = typeof data?.total === 'number' ? data.total : 0;
-    if (badge) badge.textContent = `Sites generated: ${n}`;
-  } catch { }
+    if (typeof data?.total !== 'number') throw new Error('invalid counter response');
+    if (badge) badge.textContent = `Sites generated: ${data.total}`;
+  } catch (error) {
+    console.warn('[ndw] Sites counter unavailable', error);
+  }
 }
 function autoInitIfEnabled() {
   if ((_w as any).__ndwDisableAutoInit) return;

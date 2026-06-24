@@ -387,6 +387,7 @@ def _call_gemini_structured(
     temperature: Optional[float] = None,
     max_output_tokens: Optional[int] = None,
     endpoint: Optional[str] = None,
+    retry_without_thinking: bool = True,
 ) -> Optional[Any]:
     generation_config = {
         "temperature": TEMPERATURE if temperature is None else temperature,
@@ -416,7 +417,7 @@ def _call_gemini_structured(
             logging.warning("Gemini structured %s request error: %r", label, exc)
             continue
 
-        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+        if retry_without_thinking and resp.status_code == 400 and "thinkingConfig" in generation_config:
             retry_config = dict(generation_config)
             retry_config.pop("thinkingConfig", None)
             retry_body = dict(body)
@@ -463,6 +464,7 @@ def _call_gemini_text(
     temperature: Optional[float] = None,
     max_output_tokens: Optional[int] = None,
     endpoint: Optional[str] = None,
+    retry_without_thinking: bool = True,
 ) -> Optional[str]:
     generation_config: Dict[str, Any] = {
         "temperature": TEMPERATURE if temperature is None else temperature,
@@ -486,7 +488,7 @@ def _call_gemini_text(
         except Exception as exc:
             logging.warning("Gemini text %s request error: %r", label, exc)
             continue
-        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+        if retry_without_thinking and resp.status_code == 400 and "thinkingConfig" in generation_config:
             retry_config = dict(generation_config)
             retry_config.pop("thinkingConfig", None)
             retry_body = dict(body)
@@ -730,7 +732,6 @@ Local design kit manifest:
 - Avoid visible jargon and host-brand leakage: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, non-deterministic. Ban visible artifacts: `//`, TODO, undefined, null, raw JSON, markdown fences, and visible planning terminology.
 - Every control must advance a goal, score/progress, created output, configured result, unlocked reveal, selected record, or saved state.
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
-- If you use overlays, reference `/static/design-kit/overlays/...` paths exactly.
 - Three.js must use: `import * as THREE from '/static/vendor/three.module.js';`.
 	- The app renders this HTML in an iframe, so no host cleanup code is required.
 
@@ -930,7 +931,8 @@ Seed: {seed}
 Goals:
 - Resolve the concrete activity format first. The selected activity_contract.activity_variant is the product, not a vibe.
 - Choose one strong art direction and one signature interaction/motion system. Do not average styles.
-- Use the local design kit manifest below and explicitly choose palette_key, layout_key, motion_preset, overlay_key, display_font_key, and body_font_key.
+- Use the local design kit manifest below and explicitly choose palette_key, layout_key, motion_preset, display_font_key, and body_font_key.
+- Create original inline SVG illustrations, CSS shapes/gradients, canvas artwork, or format-specific UI visuals when the page needs custom graphics.
 - Avoid recent visual trends from the novelty summary.
 - Favor recognizable, useful formats people can immediately try: arcade games, puzzle games, card/word/quiz games, product pages, ecommerce storefronts, pricing pages, booking/catalog flows, workspace apps, map explorers, record investigations, drawing/music tools, simulators, and configurators.
 - Plan first-screen content and one obvious action. Apps/tools/commerce pages need sample records/items/options. Product/storefront pages need a hero product/offer, price/plan, benefits/specs, options, and a buy/reserve/add-to-cart/compare action. Games need score/result/restart plus one meta-reward: streak, combo, best score, lives, tickets, medals, levels, or unlocks.
@@ -1015,7 +1017,7 @@ Premium build requirements:
 - Treat ambient backgrounds as optional. If task_contract.visual_budget says ambient_background is not primary, do not spend the main interaction on waves, ripples, particles, or atmospheric loops.
 - Visible copy must be human-facing, not plan-facing. Ban visible artifacts: `//`, TODO, undefined, null, markdown fences, raw JSON, "onboarding instructions", "visitor role", "primary loop".
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
-- If you use overlays, reference `/static/design-kit/overlays/...` paths exactly.
+- Create original inline SVG/CSS/canvas artwork when needed; do not invent local asset paths.
 	- Three.js must use the local import map style only: `import * as THREE from '/static/vendor/three.module.js';`.
 	- Since the app renders this HTML in an iframe, no host cleanup code is required; still avoid memory leaks inside the page.
 	- The final fenced block must be a complete document with `<html>`, `<head>`, and `<body>`.

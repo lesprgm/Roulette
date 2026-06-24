@@ -3,6 +3,16 @@ from __future__ import annotations
 import random
 from typing import Dict, List, Tuple
 
+from data.load_variants import (
+    ACTIVITY_FAMILY_MAP,
+    ALL_FORMATS,
+    CORE_MECHANICS,
+    FORMAT_VARIANT_SPECS,
+    choose_weighted_variant,
+    validate_catalog_domains,
+)
+
+
 
 EXPERIENCE_ARCHETYPES = [
     "browser_game",
@@ -106,7 +116,6 @@ PALETTE_STRATEGIES = [
     "muted_plus_toxic",
     "arcade_dark_shell",
     "editorial_neutral",
-    "terminal_limited",
     "pastel_toy",
     "high_contrast_game",
     "earth_material_accent",
@@ -133,7 +142,6 @@ MOTION_LANGUAGES = [
     "float_dreamy",
     "morph_shape",
     "grain_texture",
-    "wave_ripple",
     "neon_pulse",
     "minimal_fade",
 ]
@@ -174,85 +182,6 @@ ACTIVITY_TYPES = [
     "narrative_explorer",
     "data_investigation",
     "interactive_instrument",
-]
-
-GAME_FORMATS = [
-    "platformer_collectathon",
-    "snake_grid",
-    "tic_tac_toe",
-    "trivia_quiz",
-    "memory_match",
-    "word_guess",
-    "breakout_paddle",
-    "minesweeper_grid",
-    "tile_merge_2048",
-    "endless_runner",
-    "rhythm_tap",
-    "whack_a_target",
-    "sliding_tile_puzzle",
-    "tower_defense_lite",
-    "pinball_table",
-    "asteroids_shooter",
-    "maze_escape",
-    "reaction_timer",
-    "fishing_timing",
-    "basketball_arcade",
-    "card_sort_strategy",
-    "typing_race",
-    "sudoku_grid",
-    "connect_four",
-    "solitaire_card",
-    "pong_clone",
-    "flappy_bird",
-    "darts_scoring",
-    "bowling_arcade",
-    "air_hockey",
-]
-
-APP_FORMATS = [
-    "task_board",
-    "sales_tracker",
-    "invoice_builder",
-    "dashboard_app",
-    "calendar_scheduler",
-    "inventory_manager",
-    "travel_booking",
-    "restaurant_ordering",
-    "marketplace_comparison",
-    "subscription_configurator",
-    "portfolio_builder",
-    "hiring_tracker",
-    "helpdesk_app",
-    "habit_tracker",
-    "budget_planner",
-    "recipe_planner",
-]
-
-PRODUCT_FORMATS = [
-    "product_detail_page",
-    "sneaker_drop_page",
-    "skincare_product_page",
-    "coffee_subscription_page",
-    "furniture_product_configurator",
-    "course_sales_page",
-    "app_pricing_page",
-    "digital_template_store",
-    "event_ticket_checkout",
-    "marketplace_listing_page",
-    "limited_drop_countdown",
-]
-
-TOOL_FORMATS = [
-    "drawing_studio",
-    "music_step_sequencer",
-    "map_route_planner",
-    "color_palette_mixer",
-    "poster_generator",
-    "room_layout_builder",
-    "avatar_customizer",
-    "plant_growth_simulator",
-    "weather_mixer",
-    "data_story_scrubber",
 ]
 
 LIBRARY_PROFILES = [
@@ -330,6 +259,13 @@ MECHANIC_PATTERNS = [
     "bowling_knock_pins",
     "air_hockey_strike_puck",
 ]
+MECHANIC_PATTERNS = list(dict.fromkeys(MECHANIC_PATTERNS + CORE_MECHANICS))
+
+validate_catalog_domains(
+    activity_types=ACTIVITY_TYPES,
+    experience_archetypes=EXPERIENCE_ARCHETYPES,
+    primary_loop_types=PRIMARY_LOOP_TYPES,
+)
 
 BORING_INTERACTION_PATTERNS = [
     "slider_only_controls",
@@ -381,487 +317,6 @@ DEFAULT_EXPERIENCE_CELLS: List[Tuple[str, str]] = [
     ("creative_tool_interface", "sort_to_understand"),
 ]
 
-LOW_FRICTION_APP_FORMATS = [
-    "travel_booking",
-    "restaurant_ordering",
-    "marketplace_comparison",
-    "subscription_configurator",
-    "habit_tracker",
-    "budget_planner",
-    "recipe_planner",
-    "calendar_scheduler",
-    "portfolio_builder",
-]
-
-HEAVY_WORKFLOW_FORMATS = [
-    "task_board",
-    "sales_tracker",
-    "invoice_builder",
-    "dashboard_app",
-    "inventory_manager",
-    "hiring_tracker",
-    "helpdesk_app",
-]
-
-RETENTION_TOY_FORMATS = [
-    "drawing_studio",
-    "music_step_sequencer",
-    "color_palette_mixer",
-    "poster_generator",
-    "room_layout_builder",
-    "avatar_customizer",
-    "plant_growth_simulator",
-    "weather_mixer",
-]
-
-FORMAT_FIRST_VARIANT_POOL = (
-    GAME_FORMATS
-    + GAME_FORMATS
-    + RETENTION_TOY_FORMATS
-    + RETENTION_TOY_FORMATS
-    + LOW_FRICTION_APP_FORMATS
-    + LOW_FRICTION_APP_FORMATS
-    + PRODUCT_FORMATS
-    + PRODUCT_FORMATS
-    + HEAVY_WORKFLOW_FORMATS
-    + HEAVY_WORKFLOW_FORMATS
-    + ["record_investigation", "map_explorer", "timeline_compare", "case_file_sorter"]
-)
-
-FORMAT_VARIANT_SPECS: Dict[str, Dict[str, str | List[str]]] = {
-    "platformer_collectathon": {
-        "activity_type": "platformer",
-        "core_mechanic": "platform_jump_and_collect",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "collect_to_complete",
-    },
-    "snake_grid": {
-        "activity_type": "snake_game",
-        "core_mechanic": "snake_collect_and_grow",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": ["collect_to_complete", "steer_to_explore"],
-    },
-    "tic_tac_toe": {
-        "activity_type": "tic_tac_toe",
-        "core_mechanic": "tic_tac_toe_turn_strategy",
-        "experience_archetype": "quiz_game",
-        "primary_loop_type": "choose_to_branch",
-    },
-    "trivia_quiz": {
-        "activity_type": "quiz_game",
-        "core_mechanic": "answer_questions_for_score",
-        "experience_archetype": "quiz_game",
-        "primary_loop_type": "answer_to_score",
-    },
-    "memory_match": {
-        "activity_type": "memory_match",
-        "core_mechanic": "flip_cards_to_match_pairs",
-        "experience_archetype": ["quiz_game", "browser_game"],
-        "primary_loop_type": "collect_to_complete",
-    },
-    "word_guess": {
-        "activity_type": "word_game",
-        "core_mechanic": "guess_word_with_limited_attempts",
-        "experience_archetype": "quiz_game",
-        "primary_loop_type": "answer_to_score",
-    },
-    "breakout_paddle": {
-        "activity_type": "microgame",
-        "core_mechanic": "breakout_paddle_bounce",
-        "experience_archetype": ["browser_game", "visual_playground"],
-        "primary_loop_type": ["collect_to_complete", "steer_to_explore"],
-    },
-    "minesweeper_grid": {
-        "activity_type": "microgame",
-        "core_mechanic": "minesweeper_deduction",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "hover_to_inspect",
-    },
-    "tile_merge_2048": {
-        "activity_type": "microgame",
-        "core_mechanic": "tile_merge_2048",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "endless_runner": {
-        "activity_type": "microgame",
-        "core_mechanic": "endless_runner_dodge",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "rhythm_tap": {
-        "activity_type": "microgame",
-        "core_mechanic": "rhythm_tap_timing",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "whack_a_target": {
-        "activity_type": "microgame",
-        "core_mechanic": "whack_targets_for_score",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "collect_to_complete",
-    },
-    "sliding_tile_puzzle": {
-        "activity_type": "microgame",
-        "core_mechanic": "sliding_tile_reorder",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "tower_defense_lite": {
-        "activity_type": "microgame",
-        "core_mechanic": "tower_defense_place_units",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "pinball_table": {
-        "activity_type": "microgame",
-        "core_mechanic": "pinball_flipper_bounce",
-        "experience_archetype": ["browser_game", "visual_playground"],
-        "primary_loop_type": "steer_to_explore",
-    },
-    "asteroids_shooter": {
-        "activity_type": "microgame",
-        "core_mechanic": "asteroids_thrust_and_shoot",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "maze_escape": {
-        "activity_type": "microgame",
-        "core_mechanic": "maze_escape_navigation",
-        "experience_archetype": ["browser_game", "spatial_exploration"],
-        "primary_loop_type": "steer_to_explore",
-    },
-    "reaction_timer": {
-        "activity_type": "microgame",
-        "core_mechanic": "reaction_timer_challenge",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "fishing_timing": {
-        "activity_type": "microgame",
-        "core_mechanic": "fishing_timing_cast",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "basketball_arcade": {
-        "activity_type": "microgame",
-        "core_mechanic": "basketball_shot_arc",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "card_sort_strategy": {
-        "activity_type": "microgame",
-        "core_mechanic": "card_hand_strategy",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "typing_race": {
-        "activity_type": "word_game",
-        "core_mechanic": "typing_race_accuracy",
-        "experience_archetype": "quiz_game",
-        "primary_loop_type": "type_to_reveal",
-    },
-    "sudoku_grid": {
-        "activity_type": "microgame",
-        "core_mechanic": "sudoku_fill_number_grid",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "connect_four": {
-        "activity_type": "microgame",
-        "core_mechanic": "connect_four_drop_disc",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "choose_to_branch",
-    },
-    "solitaire_card": {
-        "activity_type": "microgame",
-        "core_mechanic": "solitaire_sort_stacks",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "pong_clone": {
-        "activity_type": "microgame",
-        "core_mechanic": "pong_bounce_ball",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "flappy_bird": {
-        "activity_type": "microgame",
-        "core_mechanic": "flappy_bird_dodge_pipe",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "darts_scoring": {
-        "activity_type": "microgame",
-        "core_mechanic": "darts_throw_for_score",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "bowling_arcade": {
-        "activity_type": "microgame",
-        "core_mechanic": "bowling_knock_pins",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "air_hockey": {
-        "activity_type": "microgame",
-        "core_mechanic": "air_hockey_strike_puck",
-        "experience_archetype": "browser_game",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "task_board": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": ["saas_workspace", "data_sculpture"],
-        "primary_loop_type": ["sort_to_understand", "assemble_to_activate"],
-    },
-    "sales_tracker": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "invoice_builder": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "dashboard_app": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": ["saas_workspace", "data_sculpture"],
-        "primary_loop_type": "scrub_time_to_compare",
-    },
-    "calendar_scheduler": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "inventory_manager": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "travel_booking": {
-        "activity_type": "commerce_or_booking_flow",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "restaurant_ordering": {
-        "activity_type": "commerce_or_booking_flow",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "marketplace_comparison": {
-        "activity_type": "commerce_or_booking_flow",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "subscription_configurator": {
-        "activity_type": "commerce_or_booking_flow",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "product_detail_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "sneaker_drop_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "skincare_product_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "coffee_subscription_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "choose_to_branch",
-    },
-    "furniture_product_configurator": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "course_sales_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "choose_branching_path",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "choose_to_branch",
-    },
-    "app_pricing_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "digital_template_store": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "event_ticket_checkout": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "marketplace_listing_page": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "limited_drop_countdown": {
-        "activity_type": "product_or_storefront",
-        "core_mechanic": "press_sequence_to_unlock",
-        "experience_archetype": "commerce_workspace",
-        "primary_loop_type": "press_sequence_to_unlock",
-    },
-    "portfolio_builder": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "assemble_machine_or_layout",
-        "experience_archetype": "product_demo_experience",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "hiring_tracker": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "helpdesk_app": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "habit_tracker": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "collect_items_to_complete_set",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": ["collect_to_complete", "assemble_to_activate"],
-    },
-    "budget_planner": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "recipe_planner": {
-        "activity_type": "saas_replica",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "saas_workspace",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "drawing_studio": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "paint_or_draw_to_create_output",
-        "experience_archetype": "creative_tool_interface",
-        "primary_loop_type": ["paint_to_grow", "mix_to_generate"],
-    },
-    "music_step_sequencer": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "creative_tool_interface",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "map_route_planner": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "navigate_map_or_space",
-        "experience_archetype": "spatial_exploration",
-        "primary_loop_type": "steer_to_explore",
-    },
-    "color_palette_mixer": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": ["creative_tool_interface", "generative_poster"],
-        "primary_loop_type": "mix_to_generate",
-    },
-    "poster_generator": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "paint_or_draw_to_create_output",
-        "experience_archetype": "generative_poster",
-        "primary_loop_type": "paint_to_grow",
-    },
-    "room_layout_builder": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "assemble_machine_or_layout",
-        "experience_archetype": "creative_tool_interface",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "avatar_customizer": {
-        "activity_type": "creative_tool",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "creative_tool_interface",
-        "primary_loop_type": "assemble_to_activate",
-    },
-    "plant_growth_simulator": {
-        "activity_type": "simulation",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "simulation_toy",
-        "primary_loop_type": "drag_to_transform",
-    },
-    "weather_mixer": {
-        "activity_type": "simulation",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "simulation_toy",
-        "primary_loop_type": "mix_to_generate",
-    },
-    "data_story_scrubber": {
-        "activity_type": "data_investigation",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "data_sculpture",
-        "primary_loop_type": "scrub_time_to_compare",
-    },
-    "record_investigation": {
-        "activity_type": "data_investigation",
-        "core_mechanic": "filter_search_and_select_records",
-        "experience_archetype": ["interactive_editorial", "data_sculpture"],
-        "primary_loop_type": "sort_to_understand",
-    },
-    "map_explorer": {
-        "activity_type": "narrative_explorer",
-        "core_mechanic": "navigate_map_or_space",
-        "experience_archetype": ["spatial_exploration", "narrative_microsite"],
-        "primary_loop_type": "steer_to_explore",
-    },
-    "timeline_compare": {
-        "activity_type": "data_investigation",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "data_sculpture",
-        "primary_loop_type": "scrub_time_to_compare",
-    },
-    "case_file_sorter": {
-        "activity_type": "data_investigation",
-        "core_mechanic": "sort_cards_into_meaningful_groups",
-        "experience_archetype": "interactive_editorial",
-        "primary_loop_type": "sort_to_understand",
-    },
-    "operating_panel": {
-        "activity_type": "fake_os_app",
-        "core_mechanic": "configure_product_or_system",
-        "experience_archetype": "fictional_control_room",
-        "primary_loop_type": "assemble_to_activate",
-    },
-}
 
 
 def _resolve_spec(spec: Dict[str, str | List[str]], variant: str, seed: int | None = None) -> Dict[str, str]:
@@ -928,7 +383,7 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
 
 def seeded_format_first_target(seed: int | None = None) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:format-first-target")
-    activity_variant = rng.choice(FORMAT_FIRST_VARIANT_POOL)
+    activity_variant = choose_weighted_variant(rng)
     spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
     activity_contract = _activity_contract_for_variant(seed, activity_variant)
     return {
@@ -945,33 +400,7 @@ def seeded_format_first_target(seed: int | None = None) -> Dict[str, object]:
 
 
 def activity_family_for_variant(activity_variant: str) -> str:
-    if activity_variant in {"word_guess", "typing_race"}:
-        return "word_game"
-    if activity_variant in {"trivia_quiz", "memory_match", "tic_tac_toe", "card_sort_strategy"}:
-        return "quiz_card_game"
-    if activity_variant in {"snake_grid", "breakout_paddle", "endless_runner", "rhythm_tap", "whack_a_target", "pinball_table", "asteroids_shooter", "maze_escape", "reaction_timer", "fishing_timing", "basketball_arcade", "platformer_collectathon", "pong_clone", "flappy_bird", "air_hockey"}:
-        return "arcade_action"
-    if activity_variant in {"minesweeper_grid", "tile_merge_2048", "sliding_tile_puzzle", "tower_defense_lite", "sudoku_grid", "connect_four", "solitaire_card", "darts_scoring", "bowling_arcade"}:
-        return "puzzle_strategy"
-    if activity_variant in {"room_layout_builder", "furniture_product_configurator"}:
-        return "layout_builder"
-    if activity_variant in {"drawing_studio", "poster_generator", "avatar_customizer", "color_palette_mixer"}:
-        return "creative_canvas"
-    if activity_variant in {"music_step_sequencer"}:
-        return "audio_tool"
-    if activity_variant in {"plant_growth_simulator", "weather_mixer"}:
-        return "simulation_toy"
-    if activity_variant in PRODUCT_FORMATS:
-        return "product_storefront"
-    if activity_variant in {"travel_booking", "restaurant_ordering", "marketplace_comparison", "subscription_configurator"}:
-        return "commerce_flow"
-    if activity_variant in {"task_board", "sales_tracker", "invoice_builder", "dashboard_app", "calendar_scheduler", "inventory_manager", "hiring_tracker", "helpdesk_app", "habit_tracker", "budget_planner", "recipe_planner", "portfolio_builder"}:
-        return "workspace_app"
-    if activity_variant in {"map_route_planner", "map_explorer"}:
-        return "map_tool"
-    if activity_variant in {"data_story_scrubber", "record_investigation", "timeline_compare", "case_file_sorter"}:
-        return "data_investigation"
-    return "other"
+    return ACTIVITY_FAMILY_MAP.get(activity_variant, "other")
 
 
 def seeded_diverse_format_first_targets(
@@ -993,7 +422,7 @@ def seeded_diverse_format_first_targets(
         chosen_variant = ""
         chosen_family = ""
         for attempt in range(120):
-            candidate = rng.choice(FORMAT_FIRST_VARIANT_POOL)
+            candidate = choose_weighted_variant(rng, excluded=used_variants)
             family = activity_family_for_variant(candidate)
             if candidate in used_variants:
                 continue
@@ -1007,14 +436,14 @@ def seeded_diverse_format_first_targets(
             chosen_family = family
             break
         if not chosen_variant:
-            for candidate in FORMAT_FIRST_VARIANT_POOL:
+            for candidate in ALL_FORMATS:
                 family = activity_family_for_variant(candidate)
                 if candidate not in used_variants and (family not in used_families or len(used_families) >= 10):
                     chosen_variant = candidate
                     chosen_family = family
                     break
         if not chosen_variant:
-            chosen_variant = rng.choice(FORMAT_FIRST_VARIANT_POOL)
+            chosen_variant = choose_weighted_variant(rng)
             chosen_family = activity_family_for_variant(chosen_variant)
         used_variants.add(chosen_variant)
         used_families.add(chosen_family)
@@ -1103,161 +532,30 @@ def seeded_genre_contract(seed: int | None = None, archetype: str = "", loop_typ
 
 def seeded_activity_contract(seed: int | None = None, archetype: str = "", loop_type: str = "") -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:{archetype}:{loop_type}:activity-contract")
-    activity_by_archetype = {
-        "browser_game": "microgame",
-        "quiz_game": "quiz_game",
-        "saas_workspace": "saas_replica",
-        "commerce_workspace": "commerce_or_booking_flow",
-        "interactive_instrument": "interactive_instrument",
-        "fictional_control_room": "fake_os_app",
-        "generative_poster": "creative_tool",
-        "spatial_exploration": "narrative_explorer",
-        "narrative_microsite": "narrative_explorer",
-        "interactive_editorial": "data_investigation",
-        "data_sculpture": "data_investigation",
-        "simulation_toy": "simulation",
-        "museum_exhibit": "data_investigation",
-        "visual_playground": "microgame",
-        "product_demo_experience": "saas_replica",
-        "creative_tool_interface": "creative_tool",
-    }
-    activity_type = activity_by_archetype.get(archetype, rng.choice(ACTIVITY_TYPES))
-    mechanics_by_activity = {
-        "platformer": ["platform_jump_and_collect", "navigate_map_or_space", "collect_items_to_complete_set"],
-        "snake_game": ["snake_collect_and_grow", "collect_items_to_complete_set", "navigate_map_or_space"],
-        "tic_tac_toe": ["tic_tac_toe_turn_strategy", "choose_branching_path", "unlock_sequence_or_stages"],
-        "quiz_game": ["answer_questions_for_score", "choose_branching_path", "collect_items_to_complete_set"],
-        "memory_match": ["flip_cards_to_match_pairs", "collect_items_to_complete_set", "sort_cards_into_meaningful_groups"],
-        "word_game": ["guess_word_with_limited_attempts", "type_commands_or_messages", "unlock_sequence_or_stages"],
-        "microgame": ["collect_items_to_complete_set", "unlock_sequence_or_stages", "navigate_map_or_space"],
-        "saas_replica": ["filter_search_and_select_records", "configure_product_or_system", "sort_cards_into_meaningful_groups"],
-        "creative_tool": ["paint_or_draw_to_create_output", "assemble_machine_or_layout", "configure_product_or_system"],
-        "puzzle_box": ["unlock_sequence_or_stages", "inspect_compare_and_act", "type_commands_or_messages"],
-        "simulation": ["configure_product_or_system", "navigate_map_or_space", "inspect_compare_and_act"],
-        "fake_os_app": ["type_commands_or_messages", "filter_search_and_select_records", "assemble_machine_or_layout"],
-        "commerce_or_booking_flow": ["filter_search_and_select_records", "configure_product_or_system", "choose_branching_path"],
-        "product_or_storefront": ["configure_product_or_system", "sort_cards_into_meaningful_groups", "choose_branching_path"],
-        "portfolio_or_brand_site": ["navigate_map_or_space", "inspect_compare_and_act", "choose_branching_path"],
-        "narrative_explorer": ["choose_branching_path", "inspect_compare_and_act", "navigate_map_or_space"],
-        "data_investigation": ["filter_search_and_select_records", "sort_cards_into_meaningful_groups", "inspect_compare_and_act"],
-        "interactive_instrument": ["type_commands_or_messages", "configure_product_or_system", "paint_or_draw_to_create_output"],
-    }
-    mechanics_by_variant = {
-        "platformer_collectathon": ("platformer", "platform_jump_and_collect"),
-        "snake_grid": ("snake_game", "snake_collect_and_grow"),
-        "tic_tac_toe": ("tic_tac_toe", "tic_tac_toe_turn_strategy"),
-        "trivia_quiz": ("quiz_game", "answer_questions_for_score"),
-        "memory_match": ("memory_match", "flip_cards_to_match_pairs"),
-        "word_guess": ("word_game", "guess_word_with_limited_attempts"),
-        "breakout_paddle": ("microgame", "breakout_paddle_bounce"),
-        "minesweeper_grid": ("microgame", "minesweeper_deduction"),
-        "tile_merge_2048": ("microgame", "tile_merge_2048"),
-        "endless_runner": ("microgame", "endless_runner_dodge"),
-        "rhythm_tap": ("microgame", "rhythm_tap_timing"),
-        "whack_a_target": ("microgame", "whack_targets_for_score"),
-        "sliding_tile_puzzle": ("microgame", "sliding_tile_reorder"),
-        "tower_defense_lite": ("microgame", "tower_defense_place_units"),
-        "pinball_table": ("microgame", "pinball_flipper_bounce"),
-        "asteroids_shooter": ("microgame", "asteroids_thrust_and_shoot"),
-        "maze_escape": ("microgame", "maze_escape_navigation"),
-        "reaction_timer": ("microgame", "reaction_timer_challenge"),
-        "fishing_timing": ("microgame", "fishing_timing_cast"),
-        "basketball_arcade": ("microgame", "basketball_shot_arc"),
-        "card_sort_strategy": ("microgame", "card_hand_strategy"),
-        "typing_race": ("word_game", "typing_race_accuracy"),
-        "sudoku_grid": ("microgame", "sudoku_fill_number_grid"),
-        "connect_four": ("microgame", "connect_four_drop_disc"),
-        "solitaire_card": ("microgame", "solitaire_sort_stacks"),
-        "pong_clone": ("microgame", "pong_bounce_ball"),
-        "flappy_bird": ("microgame", "flappy_bird_dodge_pipe"),
-        "darts_scoring": ("microgame", "darts_throw_for_score"),
-        "bowling_arcade": ("microgame", "bowling_knock_pins"),
-        "air_hockey": ("microgame", "air_hockey_strike_puck"),
-    }
-    app_mechanics = {
-        "task_board": "filter_search_and_select_records",
-        "sales_tracker": "filter_search_and_select_records",
-        "invoice_builder": "configure_product_or_system",
-        "dashboard_app": "sort_cards_into_meaningful_groups",
-        "calendar_scheduler": "configure_product_or_system",
-        "inventory_manager": "filter_search_and_select_records",
-        "travel_booking": "configure_product_or_system",
-        "restaurant_ordering": "configure_product_or_system",
-        "marketplace_comparison": "sort_cards_into_meaningful_groups",
-        "subscription_configurator": "configure_product_or_system",
-        "product_detail_page": "configure_product_or_system",
-        "sneaker_drop_page": "configure_product_or_system",
-        "skincare_product_page": "configure_product_or_system",
-        "coffee_subscription_page": "configure_product_or_system",
-        "furniture_product_configurator": "configure_product_or_system",
-        "course_sales_page": "choose_branching_path",
-        "app_pricing_page": "sort_cards_into_meaningful_groups",
-        "digital_template_store": "sort_cards_into_meaningful_groups",
-        "event_ticket_checkout": "configure_product_or_system",
-        "marketplace_listing_page": "sort_cards_into_meaningful_groups",
-        "limited_drop_countdown": "configure_product_or_system",
-        "portfolio_builder": "assemble_machine_or_layout",
-        "hiring_tracker": "filter_search_and_select_records",
-        "helpdesk_app": "sort_cards_into_meaningful_groups",
-        "habit_tracker": "collect_items_to_complete_set",
-        "budget_planner": "configure_product_or_system",
-        "recipe_planner": "sort_cards_into_meaningful_groups",
-    }
-    tool_mechanics = {
-        "drawing_studio": "paint_or_draw_to_create_output",
-        "music_step_sequencer": "configure_product_or_system",
-        "map_route_planner": "navigate_map_or_space",
-        "color_palette_mixer": "configure_product_or_system",
-        "poster_generator": "paint_or_draw_to_create_output",
-        "room_layout_builder": "assemble_machine_or_layout",
-        "avatar_customizer": "configure_product_or_system",
-        "plant_growth_simulator": "configure_product_or_system",
-        "weather_mixer": "configure_product_or_system",
-        "data_story_scrubber": "sort_cards_into_meaningful_groups",
-    }
-    activity_variant = ""
-    if archetype in {"browser_game", "visual_playground"}:
-        activity_variant = rng.choice(GAME_FORMATS)
-        activity_type, forced_mechanic = mechanics_by_variant[activity_variant]
-    if archetype == "quiz_game":
-        activity_variant = rng.choice(["trivia_quiz", "memory_match", "word_guess", "tic_tac_toe", "reaction_timer", "typing_race"])
-        activity_type, forced_mechanic = mechanics_by_variant[activity_variant]
-    if archetype in {"saas_workspace", "commerce_workspace", "product_demo_experience"}:
-        activity_variant = rng.choice(PRODUCT_FORMATS + LOW_FRICTION_APP_FORMATS if archetype == "commerce_workspace" else APP_FORMATS)
-        activity_type = "product_or_storefront" if activity_variant in PRODUCT_FORMATS else ("commerce_or_booking_flow" if archetype == "commerce_workspace" else "saas_replica")
-        forced_mechanic = app_mechanics[activity_variant]
-    if archetype in {"creative_tool_interface", "generative_poster", "interactive_instrument", "simulation_toy"}:
-        activity_variant = rng.choice(TOOL_FORMATS)
-        forced_mechanic = tool_mechanics[activity_variant]
-        if archetype == "simulation_toy":
-            activity_type = "simulation"
-        elif archetype == "interactive_instrument":
-            activity_type = "interactive_instrument"
-        else:
-            activity_type = "creative_tool"
-    mechanic = locals().get("forced_mechanic") or rng.choice(mechanics_by_activity.get(activity_type, MECHANIC_PATTERNS))
-    if not activity_variant:
-        if activity_type in {"fake_os_app", "data_investigation", "narrative_explorer"}:
-            activity_variant = rng.choice(["record_investigation", "map_explorer", "timeline_compare", "case_file_sorter", "operating_panel"])
-        else:
-            activity_variant = rng.choice(APP_FORMATS + TOOL_FORMATS)
-    library_profile = _library_profile_for_activity(rng, activity_type, activity_variant, mechanic)
-    disallowed = ["slider_only_controls", "buttons_only_toggle_visual_effects", "fake_metrics_without_task"]
-    if activity_type in {"interactive_instrument", "simulation"}:
-        disallowed = ["buttons_only_toggle_visual_effects", "fake_metrics_without_task", "no_goal_or_payoff"]
-    return {
-        "activity_type": activity_type,
-        "activity_variant": activity_variant,
-        "core_mechanic": mechanic,
-        "library_profile": library_profile,
-        "activity_goal": "Give the visitor a concrete task with a visible end state or useful output.",
-        "required_actions": _required_actions_for_mechanic(mechanic),
-        "required_state": "Track progress, selections, created output, unlocked stages, or configured choices in visible state.",
-        "payoff": "Show a result, completion state, unlocked reveal, saved item, score, or transformed artifact.",
-        "boredom_risks": disallowed,
-        "success_signal": "The visitor can tell what changed, why it matters, and what they accomplished.",
-        "retention_contract": _retention_contract_for_activity(activity_type, activity_variant),
-    }
+    def matching_variants(*, require_archetype: bool, require_loop: bool) -> List[str]:
+        matches: List[str] = []
+        for variant, raw_spec in FORMAT_VARIANT_SPECS.items():
+            archetypes = raw_spec["experience_archetype"]
+            loops = raw_spec["primary_loop_type"]
+            if isinstance(archetypes, str):
+                archetypes = [archetypes]
+            if isinstance(loops, str):
+                loops = [loops]
+            if require_archetype and archetype and archetype not in archetypes:
+                continue
+            if require_loop and loop_type and loop_type not in loops:
+                continue
+            matches.append(variant)
+        return matches
+
+    candidates = matching_variants(require_archetype=True, require_loop=True)
+    if not candidates:
+        candidates = matching_variants(require_archetype=True, require_loop=False)
+    if not candidates:
+        candidates = matching_variants(require_archetype=False, require_loop=True)
+    if not candidates:
+        candidates = list(ALL_FORMATS)
+    return _activity_contract_for_variant(seed, rng.choice(candidates))
 
 
 def _library_profile_for_activity(rng: random.Random, activity_type: str, activity_variant: str, mechanic: str) -> str:
@@ -1369,4 +667,15 @@ def _required_actions_for_mechanic(mechanic: str) -> List[str]:
         "darts_throw_for_score": ["aim", "throw dart", "hit target"],
         "bowling_knock_pins": ["aim", "roll ball", "knock pins"],
         "air_hockey_strike_puck": ["move striker", "hit puck", "score goal"],
+        "idle_clicker_earn_upgrades": ["click", "buy upgrade", "watch numbers grow"],
+        "wordle_feedback_guess": ["type word", "check colors", "narrow letters"],
+        "match_three_swap_tiles": ["swap tiles", "match three", "clear board"],
+        "tetris_stack_falling_shapes": ["rotate piece", "move sideways", "drop and clear"],
+        "io_arena_eat_and_grow": ["move cell", "eat smaller", "avoid bigger"],
+        "drawing_guessing_pictionary": ["draw prompt", "submit", "let AI guess"],
+        "bubble_shooter_aim_match": ["aim", "shoot bubble", "match colors"],
+        "physics_catapult_projectile": ["aim trajectory", "set power", "launch"],
+        "color_sort_pour_liquid": ["select bottle", "pour color", "sort all layers"],
+        "blackjack_hand_strategy": ["hit", "stand", "beat dealer"],
+        "browse_and_simulate_order": ["browse items", "add to cart", "preview order"],
     }.get(mechanic, ["act", "observe result", "continue"])

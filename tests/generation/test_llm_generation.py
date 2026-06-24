@@ -93,3 +93,28 @@ def test_first_js_syntax_error_exposes_preflight_helper():
     }
 
     assert llm_client._first_js_syntax_error(doc)
+
+
+def test_structured_call_can_disable_non_transport_400_retry(monkeypatch):
+    calls = []
+
+    class Response:
+        status_code = 400
+        text = '{"error":"invalid schema"}'
+
+    monkeypatch.setattr(llm_client, "GEMINI_THINKING_LEVEL", "medium")
+    monkeypatch.setattr(
+        llm_client.requests,
+        "post",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Response(),
+    )
+
+    out = llm_client._call_gemini_structured(
+        [{"text": "plan"}],
+        {"type": "object", "properties": {}},
+        endpoint="https://example.invalid/generate",
+        retry_without_thinking=False,
+    )
+
+    assert out is None
+    assert len(calls) == 1
