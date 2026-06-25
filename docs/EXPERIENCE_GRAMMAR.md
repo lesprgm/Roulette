@@ -49,8 +49,8 @@ flowchart LR
 Examples:
 
 - `snake_grid`: snake, food, grid, score, collision, restart, keyboard/touch controls.
-- `invoice_builder`: client, line items, tax, subtotal, total, save/export, validation state.
 - `travel_booking`: destination, dates, guests, price, selection, booking summary.
+- `restaurant_ordering`: menu, cart, receipt, delivery status, courier route, checkout state.
 - `music_step_sequencer`: steps, tempo, instruments, pattern state, play/stop, clear/randomize.
 
 Semantic anchors must not rename or obscure the task. A Snake game should not become “Echo Migration.” A booking flow should not become “Signal Pilgrimage.” The anchors can influence object names, surface treatment, copy tone, texture, and micro-motion, but the user must still recognize the format.

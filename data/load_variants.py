@@ -15,6 +15,7 @@ _DEFAULT_SECRET_CATALOG_PATH = Path("/etc/secrets/variant_catalog.yaml")
 _CONFIGURED_CATALOG_PATH = os.getenv("VARIANT_CATALOG_PATH", "").strip()
 _CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_RETIRED_CATEGORIES = {"apps_heavy_workflow"}
 
 
 def _load_combined_catalog() -> tuple[Dict[str, Any] | None, Path | None]:
@@ -214,6 +215,8 @@ def _load_catalog() -> List[Dict[str, Any]]:
             seen.add(variant_id)
 
             category = variant["category"]
+            if category in _RETIRED_CATEGORIES:
+                continue
             if category not in CATEGORY_WEIGHTS:
                 raise RuntimeError(f"{location} has unknown category {category!r}")
             if not _string_or_strings(variant["experience_archetype"]):
@@ -266,9 +269,8 @@ GAME_FORMATS = VARIANTS_BY_CATEGORY["games"]
 PRODUCT_FORMATS = VARIANTS_BY_CATEGORY["products"]
 RETENTION_TOY_FORMATS = VARIANTS_BY_CATEGORY["toys"]
 LOW_FRICTION_APP_FORMATS = VARIANTS_BY_CATEGORY["apps_low_friction"]
-HEAVY_WORKFLOW_FORMATS = VARIANTS_BY_CATEGORY["apps_heavy_workflow"]
 EXTRAS = VARIANTS_BY_CATEGORY["extras"]
-APP_FORMATS = LOW_FRICTION_APP_FORMATS + HEAVY_WORKFLOW_FORMATS
+APP_FORMATS = LOW_FRICTION_APP_FORMATS
 TOOL_FORMATS = [variant["id"] for variant in _VARIANTS if variant.get("is_tool") is True]
 ALL_FORMATS = [variant["id"] for variant in _VARIANTS]
 

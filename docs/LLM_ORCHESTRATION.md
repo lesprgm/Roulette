@@ -93,7 +93,7 @@ flowchart TD
  A --> B --> C --> D --> E --> F
 ```
 
-Redis is used for compact descriptor steering, not prompt memory. The planner may receive a positive target such as `invoice_builder` with an underused app/workflow cell; it does not receive a long list of previous websites to avoid.
+Redis is used for compact descriptor steering, not prompt memory. The planner may receive a positive target such as `travel_booking` with an underused commerce or tool cell; it does not receive a long list of previous websites to avoid.
 
 ## One-Shot Meta-Correction
 
