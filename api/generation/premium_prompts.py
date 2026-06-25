@@ -14,18 +14,6 @@ except Exception:
     PREMIUM_BURST_MIN_HTML_BYTES = 3000
 
 
-def vision_grounding_note() -> str:
-    return """
-=== VISION GROUNDING: DESIGN MATRIX ATTACHED ===
-1. Analyze the attached UI Design Matrix.
-2. Use it as a reference for composition, palette energy, and atmosphere.
-3. The matrix still includes the classic lenses Professional, Playful, Brutalist, Cozy; you may borrow from them,
-   but the assignment axes below are the actual source of truth.
-4. Prefer colors and contrast relationships that feel sampled from the matrix rather than generic defaults.
-==============================================
-""".strip()
-
-
 PREMIUM_SELF_REVIEW_CHECKLIST = f"""
 Before final HTML, verify and fix:
 - Forbidden APIs used? no. Do not use fetch, XMLHttpRequest, WebSocket, Worker, SharedWorker, eval, Function, or document.write.
@@ -50,7 +38,6 @@ If any answer is not safe/yes, rewrite before the final fenced HTML block.
 
 def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, Any]]) -> str:
     return f"""
-{vision_grounding_note()}
 Build {len(targets)} distinct premium interactive web experiences in one streaming response.
 
 Output format is mandatory and repeated once per site:
@@ -127,7 +114,6 @@ Local design kit manifest:
 def build_premium_plan_prompt(brief: str, seed: int, *, experience_target: Dict[str, Any], novelty: Dict[str, Any]) -> str:
     target = experience_target
     return f"""
-{vision_grounding_note()}
 Plan one premium random interactive mini-site.
 Return JSON only matching the provided schema.
 
@@ -182,7 +168,6 @@ def build_premium_page_prompt(
 ) -> str:
     retry_block = f"\nRetry note:\n- {retry_note}\n" if retry_note else ""
     return f"""
-{vision_grounding_note()}
 Build one premium interactive mini-site.
 	Use one-shot meta-correction. Output in this exact order:
 	<thinking>Brief semantic plan, selected local libraries/assets, and one risk to avoid.</thinking>

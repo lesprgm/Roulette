@@ -25,7 +25,6 @@ from api.generation.premium_prompts import (
     build_premium_burst_prompt as _build_premium_burst_prompt_impl,
     build_premium_page_prompt as _build_premium_page_prompt_impl,
     build_premium_plan_prompt as _build_premium_plan_prompt_impl,
-    vision_grounding_note as _vision_grounding_note_impl,
 )
 from api.generation.premium_quality import (
     attach_premium_evaluations as _attach_premium_evaluations_impl,
@@ -366,25 +365,6 @@ def _call_testing_stub(brief: str, seed: int, category_note: str) -> Dict[str, A
     }
 
 
-def _get_design_matrix_b64() -> Optional[str]:
-    """Load the design matrix blueprint and return base64 string."""
-    # Use the stable repo path
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "design_matrix.jpg")
-    if not os.path.exists(path):
-        # Fallback to any file in brain dir if name changed, or return None
-        return None
-    try:
-        import base64
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-    except Exception as e:
-        logging.warning("Failed to encode design matrix: %r", e)
-        return None
-
-
-def _vision_grounding_note() -> str:
-    return _vision_grounding_note_impl()
-
 def _call_gemini_structured(
     parts: List[Dict[str, Any]],
     schema: Dict[str, Any],
@@ -529,10 +509,7 @@ def generate_page_premium_burst(
         target["seed"] = site_seed
         targets.append(target)
 
-    matrix_b64 = _get_design_matrix_b64()
     parts: List[Dict[str, Any]] = [{"text": _build_premium_burst_prompt(brief or "", seed_val, targets)}]
-    if matrix_b64:
-        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
     generation_config: Dict[str, Any] = {
         "temperature": 1.0,
         "maxOutputTokens": GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS or GEMINI_MAX_OUTPUT_TOKENS,
@@ -685,11 +662,8 @@ def _call_gemini_premium_plan(
     user_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     del user_key
-    matrix_b64 = _get_design_matrix_b64()
     experience_target = _premium_experience_target(seed)
     parts: List[Dict[str, Any]] = [{"text": _build_premium_plan_prompt(brief, seed, experience_target)}]
-    if matrix_b64:
-        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
     out = _call_gemini_structured(parts, PREMIUM_PLAN_SCHEMA, temperature=0.8, max_output_tokens=4096)
     if isinstance(out, dict):
         # The model owns art direction; the backend owns the concrete product contract.
@@ -711,10 +685,7 @@ def _call_gemini_premium_build(
     *,
     retry_note: str = "",
 ) -> Optional[Dict[str, Any]]:
-    matrix_b64 = _get_design_matrix_b64()
     parts: List[Dict[str, Any]] = [{"text": _build_premium_page_prompt(brief, seed, plan, retry_note)}]
-    if matrix_b64:
-        parts.append({"inlineData": {"mimeType": "image/jpeg", "data": matrix_b64}})
     text = _call_gemini_text(
         parts,
         temperature=1.0,
