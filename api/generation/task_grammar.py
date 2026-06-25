@@ -52,10 +52,10 @@ def _fallback_task(activity_variant: str, activity_type: str) -> Dict[str, Any]:
     if category == "simulation":
         return {
             "format": activity_variant,
-            "user_goal": f"Adjust the {readable} system and interpret the resulting state.",
-            "domain_objects": ["system", "parameters", "result", "reset"],
-            "state_variables": ["parameters", "resultState", "severity", "resetCount"],
-            "completion_condition": "result readout changes from selected parameters",
+            "user_goal": f"Play with the {readable}, change its settings, and watch the scene respond.",
+            "domain_objects": ["scene", "settings", "response", "reset"],
+            "state_variables": ["settings", "sceneState", "intensity", "resetCount"],
+            "completion_condition": "the visible scene changes from selected settings",
             "allowed_patterns": FORMAT_PATTERN_GROUPS["simulation"],
         }
     if category == "product":
@@ -145,7 +145,7 @@ def _payoff_scene_for(format_name: str, activity_type: str) -> Dict[str, str]:
     if activity_type in {"creative_tool", "interactive_instrument", "simulation"}:
         return {
             "trigger": "after direct manipulation or parameter change",
-            "scene": "show a finished preview/artifact, before-after comparison, capture/export state, or simulation result",
+            "scene": "show a finished preview/artifact, before-after comparison, capture/export state, or visible scene response",
             "continue_action": "remix, export, randomize, reset, or tune again",
         }
     return {

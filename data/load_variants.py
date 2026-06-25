@@ -13,6 +13,7 @@ _VARIANTS_DIR = Path(__file__).resolve().parent / "variants"
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "variant_weights.yaml"
 _DEFAULT_SECRET_CATALOG_PATH = Path("/etc/secrets/variant_catalog.yaml")
 _CONFIGURED_CATALOG_PATH = os.getenv("VARIANT_CATALOG_PATH", "").strip()
+_CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -39,8 +40,30 @@ def _load_combined_catalog() -> tuple[Dict[str, Any] | None, Path | None]:
 _COMBINED_CATALOG, _COMBINED_CATALOG_PATH = _load_combined_catalog()
 
 
+def _load_env_category_weights() -> Dict[str, float] | None:
+    raw = os.getenv(_CATEGORY_WEIGHTS_ENV, "").strip()
+    if not raw:
+        return None
+    if raw.startswith("{"):
+        payload = yaml.safe_load(raw)
+    else:
+        payload = {}
+        for chunk in raw.split(","):
+            key, sep, value = chunk.strip().partition("=")
+            if not sep:
+                raise RuntimeError(f"{_CATEGORY_WEIGHTS_ENV} entries must use category=weight")
+            payload[key.strip()] = float(value.strip())
+    if not isinstance(payload, dict) or not payload:
+        raise RuntimeError(f"{_CATEGORY_WEIGHTS_ENV} must contain a category weight mapping")
+    return payload
+
+
 def _load_category_weights() -> Dict[str, float]:
-    if _COMBINED_CATALOG is not None:
+    env_payload = _load_env_category_weights()
+    if env_payload is not None:
+        payload = env_payload
+        source = _CATEGORY_WEIGHTS_ENV
+    elif _COMBINED_CATALOG is not None:
         payload = _COMBINED_CATALOG["category_weights"]
         source = _COMBINED_CATALOG_PATH
     else:

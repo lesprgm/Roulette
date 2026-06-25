@@ -1063,6 +1063,7 @@ async function loadPrefetchSite(id: string) {
     
     // Open shutter
     await openShutter();
+    await refreshSitesCounter();
     
   } catch (e) {
     console.error('Prefetch load error:', e);
@@ -1189,6 +1190,7 @@ function resetFullPageHostRoot(target: HTMLElement | null) {
 function postRenderCommon() {
   ensureFloatingGenerate();
   ensureSitesCounterOverlay();
+  void refreshSitesCounter();
   adaptGenerateButtons();
   ensureScrollableBody();
   upsertTitleOverlay(undefined);

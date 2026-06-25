@@ -48,6 +48,8 @@ services:
         value: '2.0'
       - key: VARIANT_CATALOG_PATH
         value: /etc/secrets/variant_catalog.yaml
+      - key: VARIANT_CATEGORY_WEIGHTS
+        value: games=43,products=46,apps_low_friction=36,apps_heavy_workflow=14,toys=19,extras=52
       - key: PREFETCH_PREWARM_COUNT
         value: 0
       - key: PREFETCH_TOPUP_ENABLED
