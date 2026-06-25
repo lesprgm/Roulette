@@ -17,7 +17,7 @@ Generated pages are encouraged (and in many cases required) to use the NDW API i
 - **Canvas helpers:** `NDW.makeCanvas(...)` so the host can standardize DPI sizing and cleanup.
 - **Particles/helpers/RNG:** shared utilities so models don’t re-implement brittle code repeatedly.
 
-This is what turns “random HTML” into a platform.
+This is what turns “random HTML” into a repeatable generative UI runtime.
 
 #### NDW API surface (practical summary)
 
@@ -42,7 +42,7 @@ Roulette repeatedly mounts and unmounts entire experiences in one session. The e
 
 - Renders each doc inside a sandboxed iframe to stop CSS/JS bleed into the host.
 - Destroys the previous iframe between worlds so old WebGL contexts, timers, listeners, and animation loops are killed.
-- Removes landing-only effects (tunnel, overlays, blobs) so the generated page can own the screen.
+- Removes landing-only effects (tunnel, blobs, cursor glow) so the generated page can own the screen.
 
 #### Lifecycle: mount -> run -> teardown (why it matters)
 
@@ -62,7 +62,7 @@ So the host treats each generated page as a *world* with a lifecycle:
 3. **Run:** generated scripts, NDW helpers, GSAP, Lucide, or Three operate inside the iframe.
 4. **Teardown:** destroy the iframe on the next generation.
 
-This is the practical difference between “LLM output” and “platform that can run hundreds of outputs.”
+This is the practical difference between “LLM output” and a runtime that can safely run hundreds of generated interfaces.
 
 ### 3) Host-owned transitions
 
@@ -111,7 +111,7 @@ Think of Roulette as:
 - a sandboxed generated-site iframe
 - a game-engine-ish runtime (NDW) available to iframe pages when included
 
-That is why the project feels like a platform rather than a single demo page.
+That is why the project feels like a generative UI runtime rather than a single demo page.
 
 ## Extension Points (Where To Add Capability Safely)
 

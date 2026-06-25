@@ -195,11 +195,49 @@ def _semantic_translation_from_anchors(anchors: Dict[str, Any], task: Dict[str, 
         anchor = str(value or "").strip()
         if not anchor:
             continue
+        if key == "material":
+            visual_role = (
+                f"Embody {anchor} as a material system for {readable_format}: synthesize texture, surface, "
+                "shape, border, shadow, or generated pattern with CSS gradients, pseudo-elements, inline SVG, "
+                "Canvas, or Three.js material when appropriate."
+            )
+            interaction_role = (
+                f"Let {anchor} affect interaction feedback, such as compression, spring, scrape, stitch, shine, "
+                "grain, reflection, or other tactile response tied to state changes."
+            )
+            content_role = (
+                f"Do not put {anchor} in the title or major labels unless the UI visibly embodies it. "
+                f"The recognizable format name for {readable_format} should remain dominant."
+            )
+            motion_role = (
+                f"Translate {anchor} into restrained material motion only when useful: thread sweep, dust, "
+                "polish, grain drift, soft rebound, shimmer, crack, or surface reveal."
+            )
+        elif key == "everyday_object":
+            visual_role = f"Use {anchor} as a UI metaphor, affordance shape, icon idea, control object, or content prop for {readable_format}."
+            interaction_role = f"Let {anchor} influence how the user manipulates the interface, without replacing the {readable_format} behavior."
+            content_role = f"Use {anchor} in copy only if it clarifies the product/task; otherwise keep it implicit in component design."
+            motion_role = f"Translate {anchor} into small object-like feedback tied to the primary action."
+        elif key == "layout_metaphor":
+            visual_role = f"Use {anchor} to shape composition, grouping, navigation, or information flow for {readable_format}."
+            interaction_role = f"Let {anchor} guide how sections open, move, sort, or connect."
+            content_role = f"Use {anchor} as structure, not as random title wording."
+            motion_role = f"Translate {anchor} into transitions between regions or states."
+        elif key == "interaction_verb":
+            visual_role = f"Make the main affordance visually support the action '{anchor}'."
+            interaction_role = f"The primary action or feedback should feel like '{anchor}' while preserving the {readable_format} mechanic."
+            content_role = f"Use action copy related to '{anchor}' only if it helps the user know what to do."
+            motion_role = f"Use motion that communicates '{anchor}' after input."
+        else:
+            visual_role = f"Use {anchor} as a subtle surface, palette, or object-detail flavor for {readable_format}."
+            interaction_role = f"Let {anchor} influence small feedback moments without replacing the {readable_format} behavior."
+            content_role = f"Use {anchor} only in labels or microcopy when it clarifies the task."
+            motion_role = f"Translate {anchor} into restrained motion accents tied to state changes."
         translation[key] = {
-            "visual_role": f"Use {anchor} as a subtle surface, palette, or object-detail flavor for {readable_format}.",
-            "interaction_role": f"Let {anchor} influence small feedback moments without replacing the {readable_format} behavior.",
-            "content_role": f"Use {anchor} only in labels or microcopy when it clarifies the task.",
-            "motion_role": f"Translate {anchor} into restrained motion accents tied to state changes.",
+            "visual_role": visual_role,
+            "interaction_role": interaction_role,
+            "content_role": content_role,
+            "motion_role": motion_role,
         }
     return translation
 
@@ -624,6 +662,7 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
         "semantic_translation": _semantic_translation_from_anchors(anchors, task),
         "task_contract": task,
         "genre_contract": seeded_genre_contract(seed, archetype, loop_type),
+        "title_policy": "Semantic anchor words must be embodied or hidden. Do not put anchor words in <title>, <h1>, or major labels unless the UI expresses them through material, texture, shape, motion, interaction feedback, or metaphor. The concrete format name remains dominant.",
     }
 
 

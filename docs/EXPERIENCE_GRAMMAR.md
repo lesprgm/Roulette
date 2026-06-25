@@ -131,4 +131,4 @@ These are repair and diagnostic signals. Hard preflight remains reserved for uns
 - `api/generation/semantic_anchors.py`: stratified semantic anchor buckets.
 - `api/generation/experience_quality.py`: deterministic experience scoring.
 - `api/generation/prompts.py`: planner schema and prompt contract.
-- `api/llm_client.py`: Gemini calls, raw HTML extraction, burst streaming, and fallback routing.
+- `api/llm_client.py`: LLM calls, raw HTML extraction, burst streaming, and fallback routing.

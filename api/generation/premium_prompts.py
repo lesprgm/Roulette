@@ -39,6 +39,7 @@ Before final HTML, verify and fix:
 - Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant accent, optional secondary accent, and clear text contrast.
+- Semantic anchors embodied or hidden? yes. Any visible anchor word in title/copy is also expressed through material, shape, texture, motion, interaction feedback, or UI metaphor.
 - Copy clean? yes. No literal "Onboarding", "Instructions", "Visitor Role", "Primary Loop", "Feedback Contract", jargon/host-brand words, `//`, TODO, undefined, null, markdown fences, raw JSON, or code-comment debris.
 - Content complete? yes. No empty slots, missing images, placeholder-only panels, blank products, blank tables, or controls that do not visibly change page state.
 - Game/app specifics correct? yes. Games show a high-contrast first frame, score/result/restart, and recognizable names such as Snake, Breakout, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game. Apps/products show sample content, one obvious action, and useful feedback.
@@ -89,6 +90,7 @@ Experience contract for every site:
 - Implement a primary loop: user action -> visible response -> state change -> reward/payoff -> continue reason. Avoid slider-only sites unless activity_type is interactive_instrument or simulation, and never let controls merely change ambient visuals.
 - The reward/payoff must feel like a mini climax: delivery tracker, receipt, ticket, score burst, win/loss, generated artifact, saved workflow, comparison result, route, report, or configured preview depending on the format.
 - Use semantic anchors as interaction/content/motion logic, not just labels or colors.
+- Embody or hide semantic anchors: if a material/object/metaphor word appears visibly, express it in the interface. Materials must affect at least two layers such as texture, border, shape, shadow, motion, interaction feedback, inline SVG, Canvas, or 3D material.
 - Include reset/replay when appropriate.
 - Include mobile-friendly pointer/touch/keyboard fallback.
 
@@ -147,6 +149,8 @@ Goals:
 - Fill fingerprint with how this plan should be remembered after serving.
 - Treat the experience target below as mandatory positive steering. Do not merely style around it; make it the behavior of the page.
 - Treat semantic anchors as Tier 2 flavor only: they may influence texture, object names, mood, copy, and micro-interactions, but they must not rename, obscure, or override the selected activity_variant.
+- Follow title_policy: semantic anchor words must be embodied or hidden. Do not keyword-stuff anchors into titles; games/tools/products should keep the recognizable format name dominant.
+- Material anchors must be synthesized with browser-native code when used visibly: CSS repeating gradients, layered backgrounds, pseudo-elements, border styles, inline SVG patterns/filters, Canvas procedural strokes/noise, or Three.js material only when the selected page already needs 3D.
 - Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
 - task_contract.payoff_scene is mandatory: it defines what satisfying thing happens after the primary action and why a user would keep going.
 - Fill semantic_translation by translating every semantic anchor into visual_role, interaction_role, content_role, and motion_role.
@@ -214,6 +218,7 @@ Experience contract:
 - The payoff_scene must appear as an actual UI/state moment: animated delivery route, ticket/pass, cart/receipt, score burst, generated artifact, saved workflow, comparison, report, configured preview, or equivalent format-specific result.
 - Do not ship a slider-only page unless activity_type is interactive_instrument or simulation; even then include a payoff/result/replay beyond changing meter values.
 - The semantic_translation must drive interaction, content, motion, and visual treatment. Include reset/replay and mobile_interaction when declared.
+- Follow title_policy. If an anchor appears in visible title/copy, embody it in at least two UI layers; otherwise keep it implicit and out of major labels.
 
 Local design kit manifest:
 {compact_design_kit_manifest()}
@@ -227,6 +232,7 @@ Premium build requirements:
 - Visible copy must be human-facing, not plan-facing. Ban visible artifacts: `//`, TODO, undefined, null, markdown fences, raw JSON, "onboarding instructions", "visitor role", "primary loop".
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
 - Create original inline SVG/CSS/canvas artwork when needed; do not invent local asset paths.
+- Generate material textures inline with CSS/SVG/Canvas/Three when useful. Do not depend on texture libraries or static overlay assets.
 	- Three.js must use the local import map style only: `import * as THREE from '/static/vendor/three.module.js';`.
 	- Since the app renders this HTML in an iframe, no host cleanup code is required; still avoid memory leaks inside the page.
 	- The final fenced block must be a complete document with `<html>`, `<head>`, and `<body>`.

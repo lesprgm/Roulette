@@ -27,6 +27,14 @@ _PRIMARY_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _EMPTY_STAGE_RE = re.compile(r"\b(empty|blank|placeholder|start from scratch|slot\s+\d+|no items|0 items)\b", re.IGNORECASE)
+_TITLE_TEXT_RE = re.compile(r"<(?:title|h1|h2)[^>]*>(.*?)</(?:title|h1|h2)>", re.IGNORECASE | re.DOTALL)
+_MATERIAL_EMBODIMENT_RE = re.compile(
+    r"(repeating-linear-gradient|radial-gradient|linear-gradient|::before|::after|border-(?:image|style|radius)|"
+    r"box-shadow|filter|feTurbulence|feDisplacementMap|<pattern\b|<mask\b|clip-path|canvas|getContext|"
+    r"Mesh(?:Standard|Physical)?Material|texture|grain|fiber|fibre|woven|weave|stitch|stitched|thread|"
+    r"fabric|soft|padded|quilt|brushed|polished|metallic|marble|woodgrain|leather|ceramic|glassmorphism)",
+    re.IGNORECASE,
+)
 _COPY_LIMITS = {
     "almost_none": 45,
     "low": 95,
@@ -47,6 +55,10 @@ def _visible_text(html: str) -> str:
 
 def _word_count(text: str) -> int:
     return len(re.findall(r"\b[\w'-]+\b", text or ""))
+
+
+def _title_text(html: str) -> str:
+    return " ".join(re.sub(r"\s+", " ", _TAG_RE.sub(" ", match)).strip() for match in _TITLE_TEXT_RE.findall(html or ""))
 
 
 def _contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -149,6 +161,17 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
             tags.append("semantic_anchors_only_decorative")
             notes.append("semantic anchors are visible as surface labels but interaction appears thin")
             score -= 8
+        title_text = _title_text(html).lower()
+        anchor_in_title = any(
+            (term := str(value or "").strip().lower()) and term in title_text
+            for value in semantic.values()
+        )
+        if anchor_in_title and not _MATERIAL_EMBODIMENT_RE.search(html):
+            tags.append("semantic_anchor_label_only")
+            notes.append(
+                "semantic anchor appears in title/heading but no material, texture, shape, motion, or metaphor embodiment cues were found"
+            )
+            score -= 12
 
     return {
         "score": max(0, min(100, score)),

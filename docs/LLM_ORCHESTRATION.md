@@ -6,35 +6,35 @@ This system is designed to keep “novelty per dollar” high while staying robu
 
 Roulette has one user-facing generation path:
 
-- **Gemini 3.5 Flash**: primary planner + builder model for user-facing generation.
-- **Gemini 3 Flash Preview**: optional Gemini fallback model when configured.
+- **Primary LLM model**: planner + builder model for user-facing generation.
+- **Fallback LLM model**: optional fallback when configured.
 
-Exact Gemini models are configured via env vars (see `README.md` / `APP_OVERVIEW.md` and Render env vars).
+Exact models are configured via env vars (see `README.md`, `DEPLOYMENT_RENDER.md`, and Render env vars).
 
-## only Lane
+## User-Facing Generation Lane
 
 The queue is random, queued, and art-directed:
 
 - Prefer the shared queue.
-- If the queue is empty, generate a live page through the Gemini planner/builder path.
+- If the queue is empty, generate a live page through the primary LLM planner/builder path.
 - Serve the first locally valid page immediately.
 - Refill the queue later when top-up is explicitly enabled.
 - Record a novelty fingerprint and Redis descriptor after the page is actually served.
 
 Users do not provide prompts. The backend uses empty/random briefs and a novelty ledger to keep the roulette feeling fresh.
 
-## streaming burst
+## Streaming Burst
 
-On a queue miss, the backend now starts one Gemini streaming request for a small burst of pages. The default burst size is `5`.
+On a queue miss, the backend starts one streaming request for a configured burst of pages. The current Render default is `12`.
 
 The server behavior is:
 
 - Parse each completed delimited site as it arrives.
 - Serve the first locally valid site to the user immediately.
-- Continue draining later valid sites from the same Gemini stream into the queue.
+- Continue draining later valid sites from the same stream into the queue.
 - Salvage any completed sites if the upstream stream stops early.
 
-Each site uses the raw-HTML/self-review format and goes through local local gates before it can be served or queued.
+Each site uses the raw-HTML/self-review format and goes through local gates before it can be served or queued.
 
 ## Compatibility Burst Helpers
 
@@ -51,7 +51,7 @@ Tradeoffs:
 
 Simple mental model:
 
-- **Live burst:** one request asks for about five pages; first valid page goes to the user, later valid pages go to the queue.
+- **Live burst:** one request asks for a configured batch of pages; first valid page goes to the user, later valid pages go to the queue.
 - **Queue serve:** no model call; serve one already-generated page.
 - **Compatibility burst:** one model request asks for many cheaper pages at once; this is not what normal users hit.
 
