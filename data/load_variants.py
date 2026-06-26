@@ -75,6 +75,13 @@ def _load_category_weights() -> Dict[str, float]:
             raise RuntimeError(f"Invalid generation weight file {_WEIGHTS_PATH}: {exc}") from exc
     if not isinstance(payload, dict) or not payload:
         raise RuntimeError(f"Generation weight source {source} must contain a mapping")
+    payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in _RETIRED_CATEGORIES
+    }
+    if not payload:
+        raise RuntimeError(f"Generation weight source {source} contains only retired categories")
     if not all(isinstance(key, str) and isinstance(value, (int, float)) and value > 0 for key, value in payload.items()):
         raise RuntimeError(f"Generation weight source {source} must contain positive numeric weights")
     total = float(sum(payload.values()))
