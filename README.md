@@ -23,6 +23,35 @@ The system combines:
 
 <div align="center">
 
+### v2 Generated Websites
+
+<table>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v2/demo4.png" alt="v1.5 Generated Website 4" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v2/demo1.png" alt="v1.5 Generated Website 1" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
+ <tr>
+  <td width="50%" align="center">
+   <img src="screenshots/v2/demo2.png" alt="v1.5 Generated Website 2" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+  <td width="50%" align="center">
+   <img src="screenshots/v2/demo3.png" alt="v1.5 Generated Website 3" width="100%"/>
+   <br/>
+   <em>Generated Website</em>
+  </td>
+ </tr>
+</table>
+
 ### v1.5 Generated Websites
 
 <table>
