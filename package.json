@@ -1,6 +1,6 @@
 {
-  "name": "non-deterministic-website",
-  "version": "1.0.0",
+  "name": "roulette",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "build:vendor": "node scripts/build_vendor.js",
@@ -59,14 +59,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lesprgm/non-deterministic-website.git"
+    "url": "git+https://github.com/lesprgm/Roulette.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/lesprgm/non-deterministic-website/issues"
+    "url": "https://github.com/lesprgm/Roulette/issues"
   },
-  "homepage": "https://github.com/lesprgm/non-deterministic-website#readme"
+  "homepage": "https://github.com/lesprgm/Roulette#readme"
 }

@@ -4,6 +4,8 @@ This doc is intentionally a hybrid:
 - **High-level:** to help a new reader understand what Roulette *is* and how data flows.
 - **Deep dive:** to highlight why the system is more complex than a “simple LLM demo” (guardrails, persistence, generation routing, UX transitions, and operational knobs).
 
+Roulette is a generative UI system for one-off interactive web experiences. The stable product is the host runtime; the generated product is the interface shown inside it.
+
 Roulette has two user-facing states:
 
 1. **Landing (Roulette tunnel):** a 3D tunnel of preview tiles representing queued sites.
@@ -21,7 +23,7 @@ Roulette has two user-facing states:
 
 - **API**
  - `api/main.py`: FastAPI routes (`/generate`, `/generate/stream`, `/api/prefetch/*`, `/api/premium/previews`, `/prefetch/fill`, `/metrics/*`).
- - `api/llm_client.py`: Gemini planner/builder orchestration, raw-HTML extraction, and fallback routing.
+ - `api/llm_client.py`: LLM planner/builder orchestration, raw-HTML extraction, and fallback routing.
  - `api/generation/experience_grammar.py`: concrete activity formats, interaction archetypes, primary loop types, feedback patterns, and failure modes.
  - `api/generation/task_grammar.py`: task-model contracts for each concrete format: user goal, objects, state, controls, completion, and allowed UI patterns.
  - `api/generation/experience_quality.py`: deterministic checks for visible first action, state change, feedback, replay, and mobile fallback.
@@ -41,7 +43,7 @@ Think of Roulette as multiple planes stacked together:
 1. **UX plane (what users see)**
   - Tunnel previews, click-to-enter, transitions/shutter, and consistent “generate” controls.
 2. **Orchestration plane (LLM + queue refill)**
-  - Gemini planning/building, queue-first serving, and optional queue refill.
+  - Planner/build generation, queue-first serving, and optional queue refill.
 3. **Guardrails plane (quality/safety + runtime compatibility)**
   - Normalization, asset rewriting (avoid external CDNs), JS syntax checks, preflight, visual scoring, and experience scoring.
 4. **Persistence plane (queues + state)**
@@ -73,7 +75,7 @@ flowchart LR
   X["Format + Task Grammar\\nformat + goal + state + controls"]
   E["Experience Grammar\\nrole + first action + primary loop"]
   A["Redis Diversity\\ndescriptors + QD counters"]
-  O["LLM Orchestrator\\nGemini planner/build + fallbacks"]
+  O["LLM Orchestrator\\nplanner/build + fallbacks"]
  end
 
  L --> P
@@ -128,7 +130,7 @@ This order matters. A Snake game can be styled like a lunar warehouse or a clay 
 
 1. Frontend calls `/generate` or `/generate/stream`.
 2. API attempts to serve from the shared queue first.
-3. If the queue is empty, the API starts one Gemini streaming burst.
+3. If the queue is empty, the API starts one LLM streaming burst.
 4. The first locally valid doc from that stream is returned to the user.
 5. Later valid docs from the same stream are drained into the queue.
 6. Optional background top-up can refill the queue later.
@@ -137,7 +139,7 @@ This order matters. A Snake game can be styled like a lunar warehouse or a clay 
 
 1. Frontend has no quality switch; All user-facing generations use this path.
 2. API tries the shared queue first.
-3. If empty, API runs one live Gemini streaming burst.
+3. If empty, API runs one live LLM streaming burst.
 4. Live serving returns the first doc that passes local preflight plus the fail-open gate.
 5. Remaining valid docs from the same stream are queued for later requests.
 6. Queue/top-up candidates use the same local acceptance gate before storage.
@@ -154,12 +156,12 @@ Behind the simple “generate” action, the backend can do a multi-stage pipeli
 6. **Dedupe and annotate** visual/render quality, task coherence, and experience behavior as repair signals.
 7. **Record descriptors** after user-visible serving so Redis can steer future formats and experience cells without prompt bloat.
 
-Generation has one active product path: raw-HTML sites produced by Gemini, accepted by local gates, then served immediately or cached in the queue.
+Generation has one active product path: raw-HTML sites produced by the configured LLM, accepted by local gates, then served immediately or cached in the queue.
 
 ## Why These Design Choices
 
 - **Shared queues:** make the UX “instant” most of the time and amortize LLM cost across users.
-- **only generation:** keeps quality consistent instead of exposing users to mixed output tiers.
+- **Single generation lane:** keeps quality consistent instead of exposing users to mixed output tiers.
 - **Format-first task grammar:** prevents abstract anchor soup by making every page start from a recognizable game, app, tool, quiz, simulator, or workflow.
 - **Experience grammar:** forces pages to define what the visitor does, what changes, and why to continue.
 - **Redis descriptor tracking:** reduces repeated behavioral cells without injecting prior full websites into prompts.

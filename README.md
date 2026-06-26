@@ -1,8 +1,8 @@
-# Roulette (Non-Deterministic Website)
+# Roulette (Non-Deterministic Website) - v2.0.0
 
 **Live Website:** [Roulette](https://non-deterministic-website-cor0.onrender.com)
 
-![Websites Generated](https://img.shields.io/endpoint?url=https%3A%2F%2Fnon-deterministic-website-cor0.onrender.com%2Fmetrics%2Fbadge&cacheSeconds=300)
+![Websites Generated](https://img.shields.io/endpoint?url=https%3A%2F%2Fnon-deterministic-website-cor0.onrender.com%2Fmetrics%2Fbadge&cacheSeconds=300) ![Version](https://img.shields.io/badge/version-2.0.0-blue)
 
 ## What Is This?
 
@@ -209,8 +209,8 @@ flowchart LR
 1. **Clone the repository**
 
   ```bash
-  git clone https://github.com/lesprgm/non-deterministic-website.git
-  cd non-deterministic-website
+  git clone https://github.com/lesprgm/Roulette.git
+  cd Roulette
   ```
 
 2. **Set up Python environment**
@@ -486,7 +486,7 @@ Traditional websites show the same content every time. This project explores the
 ### Project Structure
 
 ```
-non-deterministic-website/
+Roulette/
 ├── api/          # FastAPI backend
 │  ├── main.py      # API routes and server
 │  ├── llm_client.py   # LLM planner/builder + burst parser
@@ -564,4 +564,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Built with by Leslie** | [Report Issues](https://github.com/lesprgm/non-deterministic-website/issues) | [View Source](https://github.com/lesprgm/non-deterministic-website)
+**Built with by Leslie** | [Report Issues](https://github.com/lesprgm/Roulette/issues) | [View Source](https://github.com/lesprgm/Roulette)
