@@ -1,4 +1,4 @@
-# Roulette (Non-Deterministic Website) - v2.0.0
+# Roulette (Non-Deterministic Website)
 
 **Live Website:** [Roulette](https://non-deterministic-website-cor0.onrender.com)
 
