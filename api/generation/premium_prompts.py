@@ -123,7 +123,7 @@ Seed: {seed}
 Goals:
 - Resolve the concrete activity format first. The selected activity_contract.activity_variant is the product, not a vibe.
 - Choose one strong art direction and one signature interaction/motion system. Do not average styles.
-- Use the local design kit manifest below and explicitly choose palette_key, layout_key, motion_preset, display_font_key, and body_font_key.
+- Use the local design kit manifest below. Choose a palette_key as your base color foundation, or omit it and design your own color system. Also choose layout_key, motion_preset, display_font_key, and body_font_key.
 - Create original inline SVG illustrations, CSS shapes/gradients, canvas artwork, or format-specific UI visuals when the page needs custom graphics.
 - Avoid recent visual trends from the novelty summary.
 - Favor recognizable, useful formats people can immediately try: arcade games, puzzle games, card/word/quiz games, product pages, ecommerce storefronts, pricing pages, booking/catalog flows, workspace apps, map explorers, record investigations, drawing/music tools, simulators, and configurators.

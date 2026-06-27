@@ -438,7 +438,6 @@ PREMIUM_PLAN_SCHEMA = {
         "tone",
         "signature_interaction",
         "hero_treatment",
-        "palette_key",
         "layout_key",
         "motion_preset",
         "display_font_key",

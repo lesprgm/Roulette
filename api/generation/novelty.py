@@ -110,14 +110,20 @@ def _layout_bucket(layout: Dict[str, Any]) -> str:
 def _palette_bucket(colors: Dict[str, Any]) -> str:
     values = [str(c).lower() for c in colors.get("colors", []) if isinstance(c, str)]
     joined = " ".join(values)
-    if "#020617" in joined or "#0f172a" in joined:
-        return "dark_blue"
-    if "#a3e635" in joined or "#facc15" in joined:
-        return "acid"
-    if "#fb7185" in joined or "#fff1f2" in joined:
-        return "rose"
-    if "#f5f3ff" in joined or "#7c3aed" in joined:
-        return "violet"
+    if "#2563eb" in joined or "#003087" in joined:
+        return "blue"
+    if "#0d9488" in joined or "#38bdf8" in joined or "#06b6d4" in joined:
+        return "teal_cyan"
+    if "#a47864" in joined or "#c9694a" in joined:
+        return "earth_warm"
+    if "#a78bfa" in joined or "#635bff" in joined or "#7c3aed" in joined:
+        return "purple"
+    if "#4ade80" in joined or "#a3e635" in joined or "#22c55e" in joined:
+        return "green"
+    if "#990011" in joined or "#fb7185" in joined or "#ff6b6b" in joined:
+        return "red_rose"
+    if "#f59e0b" in joined or "#f97316" in joined or "#eab308" in joined:
+        return "amber_orange"
     return "mixed"
 
 
