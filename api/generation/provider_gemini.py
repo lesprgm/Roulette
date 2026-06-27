@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import requests
@@ -9,6 +10,16 @@ import requests
 from api.llm_parsing import _json_from_text
 
 JsonExtractor = Callable[[Dict[str, Any]], Optional[str]]
+
+_tls = threading.local()
+
+
+def _quota_flag_set(val: bool) -> None:
+    _tls.quota_exhausted = val
+
+
+def was_quota_exhausted() -> bool:
+    return getattr(_tls, "quota_exhausted", False)
 
 
 def call_structured(
@@ -40,6 +51,7 @@ def call_structured(
     endpoints = [endpoint]
     if fallback_endpoint:
         endpoints.append(fallback_endpoint)
+    _quota_flag_set(True)
     for idx, target_endpoint in enumerate(endpoints):
         label = "primary" if idx == 0 else "fallback"
         try:
@@ -51,6 +63,7 @@ def call_structured(
             )
         except Exception as exc:
             logging.warning("Gemini structured %s request error: %r", label, exc)
+            _quota_flag_set(False)
             continue
 
         if retry_without_thinking and resp.status_code == 400 and "thinkingConfig" in generation_config:
@@ -69,6 +82,7 @@ def call_structured(
                     logging.info("Gemini structured %s succeeded after removing thinkingConfig", label)
             except Exception as exc:
                 logging.warning("Gemini structured %s retry without thinkingConfig error: %r", label, exc)
+                _quota_flag_set(False)
                 continue
 
         if resp.status_code != 200:
@@ -77,12 +91,15 @@ def call_structured(
             except Exception:
                 msg = str(resp.status_code)
             logging.warning("Gemini structured %s HTTP %s: %s", label, resp.status_code, msg)
+            if resp.status_code != 429:
+                _quota_flag_set(False)
             continue
 
         try:
             data = resp.json()
             text = extract_text(data)
             if not text:
+                _quota_flag_set(False)
                 continue
             try:
                 return json.loads(text)
@@ -90,6 +107,7 @@ def call_structured(
                 return _json_from_text(text)
         except Exception as exc:
             logging.warning("Gemini structured %s extraction error: %r", label, exc)
+            _quota_flag_set(False)
             continue
     return None
 
@@ -117,6 +135,7 @@ def call_text(
     endpoints = [endpoint]
     if fallback_endpoint:
         endpoints.append(fallback_endpoint)
+    _quota_flag_set(True)
     for idx, target_endpoint in enumerate(endpoints):
         label = "primary" if idx == 0 else "fallback"
         try:
@@ -128,6 +147,7 @@ def call_text(
             )
         except Exception as exc:
             logging.warning("Gemini text %s request error: %r", label, exc)
+            _quota_flag_set(False)
             continue
         if retry_without_thinking and resp.status_code == 400 and "thinkingConfig" in generation_config:
             retry_config = dict(generation_config)
@@ -145,6 +165,7 @@ def call_text(
                     logging.info("Gemini text %s succeeded after removing thinkingConfig", label)
             except Exception as exc:
                 logging.warning("Gemini text %s retry without thinkingConfig error: %r", label, exc)
+                _quota_flag_set(False)
                 continue
         if resp.status_code != 200:
             try:
@@ -152,6 +173,8 @@ def call_text(
             except Exception:
                 msg = str(resp.status_code)
             logging.warning("Gemini text %s HTTP %s: %s", label, resp.status_code, msg)
+            if resp.status_code != 429:
+                _quota_flag_set(False)
             continue
         try:
             payload = resp.json()
@@ -160,6 +183,8 @@ def call_text(
                 return text
         except Exception as exc:
             logging.warning("Gemini text %s extraction error: %r", label, exc)
+            _quota_flag_set(False)
+            continue
     return None
 
 

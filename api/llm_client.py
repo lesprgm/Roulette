@@ -35,6 +35,7 @@ from api.generation.provider_gemini import (
     call_structured as _provider_call_structured,
     call_text as _provider_call_text,
     iter_stream_text as _provider_iter_stream_text,
+    was_quota_exhausted,
 )
 from api.preflight import annotate_doc as _annotate_preflight_doc
 from api.preflight import first_js_syntax_error as _first_js_syntax_error
@@ -336,10 +337,14 @@ def generate_page_premium(
 
     plan = _call_gemini_premium_plan(brief_str, seed_val, user_key)
     if not isinstance(plan, dict):
+        if was_quota_exhausted():
+            return {"error": "model_quota_exhausted"}
         return {"error": "Premium planner failed"}
 
     raw_doc = _call_gemini_premium_build(brief_str, seed_val, plan)
     if not isinstance(raw_doc, dict):
+        if was_quota_exhausted():
+            return {"error": "model_quota_exhausted"}
         return {"error": "Premium build failed"}
     try:
         doc = _normalize_doc(raw_doc)
@@ -524,6 +529,7 @@ def generate_page_premium_burst(
     if GEMINI_FALLBACK_STREAM_ENDPOINT:
         endpoints.append(GEMINI_FALLBACK_STREAM_ENDPOINT)
 
+    all_429 = True
     for endpoint_idx, endpoint in enumerate(endpoints):
         label = "primary" if endpoint_idx == 0 else "fallback"
         try:
@@ -536,6 +542,7 @@ def generate_page_premium_burst(
             )
         except Exception as exc:
             logging.warning("Gemini premium burst %s request error: %r", label, exc)
+            all_429 = False
             continue
         if resp.status_code == 400 and "thinkingConfig" in generation_config:
             retry_config = dict(generation_config)
@@ -554,10 +561,14 @@ def generate_page_premium_burst(
                     logging.info("Gemini premium burst %s succeeded after removing thinkingConfig", label)
             except Exception as exc:
                 logging.warning("Gemini premium burst %s retry without thinkingConfig error: %r", label, exc)
+                all_429 = False
                 continue
         if resp.status_code != 200:
             logging.warning("Gemini premium burst %s HTTP %s: %s", label, resp.status_code, resp.text[:400])
+            if resp.status_code != 429:
+                all_429 = False
             continue
+        all_429 = False  # endpoint responded, not all-429
         full_text = ""
         emitted: Set[int] = set()
         emitted_count = 0
@@ -618,7 +629,10 @@ def generate_page_premium_burst(
         if emitted_count:
             return
         logging.warning("Gemini premium burst %s produced no valid sites; text_len=%d", label, len(full_text))
-    yield {"error": "Premium burst failed"}
+    if all_429:
+        yield {"error": "model_quota_exhausted"}
+    else:
+        yield {"error": "Premium burst failed"}
 
 
 def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

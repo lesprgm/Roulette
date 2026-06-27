@@ -777,12 +777,10 @@ async function generateNew(e?: Event) {
 
   const startTime = Date.now();
   const MIN_DELAY = 3000; // 3s optimistic opening fallback
-  const PATIENCE_DELAY = 5000; // 5s: Update spinner text
-  const DEADMAN_DELAY = 112000; // 112s: Give up
+  const DEADMAN_DELAY = 62000; // 22s: Give up
 
   let deadman: any;
   let optimisticTimer: any;
-  let patienceTimer: any;
   let shutterOpened = false;
   
   // Optimistic Shutter Opening: If 3s pass, ONLY open if we have content ready
@@ -795,13 +793,6 @@ async function generateNew(e?: Event) {
       shutterOpened = true;
     }
   }, MIN_DELAY);
-
-  // Patience Timer: If 5s pass and still nothing, reassure the user
-  patienceTimer = setTimeout(() => {
-    if ((_w as any).__ndwGenerating && !firstPageSeen) {
-       showSpinner('Connecting to deep logic…');
-    }
-  }, PATIENCE_DELAY);
 
   // Lifted to function scope for timer access
   let firstPageSeen = false;
@@ -849,7 +840,15 @@ async function generateNew(e?: Event) {
         await renderFollowupPage(page);
       }
     } else if (event === 'error') {
-      showError(`Generation error: ${data.error}`);
+      const errMsg = data?.error || '';
+      if (errMsg === 'rate limit exceeded') {
+        const waitSecs = data?.retry_after_seconds || 60;
+        showError(`Rate limit hit. Try again in ${waitSecs} seconds.`);
+      } else if (errMsg === 'model_quota_exhausted') {
+        showError('Both AI models are tapped out for the day. Come back tomorrow.');
+      } else {
+        showError('The wheel hit a snag. Give it another spin?');
+      }
       updateJsonOut(data);
       hideSpinner();
       if (!shutterOpened) {
@@ -865,7 +864,7 @@ async function generateNew(e?: Event) {
       if (!firstPageSeen) {
         console.error('[ndw] Shutter deadman triggered');
         (_w as any).__ndwTimedOut = true;
-        showError('Generation timed out. Please try again.');
+        showError('The wheel spun a little too long. Hit generate again.');
         if (!shutterOpened) {
           openShutter();
           shutterOpened = true;
@@ -877,7 +876,8 @@ async function generateNew(e?: Event) {
   };
 
   try {
-    showSpinner('Art directing your next world…');
+    showSpinner();
+    startVerbRotator();
     const resp = await fetch('/generate/stream', {
       method: 'POST',
       headers: buildAuthHeaders(),
@@ -885,7 +885,21 @@ async function generateNew(e?: Event) {
       signal
     });
 
-    if (!resp.ok) throw new Error(`Stream failed: ${resp.status}`);
+    if (!resp.ok) {
+      if (resp.status === 429) {
+        try {
+          const rateData = await resp.json();
+          const waitSecs = rateData?.retry_after_seconds || 60;
+          showError(`Rate limit hit. Try again in ${waitSecs} seconds.`);
+          updateJsonOut(rateData);
+        } catch {
+          showError('Too many requests. Wait a moment and try again.');
+        }
+        if (!shutterOpened) { await openShutter(); shutterOpened = true; }
+        return;
+      }
+      throw new Error(`Stream failed: ${resp.status}`);
+    }
     const reader = resp.body?.getReader();
     if (!reader) throw new Error('No reader');
 
@@ -937,7 +951,7 @@ async function generateNew(e?: Event) {
         // Stream ended but we never saw a page?
         clearTimeout(deadman);
         if (!(_w as any).__ndwTimedOut) {
-          showError('Connection closed before content was ready. Try again?');
+          showError('The connection flickered. Try once more?');
           if (!shutterOpened) {
             await openShutter();
             shutterOpened = true;
@@ -955,7 +969,7 @@ async function generateNew(e?: Event) {
         if (fallback && !fallback.error) {
           await renderFirstPage(fallback);
         } else {
-          showError(fallback?.error || 'Generation failed. Please try again.');
+          showError('The wheel hit a snag. Give it another spin?');
           if (!shutterOpened) {
             await openShutter();
             shutterOpened = true;
@@ -963,14 +977,14 @@ async function generateNew(e?: Event) {
         }
       } catch (fallbackErr) {
         console.error('[ndw] fallback generate failed', fallbackErr);
-        showError('Generation failed. Please try again.');
+        showError('The wheel hit a snag. Give it another spin?');
         if (!shutterOpened) {
           await openShutter();
           shutterOpened = true;
         }
       }
     } else if (!(_w as any).__ndwTimedOut) {
-      showError('Generation failed. Please try again.');
+      showError('The wheel hit a snag. Give it another spin?');
       if (!shutterOpened) {
         await openShutter();
         shutterOpened = true;
@@ -979,7 +993,6 @@ async function generateNew(e?: Event) {
   } finally {
     if (deadman) clearTimeout(deadman);
     if (optimisticTimer) clearTimeout(optimisticTimer);
-    if (patienceTimer) clearTimeout(patienceTimer);
     setGenerating(false);
     (_w as any).__ndwGenerating = false;
     activeController = null;
@@ -1319,7 +1332,49 @@ function ensureSpinner() {
   return el;
 }
 function showSpinner(msg?: string) { const el = ensureSpinner(); const m = document.getElementById('spinnerMsg'); if (m && msg) m.textContent = msg; el.classList.remove('hidden'); }
-function hideSpinner() { ensureSpinner().classList.add('hidden'); }
+function hideSpinner() { stopVerbRotator(); ensureSpinner().classList.add('hidden'); }
+
+const LOADING_VERBS = [
+  "Weaving the canvas…",
+  "Rolling the dice…",
+  "Spinning the wheel…",
+  "Crafting your experience…",
+  "Arranging the pieces…",
+  "Polishing the pixels…",
+  "Staging the scene…",
+  "Calibrating controls…",
+  "Seeding randomness…",
+  "Tuning the motion…",
+  "Balancing the palette…",
+  "Loading the fonts…",
+  "Injecting motion…",
+  "Checking contrast…",
+  "Running quality checks…",
+  "Brewing something new…",
+  "Making it weird…",
+  "Almost there…",
+];
+
+let _verbInterval: ReturnType<typeof setInterval> | null = null;
+
+function startVerbRotator() {
+  const msg = document.getElementById('spinnerMsg');
+  if (!msg) return;
+  let i = Math.floor(Math.random() * LOADING_VERBS.length);
+  msg.textContent = LOADING_VERBS[i];
+  if (_verbInterval) clearInterval(_verbInterval);
+  _verbInterval = setInterval(() => {
+    i = (i + 1) % LOADING_VERBS.length;
+    msg.textContent = LOADING_VERBS[i];
+  }, 3500);
+}
+
+function stopVerbRotator() {
+  if (_verbInterval) {
+    clearInterval(_verbInterval);
+    _verbInterval = null;
+  }
+}
 
 const _origEnterSite = enterSite;
 async function enterSiteWithCounter(doc: any) {
