@@ -27,12 +27,27 @@ Before final HTML, verify and fix:
 - Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant action accent, optional secondary accent, clear state colors, and readable text contrast. Avoid generic AI palettes such as purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected genre explicitly needs that look.
-- Semantic anchors embodied or hidden? yes. Any visible anchor word in title/copy is also expressed through material, shape, texture, motion, interaction feedback, or UI metaphor.
+- Semantic anchors embodied or hidden? yes. Any visible anchor word in title/copy is also expressed through material, shape, texture, motion, interaction feedback, or UI metaphor. Do not expose material anchors as spec labels such as "Material:", "Finish:", "Chassis material:", or "[material] finish"; if the material is not part of a real product spec, keep it visual only.
 - Copy clean? yes. No literal "Onboarding", "Instructions", "Visitor Role", "Primary Loop", "Feedback Contract", jargon/host-brand words, `//`, TODO, undefined, null, markdown fences, raw JSON, or code-comment debris.
 - Content complete? yes. No empty slots, missing images, placeholder-only panels, blank products, blank tables, or controls that do not visibly change page state.
+- Content-bearing visual artifacts? yes. The page includes at least one visual object/stage/output users can name. More is welcome when it supports the format. Panels, buttons, badges, icons, gradients, and wallpaper do not count.
 - Game/app specifics correct? yes. Games show a high-contrast first frame, score/result/restart, and recognizable names such as Snake, Breakout, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game. Apps/products show sample content, one obvious action, and useful feedback.
 - Runtime safe? yes. DOM references exist before use; audio only starts from a click/tap/key/pointer handler; WebGL/canvas/particles stay lightweight.
 If any answer is not safe/yes, rewrite before the final fenced HTML block.
+""".strip()
+
+
+VISUAL_ARTIFACT_GUIDANCE = """
+Content-bearing visual rule:
+- Every site needs at least one content-bearing visual artifact, not just styled UI chrome.
+- Games: visible board/stage/player/enemies/items/targets, preferably Canvas/SVG/CSS shapes.
+- Product/storefront: generated product illustration, package/device/item, variants/thumbnails, cart/receipt.
+- Restaurant/commerce/booking: menu/product cards plus route/map/ticket/calendar/receipt/tracker visual.
+- SaaS/workspace/data: realistic records, chart/table/kanban/map/inbox/file cards with meaningful sample content.
+- Creative tools/editors: visible canvas, artifact, preview, sequencer grid, drawing, palette, or export result.
+- Simulators/toys: visible object/world/stage whose state changes, not just sliders/meters.
+- Backgrounds, gradients, icons, panels, badges, buttons, and text do not count as content-bearing visual artifacts.
+- Use inline SVG, CSS shape systems, Canvas, Matter.js, or Three.js when useful; keep it lightweight and tied to the selected format.
 """.strip()
 
 
@@ -77,9 +92,11 @@ Experience contract for every site:
 - Implement a primary loop: user action -> visible response -> state change -> reward/payoff -> continue reason. Avoid slider-only sites unless activity_type is interactive_instrument or simulation, and never let controls merely change ambient visuals.
 - The reward/payoff must feel like a mini climax: delivery tracker, receipt, ticket, score burst, win/loss, generated artifact, saved workflow, comparison result, route, report, or configured preview depending on the format.
 - Use semantic anchors as interaction/content/motion logic, not just labels or colors.
-- Embody or hide semantic anchors: if a material/object/metaphor word appears visibly, express it in the interface. Materials must affect at least two layers such as texture, border, shape, shadow, motion, interaction feedback, inline SVG, Canvas, or 3D material.
+- Embody or hide semantic anchors: if a material/object/metaphor word appears visibly, express it in the interface. Materials must affect at least two layers such as texture, border, shape, shadow, motion, interaction feedback, inline SVG, Canvas, or 3D material. Do not render generic material-spec copy like "MATERIAL:", "FINISH:", "NATURAL RED CLAY FINISH", "Chassis material", or "[anchor] alloy"; those labels are plan leakage unless the selected format is genuinely a product spec page.
 - Include reset/replay when appropriate.
 - Include mobile-friendly pointer/touch/keyboard fallback.
+
+{VISUAL_ARTIFACT_GUIDANCE}
 
 Local design kit manifest:
 {compact_design_kit_manifest()}
@@ -93,6 +110,7 @@ Local design kit manifest:
 - Keep one focal area, short human-facing copy, controls near what they affect, and no cluttered multi-panel shell unless genre_contract calls for dense/maximal.
 - Use palette roles, not scattered colors: 60/30/10 balance, readable contrast, one dominant action accent, one optional secondary accent, and no clashing neon-on-neon unless the genre is explicitly arcade/maximal. Avoid generic AI palettes: purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected format specifically calls for them.
 - Non-empty first screen rule: every site must show player/targets, sample cards, product hero, prefilled records, starter artwork, furnished layout, route, thumbnails, seed cards, or preview artifact before interaction.
+- Visual artifact rule: each site must include at least one content-bearing visual object/stage/output. UI chrome alone is not enough.
 - Canvas/game first paint rule: draw a high-contrast stage immediately; a Play button may overlay gameplay but must not replace it with a blank/Initialize splash. Puzzle/game cue rule: one short cue near the board.
 - Background discipline: do not use wave/grid/contour/dot wallpaper as the default visual identity. Use surfaces, product visuals, cards, maps, boards, canvases, shelves, or app content as the visual mass.
 - Avoid visible jargon and host-brand leakage: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, non-deterministic. Ban visible artifacts: `//`, TODO, undefined, null, raw JSON, markdown fences, and visible planning terminology.
@@ -128,6 +146,7 @@ Goals:
 - Avoid recent visual trends from the novelty summary.
 - Favor recognizable, useful formats people can immediately try: arcade games, puzzle games, card/word/quiz games, product pages, ecommerce storefronts, pricing pages, booking/catalog flows, workspace apps, map explorers, record investigations, drawing/music tools, simulators, and configurators.
 - Plan first-screen content and one obvious action. Apps/tools/commerce pages need sample records/items/options. Product/storefront pages need a hero product/offer, price/plan, benefits/specs, options, and a buy/reserve/add-to-cart/compare action. Games need score/result/restart plus one meta-reward: streak, combo, best score, lives, tickets, medals, levels, or unlocks.
+- Plan at least one content-bearing visual artifact for the selected format. It must be an actual object/stage/output/map/board/product/preview/record set, not merely a background, button cluster, icon row, or card shell.
 - Avoid generic dashboards unless activity_type is saas_replica or data_investigation and the dashboard has a real workflow: filtering records, saving selections, triaging tickets, or configuring a result.
 - Ban visible sci-fi filler and host-brand words: calibration, protocol, terminal, compiler, telemetry, lux, signal, frequency, drift, manifest, system, Roulette, NDW, No Delay Wireless, runtime, and non-deterministic.
 - Include a physical metaphor when it clarifies the activity: arcade cabinet, board, deck, receipt, ticket printer, paper tray, counter, dial, workbench, cards, shelves, map, or machine.
@@ -136,7 +155,7 @@ Goals:
 - Fill fingerprint with how this plan should be remembered after serving.
 - Treat the experience target below as mandatory positive steering. Do not merely style around it; make it the behavior of the page.
 - Treat semantic anchors as Tier 2 flavor only: they may influence texture, object names, mood, copy, and micro-interactions, but they must not rename, obscure, or override the selected activity_variant.
-- Follow title_policy: semantic anchor words must be embodied or hidden. Do not keyword-stuff anchors into titles; games/tools/products should keep the recognizable format name dominant.
+- Follow title_policy: semantic anchor words must be embodied or hidden. Do not keyword-stuff anchors into titles or major labels; games/tools/products should keep the recognizable format name dominant. Material anchors should usually appear as surface treatment, not text.
 - Material anchors must be synthesized with browser-native code when used visibly: CSS repeating gradients, layered backgrounds, pseudo-elements, border styles, inline SVG patterns/filters, Canvas procedural strokes/noise, or Three.js material only when the selected page already needs 3D.
 - Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
 - task_contract.payoff_scene is mandatory: it defines what satisfying thing happens after the primary action and why a user would keep going.
@@ -148,6 +167,8 @@ Goals:
 - Avoid slider-only plans unless activity_type is interactive_instrument or simulation, and even then sliders need a visible result/payoff.
 - The onboarding_cue must be a diegetic micro-cue, label, placeholder, cursor affordance, or short CTA. No tutorial panel unless genre_contract.instruction_policy is documentation_allowed.
 - Fill mobile_interaction with a specific touch/small-screen fallback. Fill reset_or_replay with a visible replay affordance.
+
+{VISUAL_ARTIFACT_GUIDANCE}
 
 Experience target:
 {json.dumps(target, separators=(",", ":"), ensure_ascii=True)}
@@ -192,6 +213,7 @@ Experience contract:
 - The task_contract is mandatory. Implement its domain_objects, state_variables, controls, completion_condition, and allowed_patterns. Do not invent decorative controls outside that task model.
 - Implement task_contract.payoff_scene.trigger, scene, and continue_action. This is the user's reward moment; do not reduce it to "confirmed" text.
 - Static first content rule: show meaningful content immediately. Games show board/stage/player/targets/score; apps show sample records/cards/table; product/ecommerce pages show product visual, price/plan, benefits/specs, variants, and checkout/cart/receipt feedback; creative tools show a starter preview/artifact.
+- Visual artifact rule: include at least one content-bearing visual object/stage/output users can name. Panels, buttons, icons, gradients, and decorative backgrounds do not count.
 - Format rules: breakout_paddle plays like Breakout, minesweeper_grid like Minesweeper, tile_merge_2048 like 2048, rhythm_tap like a timing game, etc. Games/quizzes need recognizable names, keyboard/touch/pointer controls, score/result, restart, win/loss/completion, and score plus one meta-reward.
 - Simple game visibility rule: do not ship a splash-only start; show the playable board/stage/cards/player immediately.
 - Workflow rules: saas_replica, commerce, booking, product_or_storefront, data, builder, editor, and tool pages need sample items/options and one obvious action that produces a useful result. A product_or_storefront target must feel like a product/ecommerce website. No blank tables, empty slots, placeholder-only panels, setup-first flows, or decorative-only controls.
@@ -205,7 +227,9 @@ Experience contract:
 - The payoff_scene must appear as an actual UI/state moment: animated delivery route, ticket/pass, cart/receipt, score burst, generated artifact, saved workflow, comparison, report, configured preview, or equivalent format-specific result.
 - Do not ship a slider-only page unless activity_type is interactive_instrument or simulation; even then include a payoff/result/replay beyond changing meter values.
 - The semantic_translation must drive interaction, content, motion, and visual treatment. Include reset/replay and mobile_interaction when declared.
-- Follow title_policy. If an anchor appears in visible title/copy, embody it in at least two UI layers; otherwise keep it implicit and out of major labels.
+- Follow title_policy. If an anchor appears in visible title/copy, embody it in at least two UI layers; otherwise keep it implicit and out of major labels. Avoid material-spec leakage such as "Material:", "Finish:", "Chassis material", or "[anchor] finish" unless the page is a real product/spec comparison and the spec affects the UI.
+
+{VISUAL_ARTIFACT_GUIDANCE}
 
 Local design kit manifest:
 {compact_design_kit_manifest()}

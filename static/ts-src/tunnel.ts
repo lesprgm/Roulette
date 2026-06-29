@@ -45,6 +45,7 @@ const FOV_MIN = 66;
 const FOV_MAX = 76;
 const FOV_LERP = 0.08;
 const FOV_VELOCITY_SCALE = 0.08;
+const TAP_SLOP_PX = 12;
 const NDW_TEST_MODE =
   typeof window !== 'undefined' &&
   new URLSearchParams(window.location.search).has('ndw_test');
@@ -105,6 +106,7 @@ export class InfiniteTunnel {
   private fovVelocity = 0;
   private rngSeedOffset = 0x9e3779b9;
   private assignmentsBySegmentIndex = new Map<number, Record<string, string>>();
+  private pointerDownPoint: { x: number; y: number } | null = null;
   private readonly testMode = NDW_TEST_MODE;
   private placeholderPreviews: QueuePreview[] = [
     { id: 'placeholder:0', title: 'Queue warming...', category: 'placeholder', vibe: 'warming', created_at: 0 },
@@ -143,7 +145,9 @@ export class InfiniteTunnel {
     // Events
     window.addEventListener('scroll', this.handleScroll, { passive: true });
     window.addEventListener('resize', this.handleResize);
-    window.addEventListener('click', this.handleClick);
+    window.addEventListener('pointerdown', this.handlePointerDown, { passive: true });
+    window.addEventListener('pointerup', this.handlePointerUp);
+    window.addEventListener('pointercancel', this.handlePointerCancel);
     window.addEventListener('pointermove', this.handlePointerMove, { passive: true });
   }
 
@@ -537,11 +541,51 @@ export class InfiniteTunnel {
   };
 
   private handlePointerMove = (e: PointerEvent): void => {
-    this.pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
-    this.pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    this.setPointerFromClient(e.clientX, e.clientY);
   };
 
-  private handleClick = (): void => {
+  private handlePointerDown = (e: PointerEvent): void => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    this.pointerDownPoint = { x: e.clientX, y: e.clientY };
+    this.setPointerFromClient(e.clientX, e.clientY);
+  };
+
+  private handlePointerUp = (e: PointerEvent): void => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const start = this.pointerDownPoint;
+    this.pointerDownPoint = null;
+    if (!start) return;
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.hypot(dx, dy) > TAP_SLOP_PX) return;
+
+    this.activateCardAtClientPoint(e.clientX, e.clientY);
+  };
+
+  private handlePointerCancel = (): void => {
+    this.pointerDownPoint = null;
+  };
+
+  private setPointerFromClient(clientX: number, clientY: number): void {
+    this.pointer.x = (clientX / window.innerWidth) * 2 - 1;
+    this.pointer.y = -(clientY / window.innerHeight) * 2 + 1;
+  };
+
+  private handleClick = (e?: MouseEvent): void => {
+    if (e) {
+      this.activateCardAtClientPoint(e.clientX, e.clientY);
+      return;
+    }
+    this.activateCardAtPointer();
+  };
+
+  private activateCardAtClientPoint(clientX: number, clientY: number): void {
+    this.setPointerFromClient(clientX, clientY);
+    this.activateCardAtPointer();
+  }
+
+  private activateCardAtPointer(): void {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const cards: THREE.Object3D[] = [];
     this.segments.forEach(seg => {
@@ -557,7 +601,7 @@ export class InfiniteTunnel {
         this.onCardClick(queueId);
       }
     }
-  };
+  }
 
   // ───────────────────────────────────────────────────────────────────────────
   // Render Loop
@@ -704,7 +748,9 @@ export class InfiniteTunnel {
     }
     window.removeEventListener('scroll', this.handleScroll);
     window.removeEventListener('resize', this.handleResize);
-    window.removeEventListener('click', this.handleClick);
+    window.removeEventListener('pointerdown', this.handlePointerDown);
+    window.removeEventListener('pointerup', this.handlePointerUp);
+    window.removeEventListener('pointercancel', this.handlePointerCancel);
     window.removeEventListener('pointermove', this.handlePointerMove);
     this.renderer.dispose();
     this.container.removeChild(this.renderer.domElement);

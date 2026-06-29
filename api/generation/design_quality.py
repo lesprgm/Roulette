@@ -28,11 +28,25 @@ _PRIMARY_ACTION_RE = re.compile(
 )
 _EMPTY_STAGE_RE = re.compile(r"\b(empty|blank|placeholder|start from scratch|slot\s+\d+|no items|0 items)\b", re.IGNORECASE)
 _TITLE_TEXT_RE = re.compile(r"<(?:title|h1|h2)[^>]*>(.*?)</(?:title|h1|h2)>", re.IGNORECASE | re.DOTALL)
+_STRUCTURAL_VISUAL_RE = re.compile(r"<(?:svg|canvas|figure)\b|<table\b", re.IGNORECASE)
+_CONTENT_VISUAL_TERM_RE = re.compile(
+    r"\b(product|preview|thumbnail|gallery|image|illustration|sprite|player|enemy|target|board|grid|map|route|"
+    r"ticket|receipt|pass|calendar|chart|graph|avatar|record|kanban|card deck|menu item|cart|checkout|"
+    r"artifact|canvas|drawing|sequencer|timeline|itinerary)\b",
+    re.IGNORECASE,
+)
+_CHROME_ONLY_RE = re.compile(r"\b(panel|button|badge|stat|metric|toolbar|sidebar|icon|gradient|background)\b", re.IGNORECASE)
 _MATERIAL_EMBODIMENT_RE = re.compile(
     r"(repeating-linear-gradient|radial-gradient|linear-gradient|::before|::after|border-(?:image|style|radius)|"
     r"box-shadow|filter|feTurbulence|feDisplacementMap|<pattern\b|<mask\b|clip-path|canvas|getContext|"
     r"Mesh(?:Standard|Physical)?Material|texture|grain|fiber|fibre|woven|weave|stitch|stitched|thread|"
     r"fabric|soft|padded|quilt|brushed|polished|metallic|marble|woodgrain|leather|ceramic|glassmorphism)",
+    re.IGNORECASE,
+)
+_MATERIAL_SPEC_LEAK_RE = re.compile(
+    r"\b(?:material|finish|chassis material|surface material)\s*:\s*[a-z][a-z -]{2,}"
+    r"|\b[a-z][a-z -]{2,}\s+finish\b"
+    r"|\b[a-z][a-z -]{2,}\s+alloy\b",
     re.IGNORECASE,
 )
 _COPY_LIMITS = {
@@ -71,6 +85,22 @@ def _contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
 def _copy_limit(contract: Dict[str, Any]) -> Tuple[str, int]:
     density = str(contract.get("copy_density") or "medium")
     return density, _COPY_LIMITS.get(density, _COPY_LIMITS["medium"])
+
+
+def _has_content_visual_artifact(html: str, text: str, plan: Dict[str, Any] | None) -> bool:
+    if _STRUCTURAL_VISUAL_RE.search(html):
+        return True
+    if _CONTENT_VISUAL_TERM_RE.search(text):
+        return True
+    activity = (plan or {}).get("activity_contract") if isinstance(plan, dict) else None
+    if isinstance(activity, dict):
+        variant = str(activity.get("activity_variant") or "").replace("_", " ")
+        family = str(activity.get("activity_family") or "").replace("_", " ")
+        if variant and variant in text.lower():
+            return True
+        if family and family in text.lower():
+            return True
+    return False
 
 
 def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -134,6 +164,11 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
         notes.append("visible copy exposes host/project branding instead of the generated site's own identity")
         score -= 12
 
+    if _MATERIAL_SPEC_LEAK_RE.search(text):
+        tags.append("material_spec_label_leakage")
+        notes.append("material anchor appears as generic spec-label copy instead of embodied surface/form")
+        score -= 10
+
     if control_count and not _PRIMARY_ACTION_RE.search(text):
         tags.append("weak_primary_action")
         notes.append("controls exist but no obvious fun/useful primary action is visible")
@@ -153,6 +188,15 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
         tags.append("weak_focal_point")
         notes.append("no obvious primary stage/region found")
         score -= 10
+
+    if not _has_content_visual_artifact(html, text, plan):
+        tags.append("visual_chrome_only")
+        notes.append("page appears to rely on panels/buttons/backgrounds without a content-bearing visual artifact")
+        score -= 12
+    elif control_count >= 2 and len(_CHROME_ONLY_RE.findall(text)) >= 5 and not _STRUCTURAL_VISUAL_RE.search(html):
+        tags.append("weak_content_visual")
+        notes.append("visible content names a format, but UI chrome appears to dominate over a primary visual object/stage")
+        score -= 6
 
     semantic = (plan or {}).get("semantic_anchors") if isinstance(plan, dict) else None
     if isinstance(semantic, dict) and semantic:
@@ -186,5 +230,6 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
             "color_count": len(colors),
             "control_count": control_count,
             "panel_term_count": len(panel_terms),
+            "has_content_visual_artifact": _has_content_visual_artifact(html, text, plan),
         },
     }

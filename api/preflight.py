@@ -71,6 +71,7 @@ _DYNAMIC_IMPORT_RE = re.compile(r"import\s*\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _DANGEROUS_API_RE = re.compile(
     r"\b(fetch|XMLHttpRequest|WebSocket|Worker|SharedWorker|eval|Function)\b|document\.write\b"
 )
+_SANDBOX_STORAGE_RE = re.compile(r"\b(?:localStorage|sessionStorage)\b")
 _THREE_USAGE_RE = re.compile(
     r"\bTHREE\b|WebGLRenderer|getContext\(\s*['\"](?:webgl|webgl2|experimental-webgl)['\"]",
     re.IGNORECASE,
@@ -510,6 +511,14 @@ def _inspect_html(
                 "block",
                 field,
                 "Inline event handlers are not allowed; wire controls with addEventListener or Alpine x-on/@click.",
+            )
+        )
+    if _SANDBOX_STORAGE_RE.search(html or ""):
+        issues.append(
+            _issue(
+                "block",
+                field,
+                "Direct localStorage/sessionStorage can throw inside the sandboxed iframe; use in-memory state or NDW.utils.store.",
             )
         )
 

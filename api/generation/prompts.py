@@ -36,6 +36,7 @@ PREMIUM BUILD GUIDANCE:
 - Obey the activity_contract before visual decoration: the page must have a concrete task, a real mechanic, visible state, and a payoff.
 - Obey the genre_contract above all style impulses: copy density, palette strategy, instruction policy, chrome policy, and motion language must match the page genre.
 - Use the selected layout, palette, and motion preset intentionally. A local overlay is optional.
+- Include at least one content-bearing visual artifact: board/stage/player, product illustration, map/route, receipt/ticket, record set/chart, canvas/editor preview, or simulator object. More is welcome when it supports the format. Panels, buttons, badges, icons, gradients, and wallpaper do not count.
 - Prefer original inline SVG, CSS-generated artwork, Canvas, or Three.js when it better serves the format. Do not force a stock texture onto every page.
 - Favor cinematic depth, layered parallax, responsive canvases, or restrained Three.js over flat static UI.
 - Preserve clarity through hierarchy and affordances, not tutorial panels.
@@ -58,10 +59,11 @@ GENERAL RULES:
 - Every interactive element referenced in JS must already exist in the DOM before scripts run.
 - CONTROL CONSISTENCY: buttons and keyboard shortcuts must trigger the same function, not near-duplicates.
 - The generated page runs in an iframe sandbox. Do not write host cleanup code; iframe teardown destroys timers, listeners, styles, and WebGL contexts on the next generation.
+- The iframe uses a null origin. Do not use localStorage or sessionStorage directly; use in-memory state, or `NDW.utils.store` only when `/static/js/ndw.js` is loaded.
 
 DO NOT:
 - Do not use inline event handlers (`onclick=""`, `oninput=""`, etc.). Use `addEventListener` after DOM refs exist, or Alpine `x-on`/`@click` for Alpine pages.
-- Do not reference external fonts, CDNs, or fetch remote data.
+- Do not reference external fonts, CDNs, fetch remote data, localStorage, or sessionStorage.
 - Do not leave empty containers or placeholder text like TODO.
 - Do not create duplicate IDs or register duplicate NDW.onPointer/onKey handlers inside loops.
 
@@ -93,6 +95,7 @@ PREMIUM PHYSICS:
 
 INITIAL VISUAL STATE:
 - First paint must be visibly complete before interaction: background treatment, headline, instructions, controls, and ambient motion or particles.
+- First paint must include a content-bearing visual artifact tied to the selected format, not just panels, controls, icons, or a decorative background.
 
 PREMIUM INTROS:
 - GSAP core is a local global. Use it for short intro/reveal sequences, not for hiding all content until animation completes.

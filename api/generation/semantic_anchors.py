@@ -9,7 +9,6 @@ ANCHOR_BUCKETS = {
     "material": [
         "concrete",
         "brass",
-        "charcoal",
         "rubber",
         "copper",
         "wood",
