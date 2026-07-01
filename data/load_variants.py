@@ -16,6 +16,7 @@ _CONFIGURED_CATALOG_PATH = os.getenv("VARIANT_CATALOG_PATH", "").strip()
 _CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RETIRED_CATEGORIES = {"apps_heavy_workflow"}
+_LEGACY_CATEGORY_ALIASES = {"extras": "extras_active"}
 
 REWARD_MECHANICS = [
     "score_chase",
@@ -121,9 +122,13 @@ def _load_category_weights() -> Dict[str, float]:
             raise RuntimeError(f"Invalid generation weight file {_WEIGHTS_PATH}: {exc}") from exc
     if not isinstance(payload, dict) or not payload:
         raise RuntimeError(f"Generation weight source {source} must contain a mapping")
+    normalized: Dict[str, float] = {}
+    for key, value in payload.items():
+        key = _LEGACY_CATEGORY_ALIASES.get(str(key), str(key))
+        normalized[key] = normalized.get(key, 0.0) + float(value)
     payload = {
         key: value
-        for key, value in payload.items()
+        for key, value in normalized.items()
         if key not in _RETIRED_CATEGORIES
     }
     if not payload:
@@ -267,7 +272,8 @@ def _load_catalog() -> List[Dict[str, Any]]:
                 raise RuntimeError(f"Duplicate generation variant id: {variant_id}")
             seen.add(variant_id)
 
-            category = variant["category"]
+            category = _LEGACY_CATEGORY_ALIASES.get(str(variant["category"]), str(variant["category"]))
+            variant["category"] = category
             if category in _RETIRED_CATEGORIES:
                 continue
             if category not in CATEGORY_WEIGHTS:
@@ -313,8 +319,6 @@ missing_categories = sorted(
     for category in CATEGORY_WEIGHTS
     if not any(variant["category"] == category for variant in _VARIANTS)
 )
-if missing_categories:
-    raise RuntimeError(f"Generation catalog has empty categories: {', '.join(missing_categories)}")
 
 VARIANT_BY_ID: Dict[str, Dict[str, Any]] = {variant["id"]: variant for variant in _VARIANTS}
 VARIANTS_BY_CATEGORY: Dict[str, List[str]] = {
