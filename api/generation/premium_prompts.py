@@ -24,6 +24,7 @@ Before final HTML, verify and fix:
 - Useful first screen? yes. Show the board/stage/cards/player/products/sample records/starter artifact immediately; no blank splash, empty container, or generic centered-card shell.
 - Interaction real? yes. Controls visibly change state, score/progress/result, created output, saved selection, checkout/receipt, win/loss, or replay state.
 - Payoff scene real? yes. After the primary action, the page shows the task_contract.payoff_scene result moment, not just a button color change or static confirmation line.
+- Reward contract real? yes. Implement reward_contract.user_action -> immediate_feedback -> progress_state_change -> payoff_moment within 5-15 seconds -> continue_reason.
 - Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant action accent, optional secondary accent, clear state colors, and readable text contrast. Avoid generic AI palettes such as purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected genre explicitly needs that look.
@@ -159,6 +160,7 @@ Goals:
 - Material anchors must be synthesized with browser-native code when used visibly: CSS repeating gradients, layered backgrounds, pseudo-elements, border styles, inline SVG patterns/filters, Canvas procedural strokes/noise, or Three.js material only when the selected page already needs 3D.
 - Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
 - task_contract.payoff_scene is mandatory: it defines what satisfying thing happens after the primary action and why a user would keep going.
+- reward_contract is mandatory: every site must produce a visible payoff within 5-15 seconds. Do not use a decorative color change as the reward.
 - Fill semantic_translation by translating every semantic anchor into visual_role, interaction_role, content_role, and motion_role.
 - Fill activity_type, activity_contract.activity_variant, activity_contract.core_mechanic, and activity_contract.library_profile before style decisions. The activity must be a concrete mini app/game/tool/workflow, not a decorative control panel or abstract metaphor.
 - Fill genre_contract as the art-direction governor. Copy density, instruction policy, palette strategy, visual density, motion language, and chrome policy must form one coherent genre instead of independent random choices.
@@ -212,6 +214,7 @@ Experience contract:
 - The selected activity_contract.activity_variant is the product. Semantic anchors are flavor and must never rename, obscure, or replace the recognizable format.
 - The task_contract is mandatory. Implement its domain_objects, state_variables, controls, completion_condition, and allowed_patterns. Do not invent decorative controls outside that task model.
 - Implement task_contract.payoff_scene.trigger, scene, and continue_action. This is the user's reward moment; do not reduce it to "confirmed" text.
+- Implement reward_mechanic and reward_contract exactly: user action, immediate feedback, progress/state change, payoff moment within 5-15 seconds, and reason to continue. A button changing color is not a payoff.
 - Static first content rule: show meaningful content immediately. Games show board/stage/player/targets/score; apps show sample records/cards/table; product/ecommerce pages show product visual, price/plan, benefits/specs, variants, and checkout/cart/receipt feedback; creative tools show a starter preview/artifact.
 - Visual artifact rule: include at least one content-bearing visual object/stage/output users can name. Panels, buttons, icons, gradients, and decorative backgrounds do not count.
 - Format rules: breakout_paddle plays like Breakout, minesweeper_grid like Minesweeper, tile_merge_2048 like 2048, rhythm_tap like a timing game, etc. Games/quizzes need recognizable names, keyboard/touch/pointer controls, score/result, restart, win/loss/completion, and score plus one meta-reward.

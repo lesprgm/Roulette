@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 
 from data.load_variants import (
     FORMAT_PATTERN_GROUPS,
+    REWARD_MECHANIC_MAP,
     VARIANT_TASK_OVERRIDES,
 )
 
@@ -79,6 +80,7 @@ def _fallback_task(activity_variant: str, activity_type: str) -> Dict[str, Any]:
 
 def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict[str, Any]:
     base = dict(VARIANT_TASK_OVERRIDES.get(activity_variant) or _fallback_task(activity_variant, activity_type))
+    reward_contract = reward_contract_for_variant(activity_variant, activity_type)
     payoff_scene = _payoff_scene_for(base["format"], activity_type)
     controls = [
         {
@@ -99,6 +101,8 @@ def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict
         )
     return {
         **base,
+        "reward_mechanic": reward_contract["reward_mechanic"],
+        "reward_contract": reward_contract,
         "payoff_scene": payoff_scene,
         "controls": controls,
         "retention_contract": _retention_contract_for_category(_category_for_variant(activity_variant, activity_type)),
@@ -107,6 +111,107 @@ def task_contract_for_variant(activity_variant: str, activity_type: str) -> Dict
             "ambient_background": "optional_subtle",
             "motion_only_for": ["state feedback", "progress", "success", "failure", "focus"],
         },
+    }
+
+
+def reward_contract_for_variant(activity_variant: str, activity_type: str) -> Dict[str, str]:
+    mechanic = REWARD_MECHANIC_MAP.get(activity_variant, "completion_meter")
+    readable = activity_variant.replace("_", " ")
+    defaults = {
+        "score_chase": (
+            f"make a scored move in {readable}",
+            "score and correctness feedback update immediately",
+            "score, streak, and current round state change",
+            "show a visible score/result moment within 5-15 seconds",
+            "try again to improve the score",
+        ),
+        "completion_meter": (
+            f"complete steps in {readable}",
+            "progress advances immediately",
+            "completion meter and current task state change",
+            "show a completed state or final summary within 5-15 seconds",
+            "finish the remaining steps or replay",
+        ),
+        "collection_discovery": (
+            f"inspect, filter, or collect items in {readable}",
+            "selected items visibly reveal details or move into a collection",
+            "collection count, saved set, or discovery state changes",
+            "show a collection/progress payoff within 5-15 seconds",
+            "keep finding, filtering, or completing the set",
+        ),
+        "surprise_transformation": (
+            f"manipulate the main object or scene in {readable}",
+            "the scene transforms, reacts, or chains visibly",
+            "object state, scene state, or reaction level changes",
+            "show a surprising transformation within 5-15 seconds",
+            "remix, reset, or trigger another reaction",
+        ),
+        "generated_artifact": (
+            f"create or configure an artifact in {readable}",
+            "preview updates immediately",
+            "artifact settings, layers, or output state change",
+            "show a finished preview/export/save moment within 5-15 seconds",
+            "remix, save, export, or generate another version",
+        ),
+        "route_or_progress_payoff": (
+            f"select a route, booking, order, or destination in {readable}",
+            "route/progress/ETA updates immediately",
+            "selection, status, and progress state change",
+            "show a ticket, receipt, route, ETA, or tracker within 5-15 seconds",
+            "track, edit, compare, or reserve again",
+        ),
+        "comparison_reveal": (
+            f"choose options to compare in {readable}",
+            "comparison or ranking updates immediately",
+            "selected option, scorecard, or recommendation state changes",
+            "show a clear winner/result/recommendation within 5-15 seconds",
+            "compare another option or refine filters",
+        ),
+        "unlock_sequence": (
+            f"complete a sequence in {readable}",
+            "the next step unlocks immediately",
+            "unlocked stage, progress, or clue state changes",
+            "show an unlocked stage or completion reveal within 5-15 seconds",
+            "continue to the next stage or replay",
+        ),
+        "tactile_satisfaction": (
+            f"tap, drag, pop, stretch, or flick in {readable}",
+            "surface/object feedback happens immediately",
+            "cleared, stretched, popped, settled, or reset state changes",
+            "show a satisfying clear/settle/pop/reset moment within 5-15 seconds",
+            "repeat, reset, or try a new tactile variation",
+        ),
+        "high_score_retry": (
+            f"play a round of {readable}",
+            "score, collision, hit, combo, or movement feedback updates immediately",
+            "score, lives, best score, or round state changes",
+            "show a result/game-over/level-clear moment within 5-15 seconds",
+            "replay to beat the score",
+        ),
+        "before_after_reveal": (
+            f"apply a transformation in {readable}",
+            "before/after preview updates immediately",
+            "selected input and comparison state change",
+            "show a before/after reveal within 5-15 seconds",
+            "tune again or compare another transformation",
+        ),
+        "checkout_or_receipt_payoff": (
+            f"select and confirm an item in {readable}",
+            "cart/summary updates immediately",
+            "selected variant, total, and checkout state change",
+            "show a receipt, confirmation, selected plan, or cart payoff within 5-15 seconds",
+            "edit cart, checkout, compare, or restart selection",
+        ),
+    }
+    action, feedback, state, payoff, continue_reason = defaults.get(mechanic, defaults["completion_meter"])
+    return {
+        "reward_mechanic": mechanic,
+        "user_action": action,
+        "immediate_feedback": feedback,
+        "progress_state_change": state,
+        "payoff_moment": payoff,
+        "continue_reason": continue_reason,
+        "time_to_payoff": "5-15 seconds",
     }
 
 

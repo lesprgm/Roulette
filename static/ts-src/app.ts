@@ -26,6 +26,7 @@ let activeSiteFrame: HTMLIFrameElement | null = null;
 const SANDBOX_SCOPE = '#ndw-sandbox';
 const QUERY_PARAMS = new URLSearchParams(window.location.search);
 const NDW_TEST_MODE = QUERY_PARAMS.has('ndw_test');
+const NDW_DEBUG_MODE = QUERY_PARAMS.has('debug') || QUERY_PARAMS.has('ndw_debug');
 const NDW_TEST_DEBUG_PREVIEWS = NDW_TEST_MODE && QUERY_PARAMS.has('ndw_test_debug');
 let previewStatusBound = false;
 
@@ -198,6 +199,7 @@ function ensureScrollableBody() {
 }
 
 function ensureJsonOverlay() {
+  if (!NDW_DEBUG_MODE) return;
   if (document.getElementById('jsonOverlay')) return;
   const wrap = document.createElement('div');
   wrap.id = 'jsonOverlay';
@@ -218,6 +220,7 @@ function ensureJsonOverlay() {
 }
 
 export function updateJsonOut(data: any) {
+  if (!NDW_DEBUG_MODE) return;
   const jsonOut = document.getElementById('jsonOut');
   if (!jsonOut) return;
   try {
@@ -568,8 +571,6 @@ export function initApp() {
   installEvalHook();
   bindPreviewStatusEvents();
   ensureFloatingGenerate();
-  ensureSitesCounterOverlay();
-  refreshSitesCounter();
   renderLanding();
 }
 
@@ -610,6 +611,7 @@ export function renderDocForPreview(doc: AppNormalizedDoc) {
   try {
     document.body.classList.add('generated-mode');
     document.body.classList.remove('landing-mode');
+    removeSitesCounterOverlay();
   } catch (_) {
     // Ignore DOM errors in headless preview mode.
   }
@@ -817,7 +819,6 @@ async function generateNew(e?: Event) {
       await openShutter();
       shutterOpened = true;
     }
-    await refreshSitesCounter();
   };
 
   const renderFollowupPage = async (page: any) => {
@@ -828,7 +829,6 @@ async function generateNew(e?: Event) {
       await enterSite(page);
     }
     updateJsonOut(page);
-    await refreshSitesCounter();
   };
 
   const handleEvent = async (event: string, data: any) => {
@@ -1016,7 +1016,6 @@ function ensureFloatingGenerate() {
     return;
   }
   document.getElementById('floatingGenerateWrap')?.remove();
-  ensureSitesCounterOverlay();
   const generateWrap = document.createElement('div');
   generateWrap.id = 'floatingGenerateWrap';
   generateWrap.innerHTML = buildFloatingGenerateMarkup();
@@ -1076,7 +1075,6 @@ async function loadPrefetchSite(id: string) {
     
     // Open shutter
     await openShutter();
-    await refreshSitesCounter();
     
   } catch (e) {
     console.error('Prefetch load error:', e);
@@ -1132,18 +1130,21 @@ function renderLanding() {
   destroyActiveSiteFrame();
   setLandingFallbackVisible(false);
   renderTestPreviewDock([]);
+  lockHeroOverlay();
+  showHeroOverlay();
+  ensureSitesCounterOverlay();
+  void refreshSitesCounter();
   if (NDW_TEST_MODE) {
     void primeTestPreviewStatus();
   } else {
     // Initialize 3D Tunnel
     initTunnel().catch(e => console.error('[ndw] Tunnel init failed', e));
   }
-  lockHeroOverlay();
-  showHeroOverlay();
   setupLandingCues();
 }
 
 function ensureSitesCounterOverlay() {
+  if (!document.body.classList.contains('landing-mode')) return;
   if (document.getElementById('sitesCounterFloating')) return;
   const wrap = document.createElement('div');
   wrap.id = 'sitesCounterFloating';
@@ -1153,6 +1154,10 @@ function ensureSitesCounterOverlay() {
     <div id="sitesCounterModeMount" class="ndw-sites-mode-mount"></div>
   `;
   document.body.appendChild(wrap);
+}
+
+function removeSitesCounterOverlay() {
+  document.getElementById('sitesCounterFloating')?.remove();
 }
 
 async function refreshSitesCounter() {
@@ -1202,8 +1207,7 @@ function resetFullPageHostRoot(target: HTMLElement | null) {
 
 function postRenderCommon() {
   ensureFloatingGenerate();
-  ensureSitesCounterOverlay();
-  void refreshSitesCounter();
+  removeSitesCounterOverlay();
   adaptGenerateButtons();
   ensureScrollableBody();
   upsertTitleOverlay(undefined);
@@ -1375,13 +1379,3 @@ function stopVerbRotator() {
     _verbInterval = null;
   }
 }
-
-const _origEnterSite = enterSite;
-async function enterSiteWithCounter(doc: any) {
-  await _origEnterSite(doc);
-  if (doc && !doc.error) {
-    await refreshSitesCounter();
-  }
-}
-// @ts-ignore
-enterSite = enterSiteWithCounter;

@@ -8,6 +8,7 @@ from data.load_variants import (
     ALL_FORMATS,
     CORE_MECHANICS,
     FORMAT_VARIANT_SPECS,
+    PRODUCT_FORMATS,
     choose_weighted_variant,
     validate_catalog_domains,
 )
@@ -370,6 +371,7 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
         "activity_type": activity_type,
         "activity_variant": activity_variant,
         "core_mechanic": mechanic,
+        "reward_mechanic": spec["reward_mechanic"],
         "library_profile": library_profile,
         "activity_goal": "Implement the selected recognizable format as the product, with semantic anchors used only as flavor.",
         "required_actions": _required_actions_for_mechanic(mechanic),

@@ -649,6 +649,8 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
     return {
         **target,
         **experience_fields,
+        "reward_mechanic": task.get("reward_mechanic"),
+        "reward_contract": task.get("reward_contract"),
         "semantic_anchors": anchors,
         "semantic_translation": _semantic_translation_from_anchors(anchors, task),
         "task_contract": task,
@@ -686,6 +688,8 @@ def _call_gemini_premium_plan(
         out["primary_loop_type"] = experience_target["primary_loop_type"]
         out["semantic_anchors"] = experience_target["semantic_anchors"]
         out["activity_type"] = experience_target["activity_type"]
+        out["reward_mechanic"] = experience_target["reward_mechanic"]
+        out["reward_contract"] = experience_target["reward_contract"]
         out["activity_contract"] = experience_target["activity_contract"]
         out["task_contract"] = experience_target["task_contract"]
         out["genre_contract"] = experience_target["genre_contract"]

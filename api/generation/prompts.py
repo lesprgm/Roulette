@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from api.design_kit import DESIGN_KIT_MANIFEST
+from data.load_variants import REWARD_MECHANICS
 from api.generation.experience_grammar import (
     AFFORDANCE_PATTERNS,
     ACTIVITY_TYPES,
@@ -160,6 +161,30 @@ def _semantic_role_schema() -> dict:
     }
 
 
+def _reward_contract_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "reward_mechanic": {"type": "string", "enum": REWARD_MECHANICS},
+            "user_action": {"type": "string", "minLength": 4},
+            "immediate_feedback": {"type": "string", "minLength": 4},
+            "progress_state_change": {"type": "string", "minLength": 4},
+            "payoff_moment": {"type": "string", "minLength": 4},
+            "continue_reason": {"type": "string", "minLength": 4},
+            "time_to_payoff": {"type": "string", "minLength": 4},
+        },
+        "required": [
+            "reward_mechanic",
+            "user_action",
+            "immediate_feedback",
+            "progress_state_change",
+            "payoff_moment",
+            "continue_reason",
+            "time_to_payoff",
+        ],
+    }
+
+
 _ANCHOR_KEYS = [
     "material",
     "everyday_object",
@@ -185,6 +210,8 @@ PREMIUM_PLAN_SCHEMA = {
         "visitor_role": {"type": "string", "minLength": 4},
         "visitor_goal": {"type": "string", "minLength": 8},
         "activity_type": {"type": "string", "enum": ACTIVITY_TYPES},
+        "reward_mechanic": {"type": "string", "enum": REWARD_MECHANICS},
+        "reward_contract": _reward_contract_schema(),
         "activity_contract": {
             "type": "object",
             "properties": {
@@ -194,6 +221,7 @@ PREMIUM_PLAN_SCHEMA = {
                     "enum": ALL_FORMATS,
                 },
                 "core_mechanic": {"type": "string", "enum": MECHANIC_PATTERNS},
+                "reward_mechanic": {"type": "string", "enum": REWARD_MECHANICS},
                 "library_profile": {"type": "string", "enum": LIBRARY_PROFILES},
                 "activity_goal": {"type": "string", "minLength": 8},
                 "required_actions": {
@@ -212,6 +240,7 @@ PREMIUM_PLAN_SCHEMA = {
                 "activity_type",
                 "activity_variant",
                 "core_mechanic",
+                "reward_mechanic",
                 "library_profile",
                 "activity_goal",
                 "required_actions",
@@ -241,6 +270,8 @@ PREMIUM_PLAN_SCHEMA = {
                     },
                 },
                 "completion_condition": {"type": "string", "minLength": 8},
+                "reward_mechanic": {"type": "string", "enum": REWARD_MECHANICS},
+                "reward_contract": _reward_contract_schema(),
                 "payoff_scene": {
                     "type": "object",
                     "properties": {
@@ -268,6 +299,8 @@ PREMIUM_PLAN_SCHEMA = {
                 "state_variables",
                 "controls",
                 "completion_condition",
+                "reward_mechanic",
+                "reward_contract",
                 "payoff_scene",
                 "error_states",
                 "allowed_patterns",
@@ -417,6 +450,8 @@ PREMIUM_PLAN_SCHEMA = {
         "visitor_role",
         "visitor_goal",
         "activity_type",
+        "reward_mechanic",
+        "reward_contract",
         "activity_contract",
         "task_contract",
         "genre_contract",

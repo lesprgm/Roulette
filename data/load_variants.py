@@ -17,6 +17,52 @@ _CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RETIRED_CATEGORIES = {"apps_heavy_workflow"}
 
+REWARD_MECHANICS = [
+    "score_chase",
+    "completion_meter",
+    "collection_discovery",
+    "surprise_transformation",
+    "generated_artifact",
+    "route_or_progress_payoff",
+    "comparison_reveal",
+    "unlock_sequence",
+    "tactile_satisfaction",
+    "high_score_retry",
+    "before_after_reveal",
+    "checkout_or_receipt_payoff",
+]
+
+
+def _default_reward_mechanic(variant: Mapping[str, Any]) -> str:
+    category = str(variant.get("category") or "")
+    activity_type = str(variant.get("activity_type") or "")
+    text = " ".join(str(variant.get(key) or "") for key in ("id", "format_name", "core_mechanic", "completion_condition")).lower()
+    if category == "products":
+        if any(term in text for term in ("delivery", "booking", "ticket", "travel")):
+            return "route_or_progress_payoff"
+        if any(term in text for term in ("pricing", "comparison", "marketplace")):
+            return "comparison_reveal"
+        return "checkout_or_receipt_payoff"
+    if category == "games" or activity_type in {"platformer", "snake_game", "microgame"}:
+        if any(term in text for term in ("quiz", "trivia", "answer")):
+            return "score_chase"
+        if any(term in text for term in ("memory", "word", "puzzle", "sudoku", "solitaire")):
+            return "completion_meter"
+        return "high_score_retry"
+    if any(term in text for term in ("route", "map", "delivery", "booking", "travel")):
+        return "route_or_progress_payoff"
+    if any(term in text for term in ("compare", "comparison", "budget", "expense", "scale")):
+        return "comparison_reveal"
+    if any(term in text for term in ("draw", "poster", "palette", "sequencer", "builder", "studio", "generator")):
+        return "generated_artifact"
+    if any(term in text for term in ("sand", "weather", "growth", "simulator", "mixer")):
+        return "surprise_transformation"
+    if category == "extras_ambient":
+        return "tactile_satisfaction"
+    if category == "extras_active":
+        return "collection_discovery"
+    return "completion_meter"
+
 
 def _load_combined_catalog() -> tuple[Dict[str, Any] | None, Path | None]:
     path = Path(_CONFIGURED_CATALOG_PATH).expanduser() if _CONFIGURED_CATALOG_PATH else None
@@ -237,6 +283,10 @@ def _load_catalog() -> List[Dict[str, Any]]:
             for key in ("activity_type", "core_mechanic", "format_name", "user_goal", "completion_condition", "primary_action", "family"):
                 if not isinstance(variant[key], str) or not variant[key].strip():
                     raise RuntimeError(f"{location} has invalid {key}")
+            if not variant.get("reward_mechanic"):
+                variant["reward_mechanic"] = _default_reward_mechanic(variant)
+            if variant["reward_mechanic"] not in REWARD_MECHANICS:
+                raise RuntimeError(f"{location} has unknown reward_mechanic {variant['reward_mechanic']!r}")
             if "ritual" in " ".join(
                 str(variant.get(key, "")).lower()
                 for key in ("activity_type", "experience_archetype", "pattern_group", "family")
@@ -276,7 +326,9 @@ GAME_FORMATS = VARIANTS_BY_CATEGORY["games"]
 PRODUCT_FORMATS = VARIANTS_BY_CATEGORY["products"]
 RETENTION_TOY_FORMATS = VARIANTS_BY_CATEGORY["toys"]
 LOW_FRICTION_APP_FORMATS = VARIANTS_BY_CATEGORY["apps_low_friction"]
-EXTRAS = VARIANTS_BY_CATEGORY["extras"]
+EXTRAS_ACTIVE = VARIANTS_BY_CATEGORY["extras_active"]
+EXTRAS_AMBIENT = VARIANTS_BY_CATEGORY["extras_ambient"]
+EXTRAS = EXTRAS_ACTIVE + EXTRAS_AMBIENT
 APP_FORMATS = LOW_FRICTION_APP_FORMATS
 TOOL_FORMATS = [variant["id"] for variant in _VARIANTS if variant.get("is_tool") is True]
 ALL_FORMATS = [variant["id"] for variant in _VARIANTS]
@@ -288,6 +340,7 @@ FORMAT_VARIANT_SPECS: Dict[str, Dict[str, Any]] = {
         "experience_archetype": variant["experience_archetype"],
         "primary_loop_type": variant["primary_loop_type"],
         "family": variant["family"],
+        "reward_mechanic": variant["reward_mechanic"],
     }
     for variant in _VARIANTS
 }
@@ -312,6 +365,7 @@ PATTERN_GROUP_MAP = {
     for variant in _VARIANTS
 }
 ACTIVITY_FAMILY_MAP = {variant["id"]: variant["family"] for variant in _VARIANTS}
+REWARD_MECHANIC_MAP = {variant["id"]: variant["reward_mechanic"] for variant in _VARIANTS}
 CORE_MECHANICS = list(dict.fromkeys(variant["core_mechanic"] for variant in _VARIANTS))
 
 # Compatibility export for schema construction and deterministic fallback iteration.

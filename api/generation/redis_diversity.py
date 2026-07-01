@@ -152,6 +152,12 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
     activity_contract = plan.get("activity_contract") if isinstance(plan.get("activity_contract"), dict) else {}
     task_contract = plan.get("task_contract") if isinstance(plan.get("task_contract"), dict) else {}
     activity_variant = activity_contract.get("activity_variant") or task_contract.get("format") or ""
+    reward_mechanic = (
+        plan.get("reward_mechanic")
+        or task_contract.get("reward_mechanic")
+        or activity_contract.get("reward_mechanic")
+        or ""
+    )
     cell = {
         "experience_archetype": plan.get("experience_archetype") or "unknown",
         "primary_loop_type": plan.get("primary_loop_type") or "unknown",
@@ -165,6 +171,7 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "activity_type": plan.get("activity_type") or activity_contract.get("activity_type") or "",
         "activity_variant": activity_variant,
         "activity_family": activity_family_for_variant(str(activity_variant)),
+        "reward_mechanic": reward_mechanic,
         "task_format": task_contract.get("format") or "",
         "task_goal": task_contract.get("user_goal") or "",
         "task_domain_objects": task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else [],
@@ -247,9 +254,11 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:primary_loop_type", 1, str(descriptor["primary_loop_type"]))
         pipe.zincrby("qd:count:activity_variant", 1, str(descriptor["activity_variant"]))
         pipe.zincrby("qd:count:activity_family", 1, str(descriptor["activity_family"]))
+        pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
         pipe.zadd("qd:last_used:experience_cell", {cell_key: int(time.time())})
         pipe.zadd("qd:last_used:activity_variant", {str(descriptor["activity_variant"]): int(time.time())})
         pipe.zadd("qd:last_used:activity_family", {str(descriptor["activity_family"]): int(time.time())})
+        pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
         pipe.zadd("qd:avg_quality:experience_cell", {cell_key: quality_norm})
         pipe.hincrby(f"qd:cell:{cell_key}", "count", 1)
         pipe.hset(
@@ -267,6 +276,7 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
             "site_id": site_id,
             "experience_archetype": descriptor["experience_archetype"],
             "primary_loop_type": descriptor["primary_loop_type"],
+            "reward_mechanic": descriptor["reward_mechanic"],
             "quality_score": descriptor["quality_score"],
             "experience_score": descriptor["experience_score"],
         }, client=redis_client)

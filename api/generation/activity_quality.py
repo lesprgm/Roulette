@@ -64,6 +64,17 @@ def _task_contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
     return contract if isinstance(contract, dict) else {}
 
 
+def _reward_contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(plan, dict):
+        return {}
+    contract = plan.get("reward_contract")
+    if isinstance(contract, dict):
+        return contract
+    task = _task_contract(plan)
+    contract = task.get("reward_contract")
+    return contract if isinstance(contract, dict) else {}
+
+
 def _has_any_term(text: str, values: List[Any]) -> bool:
     return any(str(value or "").strip().lower() in text for value in values if str(value or "").strip())
 
@@ -79,8 +90,29 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
     text = _visible_text(html)
     contract = _activity_contract(plan)
     task_contract = _task_contract(plan)
+    reward_contract = _reward_contract(plan)
     activity_type = str((plan or {}).get("activity_type") or contract.get("activity_type") or "")
     activity_variant = str(contract.get("activity_variant") or "")
+    task_format = str(task_contract.get("format") or "")
+    task_head = task_format.split("_", 1)[0]
+    variant_head = activity_variant.split("_", 1)[0]
+    if (
+        activity_variant
+        and task_format
+        and task_format != activity_variant
+        and activity_variant not in task_format
+        and task_format not in activity_variant
+        and task_head != variant_head
+    ):
+        task_contract = {}
+        reward_contract = _reward_contract({"reward_contract": (plan or {}).get("reward_contract"), "activity_contract": contract})
+    reward_mechanic = str(
+        (plan or {}).get("reward_mechanic")
+        or reward_contract.get("reward_mechanic")
+        or task_contract.get("reward_mechanic")
+        or contract.get("reward_mechanic")
+        or ""
+    )
     tags: List[str] = []
     notes: List[str] = []
     score = 100
@@ -97,6 +129,44 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
     task_completion = str(task_contract.get("completion_condition") or "").strip()
     payoff_scene = task_contract.get("payoff_scene") if isinstance(task_contract.get("payoff_scene"), dict) else {}
     payoff_scene_text = " ".join(str(payoff_scene.get(key) or "") for key in ("trigger", "scene", "continue_action")).strip()
+    if not reward_contract:
+        legacy_payoff = str(contract.get("payoff") or task_completion or payoff_scene_text or "").strip()
+        if legacy_payoff:
+            reward_mechanic = reward_mechanic or "completion_meter"
+            reward_contract = {
+                "reward_mechanic": reward_mechanic,
+                "user_action": str(contract.get("activity_goal") or task_contract.get("user_goal") or "use the main action"),
+                "immediate_feedback": "visible state updates immediately",
+                "progress_state_change": legacy_payoff,
+                "payoff_moment": legacy_payoff,
+                "continue_reason": str((payoff_scene or {}).get("continue_action") or "reset or continue"),
+                "time_to_payoff": "5-15 seconds",
+            }
+
+    if not reward_mechanic or not reward_contract:
+        tags.append("reward_mechanic_missing")
+        notes.append("plan lacks reward_mechanic or deterministic reward_contract")
+        score -= 10
+    else:
+        feedback = str(reward_contract.get("immediate_feedback") or "").strip()
+        continue_reason = str(reward_contract.get("continue_reason") or "").strip()
+        payoff_moment = str(reward_contract.get("payoff_moment") or "").strip()
+        if not feedback or (controls > 0 and not (has_events and has_state)):
+            tags.append("no_immediate_feedback")
+            notes.append("reward_contract does not have clear immediate feedback in the rendered interaction")
+            score -= 8
+        if not continue_reason or not re.search(r"\b(reset|restart|again|replay|continue|next|compare|edit|track|save|export|beat|refine|remix)\b", text, re.IGNORECASE):
+            tags.append("no_continue_reason")
+            notes.append("reward_contract does not produce a clear continue/replay reason in the UI")
+            score -= 8
+        if not has_payoff:
+            tags.append("payoff_too_weak")
+            notes.append("reward_contract payoff is not visibly represented as score, receipt, route, artifact, collection, unlock, comparison, or completion")
+            score -= 10
+        if reward_mechanic == "tactile_satisfaction" and _VISUAL_ONLY_RE.search(text) and not re.search(r"\b(pop|clear|cleared|reset|settle|stretch|bounce|burst|complete|score)\b", text, re.IGNORECASE):
+            tags.append("ambient_reward_overused")
+            notes.append("tactile/ambient reward lacks visible completion, reset, or satisfying payoff language")
+            score -= 6
 
     if controls and ranges == controls and activity_type not in {"interactive_instrument", "simulation"}:
         tags.append("slider_only_activity")
@@ -157,12 +227,13 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             notes.append("completion condition is not visible as result/status/score/preview")
             score -= 10
 
-        if not payoff_scene:
+        if not payoff_scene and not reward_contract:
             tags.append("payoff_scene_missing")
             notes.append("task_contract does not define a specific payoff_scene")
             score -= 10
         elif not _PAYOFF_RE.search(text):
             tags.append("payoff_scene_not_visible")
+            tags.append("payoff_too_weak")
             notes.append("payoff_scene exists but no visible receipt/result/score/route/ticket/preview payoff appears")
             score -= 10
         elif payoff_scene_text and not any(term in text for term in _payoff_keywords(payoff_scene_text)):
@@ -253,6 +324,7 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         "darts_scoring": r"\b(dart|throw|bullseye|score|target|board)\b",
         "bowling_arcade": r"\b(bowling|pin|roll|ball|strike|spare|lane)\b",
         "air_hockey": r"\b(air|hockey|puck|striker|goal|table)\b",
+        "kanban_workspace": r"\b(kanban|project|task|card|column|record|save|shortlist)\b",
         "calendar_scheduler": r"\b(calendar|schedule|event|time slot|meeting|date)\b",
         "travel_booking": r"\b(travel|booking|flight|hotel|itinerary|reserve)\b",
         "restaurant_ordering": r"\b(menu|order|cart|table|checkout|restaurant)\b",
@@ -365,6 +437,8 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         "metrics": {
             "activity_type": activity_type,
             "activity_variant": activity_variant,
+            "reward_mechanic": reward_mechanic,
+            "reward_contract_present": bool(reward_contract),
             "control_count": controls,
             "range_control_count": ranges,
             "has_events": has_events,
