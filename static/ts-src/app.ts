@@ -846,6 +846,9 @@ async function generateNew(e?: Event) {
         showError(`Rate limit hit. Try again in ${waitSecs} seconds.`);
       } else if (errMsg === 'model_quota_exhausted') {
         showError('Both AI models are tapped out for the day. Come back tomorrow.');
+      } else if (errMsg === 'model_temporarily_unavailable') {
+        const waitSecs = data?.retry_after_seconds || 180;
+        showError(`The AI is overloaded right now. Try again in about ${waitSecs} seconds.`);
       } else {
         showError('The wheel hit a snag. Give it another spin?');
       }

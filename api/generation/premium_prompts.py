@@ -18,7 +18,7 @@ PREMIUM_SELF_REVIEW_CHECKLIST = f"""
 Before final HTML, verify and fix:
 - Forbidden APIs used? no. Do not use fetch, XMLHttpRequest, WebSocket, Worker, SharedWorker, eval, Function, or document.write.
 - Remote resources used? no. No remote scripts, styles, images, media, fonts, or CSS url() assets.
-- Local scripts/imports only? yes. Allowed script src values are `/static/vendor/tailwind-play.js`, `/static/vendor/gsap.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, and `/static/js/ndw.js`; do not invent plugin paths such as ScrollTrigger or Draggable. Three.js imports must use `/static/vendor/three.module.js`; addons may only use `/static/vendor/three-addons/controls/OrbitControls.js`, `EffectComposer.js`, `RenderPass.js`, or `UnrealBloomPass.js`.
+- Local scripts/imports only? yes. Allowed script src values are `/static/vendor/tailwind-play.js`, `/static/vendor/gsap.min.js`, `/static/vendor/Draggable.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, `/static/vendor/paper-shaders/ndw-paper.js`, and `/static/js/ndw.js`; do not invent plugin paths such as ScrollTrigger. Three.js imports must use `/static/vendor/three.module.js`; addons may only use local OrbitControls, DragControls, TransformControls, CSS2DRenderer, EffectComposer, RenderPass, or UnrealBloomPass files. Paper Shaders should use the allowed script src and global `mountPaperShader(...)`; module imports are also allowed from local `/static/vendor/paper-shaders/` modules.
 - Complete and substantial? yes. Include doctype/html/head/body, visible #ndw-content, and Final HTML must be at least {PREMIUM_BURST_MIN_HTML_BYTES} bytes.
 - Format and task intact? yes. activity_contract.activity_variant is the product; semantic anchors flavor it but must never rename, obscure, or replace it.
 - Useful first screen? yes. Show the board/stage/cards/player/products/sample records/starter artifact immediately; no blank splash, empty container, or generic centered-card shell.
@@ -26,6 +26,7 @@ Before final HTML, verify and fix:
 - Payoff scene real? yes. After the primary action, the page shows the task_contract.payoff_scene result moment, not just a button color change or static confirmation line.
 - Reward contract real? yes. Implement reward_contract.user_action -> immediate_feedback -> progress_state_change -> payoff_moment within 5-15 seconds -> continue_reason.
 - Event wiring reliable? yes. No inline onclick/oninput/onchange handlers; use addEventListener after DOM refs exist, or Alpine x-on/@click when the selected library_profile is alpine_ui_state.
+- Alpine state order reliable? yes. If using `x-data="storeName()"`, define `window.storeName = () => ({...})` before loading `/static/vendor/alpine.min.js`, or use an inline x-data object.
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant action accent, optional secondary accent, clear state colors, and readable text contrast. Avoid generic AI palettes such as purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected genre explicitly needs that look.
 - Semantic anchors embodied or hidden? yes. Any visible anchor word in title/copy is also expressed through material, shape, texture, motion, interaction feedback, or UI metaphor. Do not expose material anchors as spec labels such as "Material:", "Finish:", "Chassis material:", or "[material] finish"; if the material is not part of a real product spec, keep it visual only.
@@ -87,6 +88,7 @@ Experience contract for every site:
 - Product/storefront pages need product hero, price/plan, benefits/specs, variant selector, and add-to-cart/reserve/buy/compare action with checkout/cart/receipt/selected-plan payoff.
 - Creative tools need a created/configured/composed output. Puzzle boxes need clues or visible puzzle-state changes; do not default to hidden-object reveals.
 - Use physical metaphors only when they clarify interaction: arcade cabinet, board, deck, receipt, ticket printer, paper tray, counter, dial, workbench, cards, shelves, map, or machine.
+- Paper Shaders is optional for one content-bearing material/hero surface only. If used, include `<script src="/static/vendor/paper-shaders/ndw-paper.js"></script>`, call global `mountPaperShader(...)`, choose one preset from `paperTexture`, `staticMeshGradient`, `grainGradient`, `halftoneDots`, `halftoneCMYK`, `flutedGlass`, `liquidMetal`, `godRays`, `smokeRing`, `gemSmoke`, `water`, `neuroNoise`, `voronoi`, or `metaballs`, and keep it tied to the selected format. Do not use it as generic wave/grid wallpaper.
 - Follow activity_contract.library_profile. Use the matching local primitive deeply: NDW for canvas/game loops, Alpine for app/tool/commerce UI state, Matter for physics games/toys, GSAP for DOM state choreography, Lucide for app/workspace affordances, or Three.js for one explorable spatial focal scene.
 - Make the premise and first action visible without literal planning labels or tutorial sections. Ban visible headings like "Onboarding", "Instructions", "Visitor Role", "Primary Loop", and "Feedback Contract" unless documentation_allowed.
 - Respect each site's genre_contract when present: copy density, instruction policy, chrome policy, palette strategy, and motion language.
@@ -118,7 +120,7 @@ Local design kit manifest:
 - Treat activity_type values such as simulation as internal planning labels, not UI copy. Do not label buttons "Run Simulation" or "Start Simulation"; use concrete action verbs from the format instead, such as Grow, Remix, Shake, Tune, Release, Forecast, Reset, or Play.
 - Every control must advance a goal, score/progress, created output, configured result, unlocked reveal, selected record, or saved state.
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
-- Three.js must use: `import * as THREE from '/static/vendor/three.module.js';`.
+- Three.js core must use: `import * as THREE from '/static/vendor/three.module.js';`. Addons must use direct local `/static/vendor/three-addons/...` imports.
 	- The app renders this HTML in an iframe, so no host cleanup code is required.
 
 	Hard reject self-review checklist for every site:
@@ -158,6 +160,7 @@ Goals:
 - Treat semantic anchors as Tier 2 flavor only: they may influence texture, object names, mood, copy, and micro-interactions, but they must not rename, obscure, or override the selected activity_variant.
 - Follow title_policy: semantic anchor words must be embodied or hidden. Do not keyword-stuff anchors into titles or major labels; games/tools/products should keep the recognizable format name dominant. Material anchors should usually appear as surface treatment, not text.
 - Material anchors must be synthesized with browser-native code when used visibly: CSS repeating gradients, layered backgrounds, pseudo-elements, border styles, inline SVG patterns/filters, Canvas procedural strokes/noise, or Three.js material only when the selected page already needs 3D.
+- Paper Shaders may be used as one optional material embodiment layer for paper/cardboard, print/halftone, fluted glass, liquid metal, light rays, smoke/gem atmospherics, cells, liquid blobs, or a hero object surface. It should support the format, not replace the app/game/tool content.
 - Fill task_contract before visual decisions. It must define the user goal, domain objects, state variables, controls with must_change_state, completion_condition, error_states, and allowed_patterns. The task_contract is the content layer; semantic anchors, palette, waves, glows, particles, and atmospheric motion are optional.
 - task_contract.payoff_scene is mandatory: it defines what satisfying thing happens after the primary action and why a user would keep going.
 - reward_contract is mandatory: every site must produce a visible payoff within 5-15 seconds. Do not use a decorative color change as the reward.
@@ -239,7 +242,9 @@ Local design kit manifest:
 
 Premium build requirements:
 - Use at least one local design-kit asset or font selection from the approved plan, and deliver one signature motion moment such as parallax drift, layered reveal, kinetic meter motion, or a restrained Three.js scene.
-- Follow activity_contract.library_profile: include `/static/js/ndw.js` for NDW profiles, `/static/vendor/alpine.min.js` for Alpine UI state profiles, `/static/vendor/matter.min.js` for Matter physics profiles, `/static/vendor/gsap.min.js` for GSAP profiles, `/static/vendor/lucide.min.js` plus `lucide.createIcons()` for Lucide app chrome, and local Three module imports for Three profiles. Use the chosen library for the core interaction, not just a decorative flourish.
+- Follow activity_contract.library_profile: include `/static/js/ndw.js` for NDW profiles, `/static/vendor/alpine.min.js` for Alpine UI state profiles, `/static/vendor/matter.min.js` for Matter physics profiles, `/static/vendor/gsap.min.js` for GSAP profiles, `/static/vendor/Draggable.min.js` after GSAP when the page has one draggable DOM object/control, `/static/vendor/lucide.min.js` plus `lucide.createIcons()` for Lucide app chrome, and local Three module imports for Three profiles. Use the chosen library for the core interaction, not just a decorative flourish.
+- Alpine pages must define state before Alpine loads: put `window.storeName = () => ({ ... })` before `<script defer src="/static/vendor/alpine.min.js"></script>`, then use `x-data="storeName()"`; or use inline object state directly in `x-data`.
+- Optional Paper Shaders usage: include `<script src="/static/vendor/paper-shaders/ndw-paper.js"></script>` and call global `mountPaperShader(...)` for one lightweight shader surface when it clearly helps the material, product hero, game board, card deck, map, poster, receipt, or generated artifact. Prefer `flutedGlass`/`liquidMetal` for products, `halftoneCMYK`/`halftoneDots`/`grainGradient` for posters and print, `metaballs`/`voronoi`/`smokeRing` for games and toys, and `godRays`/`water`/`gemSmoke` for atmospheric hero surfaces. Do not use it for recurring wave/grid wallpaper or full-page decoration that hides the actual activity.
 - Maintain one clear focal area; controls stay near what they affect. Include an activity payoff within 10 seconds: completed set, saved configuration, unlocked reveal, created artifact, score/result, selected record, generated preview, cart/receipt, or selected plan.
 - Fill the page with real starter content: sample records, products, cards, game pieces, board state, editor output, or configured preview. Remove any empty slots or placeholder panels that are not functional.
 - Treat ambient backgrounds as optional. If task_contract.visual_budget says ambient_background is not primary, do not spend the main interaction on waves, ripples, particles, or atmospheric loops.
@@ -247,7 +252,7 @@ Premium build requirements:
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
 - Create original inline SVG/CSS/canvas artwork when needed; do not invent local asset paths.
 - Generate material textures inline with CSS/SVG/Canvas/Three when useful. Do not depend on texture libraries or static overlay assets.
-	- Three.js must use the local import map style only: `import * as THREE from '/static/vendor/three.module.js';`.
+	- Three.js core must use `import * as THREE from '/static/vendor/three.module.js';`; addons must use direct local `/static/vendor/three-addons/...` imports.
 	- Since the app renders this HTML in an iframe, no host cleanup code is required; still avoid memory leaks inside the page.
 	- The final fenced block must be a complete document with `<html>`, `<head>`, and `<body>`.
 	{retry_block}

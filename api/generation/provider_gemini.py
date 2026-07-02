@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import requests
@@ -12,6 +14,13 @@ from api.llm_parsing import _json_from_text
 JsonExtractor = Callable[[Dict[str, Any]], Optional[str]]
 
 _tls = threading.local()
+_high_demand_lock = threading.Lock()
+_high_demand_until = 0.0
+
+try:
+    HIGH_DEMAND_COOLDOWN_SECONDS = int(os.getenv("GEMINI_HIGH_DEMAND_COOLDOWN_SECONDS", "180"))
+except Exception:
+    HIGH_DEMAND_COOLDOWN_SECONDS = 180
 
 
 def _quota_flag_set(val: bool) -> None:
@@ -20,6 +29,40 @@ def _quota_flag_set(val: bool) -> None:
 
 def was_quota_exhausted() -> bool:
     return getattr(_tls, "quota_exhausted", False)
+
+
+def high_demand_retry_after_seconds() -> int:
+    with _high_demand_lock:
+        remaining = int(max(0, _high_demand_until - time.time()))
+    return remaining
+
+
+def is_high_demand_blocked() -> bool:
+    return high_demand_retry_after_seconds() > 0
+
+
+def is_high_demand_response(resp: requests.Response) -> bool:
+    if resp.status_code != 503:
+        return False
+    try:
+        text = resp.text[:800].lower()
+    except Exception:
+        text = ""
+    return "unavailable" in text or "high demand" in text
+
+
+def mark_high_demand(label: str) -> None:
+    if HIGH_DEMAND_COOLDOWN_SECONDS <= 0:
+        return
+    until = time.time() + HIGH_DEMAND_COOLDOWN_SECONDS
+    with _high_demand_lock:
+        global _high_demand_until
+        _high_demand_until = max(_high_demand_until, until)
+    logging.warning(
+        "Gemini high-demand cooldown active after %s for %ss",
+        label,
+        HIGH_DEMAND_COOLDOWN_SECONDS,
+    )
 
 
 def call_structured(
@@ -36,6 +79,11 @@ def call_structured(
     extract_text: JsonExtractor,
     retry_without_thinking: bool = True,
 ) -> Optional[Any]:
+    if is_high_demand_blocked():
+        logging.warning("Gemini structured skipped during high-demand cooldown (%ss remaining)", high_demand_retry_after_seconds())
+        _quota_flag_set(False)
+        return None
+
     generation_config = {
         "temperature": temperature,
         "maxOutputTokens": max_output_tokens,
@@ -91,6 +139,10 @@ def call_structured(
             except Exception:
                 msg = str(resp.status_code)
             logging.warning("Gemini structured %s HTTP %s: %s", label, resp.status_code, msg)
+            if is_high_demand_response(resp):
+                mark_high_demand(f"structured {label}")
+                _quota_flag_set(False)
+                break
             if resp.status_code != 429:
                 _quota_flag_set(False)
             continue
@@ -125,6 +177,11 @@ def call_text(
     extract_text: JsonExtractor,
     retry_without_thinking: bool = True,
 ) -> Optional[str]:
+    if is_high_demand_blocked():
+        logging.warning("Gemini text skipped during high-demand cooldown (%ss remaining)", high_demand_retry_after_seconds())
+        _quota_flag_set(False)
+        return None
+
     generation_config: Dict[str, Any] = {
         "temperature": temperature,
         "maxOutputTokens": max_output_tokens,
@@ -173,6 +230,10 @@ def call_text(
             except Exception:
                 msg = str(resp.status_code)
             logging.warning("Gemini text %s HTTP %s: %s", label, resp.status_code, msg)
+            if is_high_demand_response(resp):
+                mark_high_demand(f"text {label}")
+                _quota_flag_set(False)
+                break
             if resp.status_code != 429:
                 _quota_flag_set(False)
             continue

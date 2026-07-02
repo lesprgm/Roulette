@@ -52,10 +52,11 @@ HARD_RUNTIME_RULES = """
 GENERAL RULES:
 - STRICT: No external scripts or styles via CDN. No external fonts/images/fetch. No iframes or document.write.
   Inline SVG, data:image/svg+xml, Lucide icons, and CSS-generated visuals are allowed and preferred.
-- Tailwind runtime is local; do not include CDN imports. GSAP core and Lucide are available through local scripts; include the matching local script before using those globals inside the iframe.
+- Tailwind runtime is local; do not include CDN imports. GSAP core, GSAP Draggable, and Lucide are available through local scripts; include the matching local script before using those globals inside the iframe.
 - Alpine.js and Matter.js are local-only optional primitives. Include `/static/vendor/alpine.min.js` only for app/tool/commerce UI state. Include `/static/vendor/matter.min.js` only for physics-first games/toys.
 - Three.js is available locally in module scripts via `import * as THREE from '/static/vendor/three.module.js'`.
-- Three addons are available only via local paths such as `/static/vendor/three-addons/controls/OrbitControls.js` and `/static/vendor/three-addons/postprocessing/UnrealBloomPass.js`. Never import remote modules.
+- Three addons are available only via local paths: `/static/vendor/three-addons/controls/OrbitControls.js`, `/static/vendor/three-addons/controls/DragControls.js`, `/static/vendor/three-addons/controls/TransformControls.js`, `/static/vendor/three-addons/renderers/CSS2DRenderer.js`, and the existing postprocessing files. Never import remote modules.
+- Paper Shaders is available locally through `<script src="/static/vendor/paper-shaders/ndw-paper.js"></script>` and the global `mountPaperShader(...)`. Use it for one intentional material, hero object, poster, game board, product surface, or generated-artifact effect; do not make shader wallpaper the whole page.
 - Use the ID `ndw-content` for the main app container when you need a primary stage.
 - Every interactive element referenced in JS must already exist in the DOM before scripts run.
 - CONTROL CONSISTENCY: buttons and keyboard shortcuts must trigger the same function, not near-duplicates.
@@ -90,9 +91,36 @@ PRODUCT VISUALS:
 
 PREMIUM UI STATE:
 - Alpine.js is available locally through `<script defer src="/static/vendor/alpine.min.js"></script>`. Use it for app/tool/commerce state such as filters, carts, drawers, tabs, selected records, and multi-step forms. Do not use Alpine for canvas/game loops.
+- Safe Alpine pattern: define state before Alpine loads. Either use inline object state, e.g. `<main x-data="{ cart: [], add(item) { this.cart.push(item) } }">`, or place `<script>window.storeName = () => ({ ...state and methods... });</script>` before `<script defer src="/static/vendor/alpine.min.js"></script>` and then use `x-data="storeName()"`.
+- Never place `function storeName(){...}` or `window.storeName = ...` after the Alpine script when `x-data="storeName()"` appears in the HTML.
 
 PREMIUM PHYSICS:
 - Matter.js is available locally through `<script src="/static/vendor/matter.min.js"></script>`. Use it only for physics-first games/toys with collisions, gravity, constraints, scoring, reset, and visible cause/effect.
+
+PREMIUM SHADERS:
+- Paper Shaders core is available locally through `<script src="/static/vendor/paper-shaders/ndw-paper.js"></script>` and the global `mountPaperShader(...)`.
+- Use it for one content-bearing material or hero visual: `paperTexture`, `staticMeshGradient`, `grainGradient`, `halftoneDots`, `halftoneCMYK`, `flutedGlass`, `liquidMetal`, `godRays`, `smokeRing`, `gemSmoke`, `water`, `neuroNoise`, `voronoi`, or `metaballs`.
+- Good matches: product configurators use `flutedGlass` or `liquidMetal`; poster/print tools use `halftoneCMYK`, `halftoneDots`, or `grainGradient`; games/toys use `metaballs`, `voronoi`, or `smokeRing`; travel/food/ambient surfaces use `water`, `godRays`, or `gemSmoke`.
+- Keep `speed` low or `0` for static materials, pass `minPixelRatio` around `1`, cap `maxPixelCount` near `1280 * 720`, and provide a CSS fallback background.
+- Never import `@paper-design/shaders`, React, or remote assets. Do not use Paper Shaders for recurring wave/grid wallpaper.
+
+Example local Paper Shaders usage:
+```html
+<div id="shaderSurface" class="hero-surface"></div>
+<script src="/static/vendor/paper-shaders/ndw-paper.js"></script>
+<script>
+  const surface = document.getElementById('shaderSurface');
+  if (surface) {
+    mountPaperShader(surface, {
+      preset: 'halftoneCMYK',
+      colorFront: '#f4ead8',
+      colorBack: '#b78655',
+      speed: 0,
+      seed: 42
+    });
+  }
+</script>
+```
 
 INITIAL VISUAL STATE:
 - First paint must be visibly complete before interaction: background treatment, headline, instructions, controls, and ambient motion or particles.
@@ -101,6 +129,7 @@ INITIAL VISUAL STATE:
 PREMIUM INTROS:
 - GSAP core is a local global. Use it for short intro/reveal sequences, not for hiding all content until animation completes.
 - In generated iframe pages, include `<script src="/static/vendor/gsap.min.js"></script>` before using `gsap`.
+- For drag-to-transform DOM interactions, include `<script src="/static/vendor/Draggable.min.js"></script>` after GSAP, call `gsap.registerPlugin(Draggable)`, and use Draggable for one clear control/object, not decorative motion.
 
 CANONICAL CANVAS TEMPLATE:
 ```js

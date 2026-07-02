@@ -18,6 +18,11 @@ _MEDIA_TAG_RE = re.compile(r"<(?:img|video|audio|source)\b([^>]*)>", re.IGNORECA
 _IFRAME_RE = re.compile(r"<iframe\b", re.IGNORECASE)
 _STYLE_URL_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", re.IGNORECASE)
 _ATTR_RE = re.compile(r'([a-zA-Z_:][\w:.-]*)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))')
+_X_DATA_FUNC_RE = re.compile(r"\bx-data\s*=\s*['\"]\s*([A-Za-z_$][\w$]*)\s*\(", re.IGNORECASE)
+_ALPINE_SCRIPT_RE = re.compile(
+    r"<script\b[^>]*\bsrc\s*=\s*['\"]/static/vendor/alpine\.min\.js['\"][^>]*>",
+    re.IGNORECASE,
+)
 _ID_RE = re.compile(r'\bid\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _CLASS_RE = re.compile(r'\bclass\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -92,13 +97,31 @@ _ACCESSIBILITY_ATTR_RE = re.compile(
     r"(role\s*=\s*['\"](?:button|slider|spinbutton)['\"]|tabindex\s*=|aria-label\s*=|aria-labelledby\s*=)",
     re.IGNORECASE,
 )
+_WINDOW_FUNC_ASSIGN_TEMPLATE = r"\bwindow\.{name}\s*="
+_GLOBAL_FUNC_TEMPLATE = r"\bfunction\s+{name}\s*\("
 
 _ALLOWED_FULL_PAGE_MODULE_IMPORTS = {
     "/static/vendor/three.module.js",
     "/static/vendor/three-addons/controls/OrbitControls.js",
+    "/static/vendor/three-addons/controls/DragControls.js",
+    "/static/vendor/three-addons/controls/TransformControls.js",
+    "/static/vendor/three-addons/renderers/CSS2DRenderer.js",
     "/static/vendor/three-addons/postprocessing/EffectComposer.js",
     "/static/vendor/three-addons/postprocessing/RenderPass.js",
     "/static/vendor/three-addons/postprocessing/UnrealBloomPass.js",
+}
+_ALLOWED_FULL_PAGE_MODULE_PREFIXES = (
+    "/static/vendor/paper-shaders/",
+)
+_ALLOWED_SCRIPT_SRCS = {
+    "/static/vendor/tailwind-play.js",
+    "/static/vendor/gsap.min.js",
+    "/static/vendor/Draggable.min.js",
+    "/static/vendor/lucide.min.js",
+    "/static/vendor/alpine.min.js",
+    "/static/vendor/matter.min.js",
+    "/static/vendor/paper-shaders/ndw-paper.js",
+    "/static/js/ndw.js",
 }
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_ROUTE_FILES = {
@@ -216,6 +239,28 @@ def _extract_scripts(html: str) -> List[Dict[str, str]]:
             }
         )
     return scripts
+
+
+def _check_alpine_state_order(html: str, *, field: str) -> List[PreflightIssue]:
+    issues: List[PreflightIssue] = []
+    alpine_match = _ALPINE_SCRIPT_RE.search(html or "")
+    if not alpine_match:
+        return issues
+    before_alpine = (html or "")[: alpine_match.start()]
+    for match in _X_DATA_FUNC_RE.finditer(html or ""):
+        name = match.group(1)
+        window_assign = re.compile(_WINDOW_FUNC_ASSIGN_TEMPLATE.format(name=re.escape(name)))
+        global_func = re.compile(_GLOBAL_FUNC_TEMPLATE.format(name=re.escape(name)))
+        if window_assign.search(before_alpine) or global_func.search(before_alpine):
+            continue
+        issues.append(
+            _issue(
+                "warn",
+                field,
+                f"Alpine x-data function '{name}()' should be defined before /static/vendor/alpine.min.js loads, preferably as window.{name} = () => ({{...}}).",
+            )
+        )
+    return issues
 
 
 def _extract_created_ids(js_code: str) -> Set[str]:
@@ -373,7 +418,9 @@ def _check_module_imports(
             )
         return issues
     for specifier in specifiers:
-        if specifier not in _ALLOWED_FULL_PAGE_MODULE_IMPORTS:
+        if specifier not in _ALLOWED_FULL_PAGE_MODULE_IMPORTS and not specifier.startswith(
+            _ALLOWED_FULL_PAGE_MODULE_PREFIXES
+        ):
             issues.append(
                 _issue(
                     "block",
@@ -521,6 +568,7 @@ def _inspect_html(
                 "Direct localStorage/sessionStorage can throw inside the sandboxed iframe; use in-memory state or NDW.utils.store.",
             )
         )
+    issues.extend(_check_alpine_state_order(html, field=field))
 
     visible_text = _visible_text(html)
     if _VISIBLE_CODE_ARTIFACT_RE.search(visible_text):
@@ -551,7 +599,7 @@ def _inspect_html(
             issues.extend(_check_url_reference(src, field=script_field, label="script"))
             if issues and any(item.get("field") == script_field and item.get("severity") == "block" for item in issues):
                 continue
-            if src.startswith("/") and not (src.startswith("/static/vendor/") or src == "/static/js/ndw.js"):
+            if src.startswith("/") and src not in _ALLOWED_SCRIPT_SRCS:
                 issues.append(_issue("block", script_field, f"Local script '{src}' is not an allowed generated-page script."))
             continue
         issues.extend(
