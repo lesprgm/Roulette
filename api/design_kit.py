@@ -84,7 +84,7 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
         "tabbed_workspace": {"summary": "Multi-panel tabbed interface with collapsible side panels."},
         "hero_centered": {"summary": "Bold centered headline and CTA with minimal UI, often over a full-width visual."},
         "masonry_waterfall": {"summary": "Variable-height waterfall card grid optimized for visual browsing."},
-        "single_column": {"summary": "Stacked single-column with distinct header, content sections, and footer."},
+        "single_column": {"summary": "Stacked single-column content with a strong opening section and clear end state. Do not add a footer."},
         "z_pattern_landing": {"summary": "Content arranged along a Z-shaped scanning path from headline to visual to CTA."},
         "gallery_showcase": {"summary": "Full-bleed grid of visual thumbnails with overlay text and lightbox style."},
     },

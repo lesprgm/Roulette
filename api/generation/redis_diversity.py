@@ -98,14 +98,23 @@ def choose_experience_cell(seed: int | None = None, client: Any = None) -> Dict[
     scored: List[Tuple[str, float]] = []
     try:
         for key in all_experience_cell_keys():
+            _archetype, _, loop_type = key.partition(":")
             count = float(redis_client.zscore("qd:count:experience_cell", key) or 0)
             avg_quality = float(redis_client.zscore("qd:avg_quality:experience_cell", key) or 0.5)
             last_used = float(redis_client.zscore("qd:last_used:experience_cell", key) or 0)
+            loop_last_used = float(redis_client.zscore("qd:last_used:primary_loop_type", loop_type) or 0)
             age_hours = max(0.0, (now - last_used) / 3600.0) if last_used else 24.0
+            loop_age_hours = max(0.0, (now - loop_last_used) / 3600.0) if loop_last_used else 24.0
             underuse_bonus = 1.0 / (1.0 + count)
             quality_bonus = max(0.1, min(avg_quality, 1.0))
             staleness_bonus = min(1.0, age_hours / 24.0)
-            score = (0.45 * underuse_bonus) + (0.35 * quality_bonus) + (0.20 * staleness_bonus)
+            loop_freshness_bonus = min(1.0, loop_age_hours / 24.0)
+            score = (
+                (0.40 * underuse_bonus)
+                + (0.30 * quality_bonus)
+                + (0.20 * staleness_bonus)
+                + (0.10 * loop_freshness_bonus)
+            )
             scored.append((key, score))
         return parse_cell_key(_weighted_sample(scored, seed))
     except Exception:
@@ -158,6 +167,7 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         or activity_contract.get("reward_mechanic")
         or ""
     )
+    genre_contract = plan.get("genre_contract") if isinstance(plan.get("genre_contract"), dict) else {}
     cell = {
         "experience_archetype": plan.get("experience_archetype") or "unknown",
         "primary_loop_type": plan.get("primary_loop_type") or "unknown",
@@ -172,6 +182,8 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "activity_variant": activity_variant,
         "activity_family": activity_family_for_variant(str(activity_variant)),
         "reward_mechanic": reward_mechanic,
+        "palette_strategy": genre_contract.get("palette_strategy") or "",
+        "chrome_policy": genre_contract.get("chrome_policy") or "",
         "task_format": task_contract.get("format") or "",
         "task_goal": task_contract.get("user_goal") or "",
         "task_domain_objects": task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else [],
@@ -255,10 +267,13 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:activity_variant", 1, str(descriptor["activity_variant"]))
         pipe.zincrby("qd:count:activity_family", 1, str(descriptor["activity_family"]))
         pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
+        pipe.zincrby("qd:count:palette_strategy", 1, str(descriptor["palette_strategy"]))
         pipe.zadd("qd:last_used:experience_cell", {cell_key: int(time.time())})
+        pipe.zadd("qd:last_used:primary_loop_type", {str(descriptor["primary_loop_type"]): int(time.time())})
         pipe.zadd("qd:last_used:activity_variant", {str(descriptor["activity_variant"]): int(time.time())})
         pipe.zadd("qd:last_used:activity_family", {str(descriptor["activity_family"]): int(time.time())})
         pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
+        pipe.zadd("qd:last_used:palette_strategy", {str(descriptor["palette_strategy"]): int(time.time())})
         pipe.zadd("qd:avg_quality:experience_cell", {cell_key: quality_norm})
         pipe.hincrby(f"qd:cell:{cell_key}", "count", 1)
         pipe.hset(
@@ -288,13 +303,19 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
 def recent_activity_memory(limit: int = 20, client: Any = None) -> Dict[str, List[str]]:
     redis_client = _client(client)
     if redis_client is None:
-        return {"variants": [], "families": []}
+        return {"variants": [], "families": [], "loops": [], "rewards": [], "palettes": []}
     try:
         variants = redis_client.zrevrange("qd:last_used:activity_variant", 0, max(0, limit - 1)) or []
         families = redis_client.zrevrange("qd:last_used:activity_family", 0, max(0, limit - 1)) or []
+        loops = redis_client.zrevrange("qd:last_used:primary_loop_type", 0, max(0, limit - 1)) or []
+        rewards = redis_client.zrevrange("qd:last_used:reward_mechanic", 0, max(0, limit - 1)) or []
+        palettes = redis_client.zrevrange("qd:last_used:palette_strategy", 0, max(0, limit - 1)) or []
         return {
             "variants": [str(item) for item in variants if item],
             "families": [str(item) for item in families if item],
+            "loops": [str(item) for item in loops if item],
+            "rewards": [str(item) for item in rewards if item],
+            "palettes": [str(item) for item in palettes if item],
         }
     except Exception:
-        return {"variants": [], "families": []}
+        return {"variants": [], "families": [], "loops": [], "rewards": [], "palettes": []}

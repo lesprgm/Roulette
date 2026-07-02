@@ -530,10 +530,13 @@ def generate_page_premium_burst(
         target_count,
         recent_variants=memory.get("variants"),
         recent_families=memory.get("families"),
+        recent_loops=memory.get("loops"),
+        recent_rewards=memory.get("rewards"),
     )
     targets = []
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
+        base_target["_recent_palettes"] = memory.get("palettes")
         target = _premium_experience_target(site_seed, base_target=base_target)
         target["site_index"] = idx + 1
         target["seed"] = site_seed
@@ -601,60 +604,72 @@ def generate_page_premium_burst(
         full_text = ""
         emitted: Set[int] = set()
         emitted_count = 0
-        for text_chunk in _iter_gemini_stream_text(resp):
-            full_text += text_chunk
-            for index, html_block in extract_completed_premium_burst_sites(full_text):
-                if index in emitted:
-                    continue
-                emitted.add(index)
-                try:
-                    doc = _normalize_doc({"kind": "full_page_html", "html": html_block})
-                except Exception as exc:
-                    logging.warning("Premium burst skipped invalid site %s: %r", index, exc)
-                    if include_rejected:
-                        yield _premium_burst_rejected_payload(index=index, reason=f"invalid doc: {exc!r}")
-                    continue
-                issues = _preflight_doc(doc)
-                if _preflight_has_blocking_issues(issues):
-                    logging.warning(
-                        "Premium burst skipped preflight-blocked site %s (%d issues): %s",
-                        index,
-                        len(issues),
-                        _summarize_preflight_issues(issues),
-                    )
-                    if include_rejected:
-                        yield _premium_burst_rejected_payload(
-                            index=index,
-                            reason="preflight blocked",
-                            doc=_annotate_preflight_doc(doc, issues),
-                            issues=issues,
+        try:
+            for text_chunk in _iter_gemini_stream_text(resp):
+                full_text += text_chunk
+                for index, html_block in extract_completed_premium_burst_sites(full_text):
+                    if index in emitted:
+                        continue
+                    emitted.add(index)
+                    try:
+                        doc = _normalize_doc({"kind": "full_page_html", "html": html_block})
+                    except Exception as exc:
+                        logging.warning("Premium burst skipped invalid site %s: %r", index, exc)
+                        if include_rejected:
+                            yield _premium_burst_rejected_payload(index=index, reason=f"invalid doc: {exc!r}")
+                        continue
+                    issues = _preflight_doc(doc)
+                    if _preflight_has_blocking_issues(issues):
+                        logging.warning(
+                            "Premium burst skipped preflight-blocked site %s (%d issues): %s",
+                            index,
+                            len(issues),
+                            _summarize_preflight_issues(issues),
                         )
-                    continue
-                if issues:
-                    doc = _annotate_preflight_doc(doc, issues)
-                scored = _attach_quality_score(doc, "premium_burst")
-                plan = targets[index - 1] if 0 < index <= len(targets) else {}
-                scored = _attach_premium_evaluations(scored, plan)
-                quality = (scored.get("ndw_debug") or {}).get("quality_score") or {}
-                rejection = _premium_burst_rejection(scored, quality)
-                if rejection:
-                    logging.warning("Premium burst skipped low-quality site %s: %s", index, rejection)
-                    if include_rejected:
-                        yield _premium_burst_rejected_payload(
-                            index=index,
-                            reason=rejection,
-                            doc=scored,
-                            quality=quality,
-                        )
-                    continue
-                debug = dict(scored.get("ndw_debug") or {})
-                debug["generation_mode"] = "premium_burst"
-                debug["premium_burst_index"] = index
-                scored["ndw_debug"] = debug
-                yield scored
-                emitted_count += 1
-                if emitted_count >= target_count:
-                    return
+                        if include_rejected:
+                            yield _premium_burst_rejected_payload(
+                                index=index,
+                                reason="preflight blocked",
+                                doc=_annotate_preflight_doc(doc, issues),
+                                issues=issues,
+                            )
+                        continue
+                    if issues:
+                        doc = _annotate_preflight_doc(doc, issues)
+                    scored = _attach_quality_score(doc, "premium_burst")
+                    plan = targets[index - 1] if 0 < index <= len(targets) else {}
+                    scored = _attach_premium_evaluations(scored, plan)
+                    quality = (scored.get("ndw_debug") or {}).get("quality_score") or {}
+                    rejection = _premium_burst_rejection(scored, quality)
+                    if rejection:
+                        logging.warning("Premium burst skipped low-quality site %s: %s", index, rejection)
+                        if include_rejected:
+                            yield _premium_burst_rejected_payload(
+                                index=index,
+                                reason=rejection,
+                                doc=scored,
+                                quality=quality,
+                            )
+                        continue
+                    debug = dict(scored.get("ndw_debug") or {})
+                    debug["generation_mode"] = "premium_burst"
+                    debug["premium_burst_index"] = index
+                    scored["ndw_debug"] = debug
+                    yield scored
+                    emitted_count += 1
+                    if emitted_count >= target_count:
+                        return
+        except requests.exceptions.RequestException as exc:
+            logging.warning(
+                "Gemini premium burst %s stream interrupted after %d accepted sites: %r",
+                label,
+                emitted_count,
+                exc,
+            )
+            if emitted_count:
+                return
+            all_429 = False
+            continue
         if emitted_count:
             return
         logging.warning("Gemini premium burst %s produced no valid sites; text_len=%d", label, len(full_text))
@@ -670,7 +685,20 @@ def generate_page_premium_burst(
 
 
 def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    target = base_target if isinstance(base_target, dict) else seeded_format_first_target(seed)
+    memory: Dict[str, Any] = {}
+    if isinstance(base_target, dict):
+        memory = {"palettes": base_target.get("_recent_palettes") or []}
+        target = dict(base_target)
+        target.pop("_recent_palettes", None)
+    else:
+        memory = recent_activity_memory(limit=20)
+        target = seeded_format_first_target(
+            seed,
+            recent_variants=memory.get("variants"),
+            recent_families=memory.get("families"),
+            recent_loops=memory.get("loops"),
+            recent_rewards=memory.get("rewards"),
+        )
     archetype = str(target["experience_archetype"])
     loop_type = str(target["primary_loop_type"])
     cell_key = f"{target['activity_contract']['activity_variant']}:{archetype}:{loop_type}"
@@ -688,7 +716,7 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
         "semantic_anchors": anchors,
         "semantic_translation": _semantic_translation_from_anchors(anchors, task),
         "task_contract": task,
-        "genre_contract": seeded_genre_contract(seed, archetype, loop_type),
+        "genre_contract": seeded_genre_contract(seed, archetype, loop_type, recent_palettes=memory.get("palettes")),
         "title_policy": "Semantic anchor words must be embodied or hidden. Do not put anchor words in <title>, <h1>, or major labels unless the UI expresses them through material, texture, shape, motion, interaction feedback, or metaphor. The concrete format name remains dominant.",
     }
 

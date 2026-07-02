@@ -46,6 +46,7 @@ PREMIUM BUILD GUIDANCE:
 - Commit to a distinct direction: brutally minimal, maximalist, refined luxury, lo-fi/zine, arcade, editorial, playful toy, or another clear genre. The page should answer: what makes this unforgettable?
 - Use spatial composition intentionally: asymmetry, overlap, z-depth, diagonal flow, grid-breaking elements, dramatic scale jumps, full-bleed moments, generous negative space, or controlled density.
 - Prefer one high-impact motion moment such as an orchestrated load, staggered reveal, transformation, or payoff over scattered distracting micro-interactions.
+- Build fewer, stronger interactions. Every visible control should have a nearby visible output and a clear before/after state.
 """.strip()
 
 HARD_RUNTIME_RULES = """
@@ -70,14 +71,15 @@ DO NOT:
 - Do not create duplicate IDs or register duplicate NDW.onPointer/onKey handlers inside loops.
 
 SELF QA:
-1. Pretend to click every button and verify the described behavior occurs.
+1. Pretend to click every button, type in every input, move every slider, and press every advertised key. Verify a named visible element changes after each action.
 2. Verify headings, instructions, and controls are visible on first paint.
 3. Ensure result text never becomes `undefined`.
 4. Check contrast and readability. No white-on-white, black-on-black, or muddy medium-on-medium text.
 5. Check runtime weight: keep first paint lightweight, cap particle counts near 120, avoid giant DOM grids, avoid stacked full-screen blur filters, and set WebGL pixel ratio to `Math.min(window.devicePixelRatio, 2)`.
-6. Check design discipline: one focal area, controls near what they affect, no literal planning-section headings, no visible code-comment debris like `//`, no raw TODO/undefined/null text.
+6. Check design discipline: one focal area, controls near what they affect, no footer/copyright/sign-off strip, no literal planning-section headings, no visible code-comment debris like `//`, no raw TODO/undefined/null text.
 7. Check activity depth: no slider-only pages unless activity_type is interactive_instrument or simulation; every control must advance a goal, create an output, unlock content, configure a result, or change persistent visible state.
 8. Check naming: games and quizzes must expose the recognizable format in the title, such as Snake, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game.
+9. Check visual language: avoid dark/slate/terminal shells unless the selected game/canvas needs contrast; otherwise use light, warm, bright, or neutral backgrounds.
 """.strip()
 
 PREMIUM_RUNTIME_GUIDANCE = """

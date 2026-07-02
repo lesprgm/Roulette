@@ -115,7 +115,6 @@ GENRE_VISUAL_DENSITIES = ["sparse", "focused", "dense", "maximal", "variable_ada
 PALETTE_STRATEGIES = [
     "monochrome_accent",
     "muted_plus_toxic",
-    "arcade_dark_shell",
     "editorial_neutral",
     "pastel_toy",
     "high_contrast_game",
@@ -161,7 +160,6 @@ CHROME_POLICIES = [
     "none",
     "minimal_functional",
     "diegetic_only",
-    "dashboard_when_essential",
 ]
 
 ACTIVITY_TYPES = [
@@ -292,7 +290,6 @@ EXPERIENCE_FAILURE_MODES = [
 DEFAULT_EXPERIENCE_CELLS: List[Tuple[str, str]] = [
     ("browser_game", "collect_to_complete"),
     ("browser_game", "steer_to_explore"),
-    ("browser_game", "press_sequence_to_unlock"),
     ("browser_game", "drag_to_transform"),
     ("quiz_game", "answer_to_score"),
     ("quiz_game", "choose_to_branch"),
@@ -309,10 +306,8 @@ DEFAULT_EXPERIENCE_CELLS: List[Tuple[str, str]] = [
     ("narrative_microsite", "choose_to_branch"),
     ("creative_tool_interface", "paint_to_grow"),
     ("data_sculpture", "scrub_time_to_compare"),
-    ("fictional_control_room", "press_sequence_to_unlock"),
     ("generative_poster", "mix_to_generate"),
     ("interactive_editorial", "hover_to_inspect"),
-    ("visual_playground", "press_sequence_to_unlock"),
     ("product_demo_experience", "assemble_to_activate"),
     ("museum_exhibit", "zoom_to_inspect"),
     ("creative_tool_interface", "sort_to_understand"),
@@ -329,6 +324,24 @@ def _resolve_spec(spec: Dict[str, str | List[str]], variant: str, seed: int | No
         else:
             resolved[key] = value
     return resolved
+
+
+def _as_list(value: str | List[str]) -> List[str]:
+    return value if isinstance(value, list) else [value]
+
+
+def _deabstract_loop(activity_type: str, loop_type: str) -> str:
+    if loop_type == "press_sequence_to_unlock":
+        if activity_type in {"platformer", "snake_game", "microgame"}:
+            return "collect_to_complete"
+        if activity_type in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
+            return "assemble_to_activate"
+        if activity_type in {"creative_tool", "interactive_instrument", "simulation"}:
+            return "drag_to_transform"
+        return "choose_to_branch"
+    if loop_type == "type_to_reveal" and activity_type not in {"word_game", "narrative_explorer"}:
+        return "collect_to_complete"
+    return loop_type
 
 
 def cell_key(archetype: str, loop_type: str) -> str:
@@ -362,6 +375,7 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
     rng = random.Random(f"{int(seed or 0)}:{activity_variant}:format-first-contract")
     spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
     activity_type = spec["activity_type"]
+    spec["primary_loop_type"] = _deabstract_loop(activity_type, spec["primary_loop_type"])
     mechanic = spec["core_mechanic"]
     library_profile = _library_profile_for_activity(rng, activity_type, activity_variant, mechanic)
     disallowed = ["slider_only_controls", "buttons_only_toggle_visual_effects", "fake_metrics_without_task"]
@@ -383,9 +397,38 @@ def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> D
     }
 
 
-def seeded_format_first_target(seed: int | None = None) -> Dict[str, object]:
+def seeded_format_first_target(
+    seed: int | None = None,
+    *,
+    recent_variants: List[str] | None = None,
+    recent_families: List[str] | None = None,
+    recent_loops: List[str] | None = None,
+    recent_rewards: List[str] | None = None,
+) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:format-first-target")
-    activity_variant = choose_weighted_variant(rng)
+    recent_variants_set = set(recent_variants or [])
+    recent_families_set = set(recent_families or [])
+    recent_loops_set = set(recent_loops or [])
+    recent_rewards_set = set(recent_rewards or [])
+    activity_variant = ""
+    for attempt in range(120):
+        candidate = choose_weighted_variant(rng)
+        family = activity_family_for_variant(candidate)
+        raw_spec = FORMAT_VARIANT_SPECS.get(candidate) or FORMAT_VARIANT_SPECS["breakout_paddle"]
+        loops = {_deabstract_loop(str(raw_spec["activity_type"]), loop) for loop in _as_list(raw_spec["primary_loop_type"])}
+        rewards = set(_as_list(raw_spec["reward_mechanic"]))
+        if candidate in recent_variants_set and attempt < 90:
+            continue
+        if family in recent_families_set and attempt < 70:
+            continue
+        if loops & recent_loops_set and attempt < 50:
+            continue
+        if rewards & recent_rewards_set and attempt < 40:
+            continue
+        activity_variant = candidate
+        break
+    if not activity_variant:
+        activity_variant = choose_weighted_variant(rng)
     spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
     activity_contract = _activity_contract_for_variant(seed, activity_variant)
     return {
@@ -411,10 +454,14 @@ def seeded_diverse_format_first_targets(
     *,
     recent_variants: List[str] | None = None,
     recent_families: List[str] | None = None,
+    recent_loops: List[str] | None = None,
+    recent_rewards: List[str] | None = None,
 ) -> List[Dict[str, object]]:
     rng = random.Random(f"{int(seed or 0)}:diverse-format-first-targets:{count}")
     recent_variants_set = set(recent_variants or [])
     recent_family_set = set(recent_families or [])
+    recent_loop_set = set(recent_loops or [])
+    recent_reward_set = set(recent_rewards or [])
     used_variants: set[str] = set()
     used_families: set[str] = set()
     targets: List[Dict[str, object]] = []
@@ -426,6 +473,9 @@ def seeded_diverse_format_first_targets(
         for attempt in range(120):
             candidate = choose_weighted_variant(rng, excluded=used_variants)
             family = activity_family_for_variant(candidate)
+            raw_spec = FORMAT_VARIANT_SPECS.get(candidate) or FORMAT_VARIANT_SPECS["breakout_paddle"]
+            loops = {_deabstract_loop(str(raw_spec["activity_type"]), loop) for loop in _as_list(raw_spec["primary_loop_type"])}
+            rewards = set(_as_list(raw_spec["reward_mechanic"]))
             if candidate in used_variants:
                 continue
             if family in used_families and len(used_families) < 10:
@@ -433,6 +483,10 @@ def seeded_diverse_format_first_targets(
             if candidate in recent_variants_set and attempt < 80:
                 continue
             if family in recent_family_set and attempt < 60:
+                continue
+            if loops & recent_loop_set and attempt < 45:
+                continue
+            if rewards & recent_reward_set and attempt < 35:
                 continue
             chosen_variant = candidate
             chosen_family = family
@@ -451,6 +505,7 @@ def seeded_diverse_format_first_targets(
         used_families.add(chosen_family)
         site_seed = int(seed or 0) + ((index + 1) * 7919)
         spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(chosen_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], chosen_variant, site_seed)
+        spec["primary_loop_type"] = _deabstract_loop(spec["activity_type"], spec["primary_loop_type"])
         activity_contract = _activity_contract_for_variant(site_seed, chosen_variant)
         targets.append(
             {
@@ -470,7 +525,13 @@ def seeded_diverse_format_first_targets(
     return targets
 
 
-def seeded_genre_contract(seed: int | None = None, archetype: str = "", loop_type: str = "") -> Dict[str, object]:
+def seeded_genre_contract(
+    seed: int | None = None,
+    archetype: str = "",
+    loop_type: str = "",
+    *,
+    recent_palettes: List[str] | None = None,
+) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:{archetype}:{loop_type}:genre-contract")
     page_genre_by_archetype = {
         "browser_game": "arcade_microgame",
@@ -478,7 +539,6 @@ def seeded_genre_contract(seed: int | None = None, archetype: str = "", loop_typ
         "saas_workspace": "app_workspace",
         "commerce_workspace": "product_storefront",
         "interactive_instrument": "creative_tool",
-        "fictional_control_room": "fictional_control_room",
         "generative_poster": "narrative_artifact",
         "spatial_exploration": "museum_exhibit",
         "narrative_microsite": "narrative_artifact",
@@ -496,7 +556,6 @@ def seeded_genre_contract(seed: int | None = None, archetype: str = "", loop_typ
         "toy_simulator": "low",
         "app_workspace": "medium",
         "product_storefront": "low",
-        "fictional_control_room": "low",
         "museum_exhibit": "medium",
         "narrative_artifact": "medium",
         "data_workspace": "medium",
@@ -508,14 +567,18 @@ def seeded_genre_contract(seed: int | None = None, archetype: str = "", loop_typ
         instruction_policy = "labels_allowed"
     if page_genre == "data_workspace":
         instruction_policy = "labels_allowed"
+    recent_palette_set = set(recent_palettes or [])
+    palette_choices = [item for item in PALETTE_STRATEGIES if item not in recent_palette_set]
+    if not palette_choices:
+        palette_choices = PALETTE_STRATEGIES
     return {
         "page_genre": page_genre,
         "copy_density": copy_density,
         "visual_density": rng.choice(["sparse", "focused", "dense"]),
-        "palette_strategy": rng.choice(PALETTE_STRATEGIES),
+        "palette_strategy": rng.choice(palette_choices),
         "motion_language": rng.choice(MOTION_LANGUAGES),
         "instruction_policy": instruction_policy,
-        "chrome_policy": "dashboard_when_essential" if page_genre in {"fictional_control_room", "data_workspace", "app_workspace"} else "minimal_functional",
+        "chrome_policy": "minimal_functional",
         "focal_rule": "One dominant interactive stage; secondary controls must stay visually attached to the object they affect.",
         "copy_budget": "Use labels and one-line cues; avoid explanatory paragraphs unless the genre is editorial or museum-like.",
         "entry_rule": "Make the first interaction available on load or behind one obvious action. Do not require reading a tutorial first.",
