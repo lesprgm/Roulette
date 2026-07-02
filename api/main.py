@@ -107,10 +107,14 @@ def _log_startup_checks() -> None:
         TAILWIND_CSS_PATH,
         Path("static/vendor/tailwind-play.js"),
         Path("static/vendor/gsap.min.js"),
+        Path("static/vendor/Draggable.min.js"),
         Path("static/vendor/lucide.min.js"),
         Path("static/vendor/alpine.min.js"),
         Path("static/vendor/matter.min.js"),
         Path("static/vendor/three-addons/controls/OrbitControls.js"),
+        Path("static/vendor/three-addons/controls/DragControls.js"),
+        Path("static/vendor/three-addons/controls/TransformControls.js"),
+        Path("static/vendor/three-addons/renderers/CSS2DRenderer.js"),
     ]
     for asset in required_assets:
         if not asset.exists():
@@ -414,6 +418,8 @@ def _generate_premium_batch_candidates(
     docs: List[Dict[str, Any]] = []
     for idx in range(max(1, int(batch_size or 1))):
         doc = llm_generate_page_premium(brief or "", seed=_premium_seed(seed, idx), user_key=user_key)
+        if isinstance(doc, dict) and doc.get("error") == "model_temporarily_unavailable":
+            break
         if isinstance(doc, dict) and not doc.get("error"):
             docs.append(doc)
     if not docs:
@@ -423,6 +429,8 @@ def _generate_premium_batch_candidates(
 
 def _next_acceptable_premium_doc(iterator: Iterable[Dict[str, Any]], context: str) -> Optional[Dict[str, Any]]:
     for doc in iterator:
+        if isinstance(doc, dict) and doc.get("error") == "model_temporarily_unavailable":
+            return None
         if not isinstance(doc, dict) or doc.get("error"):
             continue
         approved = _apply_local_acceptance_batch([doc], context)

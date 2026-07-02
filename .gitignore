@@ -44,6 +44,8 @@ static/js/*.tsbuildinfo
 static/vendor/three.module.js
 static/vendor/three-addons/
 static/vendor/ScrollTrigger.min.js
+static/vendor/Draggable.min.js
+static/vendor/paper-shaders/
 static/vendor/fonts/
 
 #Cache files

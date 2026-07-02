@@ -220,6 +220,10 @@ _GSAP_CDN_RE = re.compile(
     r"^(?:https?:)?//cdn\.jsdelivr\.net/npm/gsap@[^/]+/dist/gsap(?:\.min)?\.js",
     re.IGNORECASE,
 )
+_GSAP_DRAGGABLE_CDN_RE = re.compile(
+    r"^(?:https?:)?//cdn\.jsdelivr\.net/npm/gsap@[^/]+/dist/Draggable(?:\.min)?\.js",
+    re.IGNORECASE,
+)
 _LUCIDE_CDN_RE = re.compile(r"^(?:https?:)?//unpkg\.com/lucide(?:@[^/]+)?(?:/.*)?$", re.IGNORECASE)
 _SCRIPT_STYLE_BLOCK_RE = re.compile(
     r"(<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)\s*>)",
@@ -275,6 +279,8 @@ def _strip_external_assets(html: str) -> Tuple[str, List[Dict[str, str]]]:
             return "/static/vendor/tailwind-play.js"
         if _GSAP_CDN_RE.match(src):
             return "/static/vendor/gsap.min.js"
+        if _GSAP_DRAGGABLE_CDN_RE.match(src):
+            return "/static/vendor/Draggable.min.js"
         if _LUCIDE_CDN_RE.match(src):
             return "/static/vendor/lucide.min.js"
         return None

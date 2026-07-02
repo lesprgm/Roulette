@@ -94,6 +94,11 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
             "summary": "Local game/creative runtime for canvas loops, pointer/keyboard state, seeded RNG, particles, shake, tones, and simple persistence.",
         },
         "gsap_core": {"global": "gsap", "summary": "Local GSAP core for precise timelines, staggered motion, state transitions, score/result reveals, and interface choreography."},
+        "gsap_draggable": {
+            "global": "Draggable",
+            "script": "/static/vendor/Draggable.min.js",
+            "summary": "Local GSAP Draggable plugin for one clear drag-to-transform DOM interaction such as sorting cards, dragging a product handle, moving a marker, or tuning a physical control.",
+        },
         "lucide_icons": {"global": "lucide", "summary": "Local icon set for app/workspace chrome, controls, toolbars, cards, and legible UI affordances."},
         "alpine_state": {
             "global": "Alpine",
@@ -105,15 +110,32 @@ DESIGN_KIT_MANIFEST: Dict[str, Dict[str, Dict[str, Any]]] = {
             "script": "/static/vendor/matter.min.js",
             "summary": "Local Matter.js for 2D physics games and toys such as pinball, pachinko, stacking, marble, basket, and block-drop mechanics.",
         },
+        "paper_shaders": {
+            "script": "/static/vendor/paper-shaders/ndw-paper.js",
+            "module_import": "/static/vendor/paper-shaders/ndw-paper.module.js",
+            "summary": "Local Paper Shaders core for one lightweight WebGL material or hero effect: paper texture, halftone print, grain gradient, fluted glass, liquid metal, god rays, smoke/gem atmospherics, voronoi, or metaballs. Use it as a content-bearing surface, not generic wallpaper.",
+        },
         "three_orbit_controls": {
-            "import": "three/addons/controls/OrbitControls.js",
+            "import": "/static/vendor/three-addons/controls/OrbitControls.js",
             "summary": "Local OrbitControls addon for explorable 3D scenes.",
+        },
+        "three_drag_controls": {
+            "import": "/static/vendor/three-addons/controls/DragControls.js",
+            "summary": "Local DragControls addon for simple draggable Three.js objects.",
+        },
+        "three_transform_controls": {
+            "import": "/static/vendor/three-addons/controls/TransformControls.js",
+            "summary": "Local TransformControls addon for one editor-like 3D translate/rotate/scale handle.",
+        },
+        "three_css2d_labels": {
+            "import": "/static/vendor/three-addons/renderers/CSS2DRenderer.js",
+            "summary": "Local CSS2DRenderer addon for lightweight labels attached to Three.js scenes.",
         },
         "three_bloom_pipeline": {
             "imports": [
-                "three/addons/postprocessing/EffectComposer.js",
-                "three/addons/postprocessing/RenderPass.js",
-                "three/addons/postprocessing/UnrealBloomPass.js",
+                "/static/vendor/three-addons/postprocessing/EffectComposer.js",
+                "/static/vendor/three-addons/postprocessing/RenderPass.js",
+                "/static/vendor/three-addons/postprocessing/UnrealBloomPass.js",
             ],
             "summary": "Local postprocessing pipeline for restrained glow/bloom effects.",
         },

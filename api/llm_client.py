@@ -34,7 +34,11 @@ from api.generation.premium_quality import (
 from api.generation.provider_gemini import (
     call_structured as _provider_call_structured,
     call_text as _provider_call_text,
+    high_demand_retry_after_seconds as _gemini_high_demand_retry_after_seconds,
+    is_high_demand_response as _gemini_is_high_demand_response,
+    is_high_demand_blocked as _gemini_high_demand_blocked,
     iter_stream_text as _provider_iter_stream_text,
+    mark_high_demand as _gemini_mark_high_demand,
     was_quota_exhausted,
 )
 from api.preflight import annotate_doc as _annotate_preflight_doc
@@ -334,17 +338,32 @@ def generate_page_premium(
         )
     if not GEMINI_API_KEY:
         return {"error": "Premium mode requires GEMINI_API_KEY"}
+    if _gemini_high_demand_blocked():
+        return {
+            "error": "model_temporarily_unavailable",
+            "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
+        }
 
     plan = _call_gemini_premium_plan(brief_str, seed_val, user_key)
     if not isinstance(plan, dict):
         if was_quota_exhausted():
             return {"error": "model_quota_exhausted"}
+        if _gemini_high_demand_blocked():
+            return {
+                "error": "model_temporarily_unavailable",
+                "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
+            }
         return {"error": "Premium planner failed"}
 
     raw_doc = _call_gemini_premium_build(brief_str, seed_val, plan)
     if not isinstance(raw_doc, dict):
         if was_quota_exhausted():
             return {"error": "model_quota_exhausted"}
+        if _gemini_high_demand_blocked():
+            return {
+                "error": "model_temporarily_unavailable",
+                "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
+            }
         return {"error": "Premium build failed"}
     try:
         doc = _normalize_doc(raw_doc)
@@ -498,6 +517,12 @@ def generate_page_premium_burst(
     if not GEMINI_API_KEY:
         yield {"error": "Premium burst requires GEMINI_API_KEY"}
         return
+    if _gemini_high_demand_blocked():
+        yield {
+            "error": "model_temporarily_unavailable",
+            "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
+        }
+        return
 
     memory = recent_activity_memory(limit=20)
     base_targets = seeded_diverse_format_first_targets(
@@ -565,6 +590,10 @@ def generate_page_premium_burst(
                 continue
         if resp.status_code != 200:
             logging.warning("Gemini premium burst %s HTTP %s: %s", label, resp.status_code, resp.text[:400])
+            if _gemini_is_high_demand_response(resp):
+                _gemini_mark_high_demand(f"premium burst {label}")
+                all_429 = False
+                break
             if resp.status_code != 429:
                 all_429 = False
             continue
@@ -631,6 +660,11 @@ def generate_page_premium_burst(
         logging.warning("Gemini premium burst %s produced no valid sites; text_len=%d", label, len(full_text))
     if all_429:
         yield {"error": "model_quota_exhausted"}
+    elif _gemini_high_demand_blocked():
+        yield {
+            "error": "model_temporarily_unavailable",
+            "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
+        }
     else:
         yield {"error": "Premium burst failed"}
 
