@@ -8,7 +8,7 @@
 
 I was wondering if a website could change every time you visited it (I need new wonders). What if every person sees an entirely different website during each visit. Imagine interdimensional cable from Rick and Morty, but for websites.
 
-Roulette is a generative UI system that uses large language models (LLMs) to create complete interactive web experiences at runtime. It is not an AI website builder: users do not prompt it into existence. The fun is that each click opens a random one-off interface, game, tool, storefront, simulator, dashboard, or tiny internet object that probably should not exist but somehow does.
+Roulette is a generative UI system that uses large language models (LLMs) to create complete interactive web experiences at runtime. Users do not prompt to make websites. The fun part is that each click opens a random one-off interface, game, tool, storefront, simulator, dashboard, or tiny internet object that probably should not exist but somehow does.
 
 Each generation produces something weird, different, or unique (I don't know what you'll see, so I hope it's not too weird).
 
