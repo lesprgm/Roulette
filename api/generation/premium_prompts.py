@@ -33,6 +33,8 @@ Before final HTML, verify and fix:
 - Genre disciplined? yes. Follow genre_contract.copy_density, palette strategy, instruction policy, visual density, motion language, and chrome policy.
 - Palette coherent? yes. Use a deliberate color system, not random color soup: one background family, one surface family, one dominant action accent, optional secondary accent, clear state colors, and readable text contrast. Avoid generic AI palettes such as purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected genre explicitly needs that look.
 - Background appropriate? yes. Do not default to dark/slate/black/terminal shells. Use light, warm, bright, or neutral page backgrounds unless the selected game/canvas explicitly needs a dark playfield for contrast.
+- Light color world varied? yes. If a light palette is chosen, do not collapse everything into beige/cream. Consider soft mint, pistachio, sage wash, blush pink, powder blue, butter yellow, aqua foam, coral milk, or lavender mist as full-page background families with readable text and one strong accent.
+- Visuals code-native? yes. Use inline SVG, CSS shapes, Canvas, Paper Shaders, Matter bodies, or Three.js objects for primary visuals. Emojis may appear as tiny copy flavor only; they must not be the main product image, game sprite set, icon system, or content-bearing visual artifact.
 - Semantic anchors embodied or hidden? yes. Any visible anchor word in title/copy is also expressed through material, shape, texture, motion, interaction feedback, or UI metaphor. Do not expose material anchors as spec labels such as "Material:", "Finish:", "Chassis material:", or "[material] finish"; if the material is not part of a real product spec, keep it visual only.
 - Copy clean? yes. No literal "Onboarding", "Instructions", "Visitor Role", "Primary Loop", "Feedback Contract", jargon/host-brand words, `//`, TODO, undefined, null, markdown fences, raw JSON, or code-comment debris.
 - Content complete? yes. No empty slots, missing images, placeholder-only panels, blank products, blank tables, or controls that do not visibly change page state.
@@ -53,8 +55,10 @@ Content-bearing visual rule:
 - SaaS/workspace/data: realistic records, chart/table/kanban/map/inbox/file cards with meaningful sample content.
 - Creative tools/editors: visible canvas, artifact, preview, sequencer grid, drawing, palette, or export result.
 - Simulators/toys: visible object/world/stage whose state changes, not just sliders/meters.
-- Backgrounds, gradients, icons, panels, badges, buttons, and text do not count as content-bearing visual artifacts.
-- Use inline SVG, CSS shape systems, Canvas, Matter.js, or Three.js when useful; keep it lightweight and tied to the selected format.
+- Backgrounds, gradients, icons, emoji, panels, badges, buttons, and text do not count as content-bearing visual artifacts.
+- Emoji do not count as product art, sprites, thumbnails, illustrations, or content-bearing visuals.
+- Use inline SVG, CSS shape systems, Canvas, Paper Shaders, Matter.js, or Three.js when useful; keep it lightweight and tied to the selected format.
+- Prefer generated code-native illustration over emoji: SVG product drawings, CSS stickers/sprites, Canvas boards/maps, Paper material surfaces, Matter bodies, or simple Three.js objects.
 """.strip()
 
 
@@ -121,6 +125,7 @@ Local design kit manifest:
 - Keep one focal area, short human-facing copy, controls near what they affect, and no cluttered multi-panel shell unless genre_contract calls for dense/maximal.
 - Do not add a footer, copyright bar, division label, legal strip, or fake organization sign-off. End with the actual activity result, replay/reset, receipt, score, generated artifact, or next useful action.
 - Use palette roles, not scattered colors: 60/30/10 balance, readable contrast, one dominant action accent, one optional secondary accent, and no clashing neon-on-neon unless the genre is explicitly arcade/maximal. Avoid generic AI palettes: purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected format specifically calls for them.
+- Vary light palettes across sites. Do not overuse beige/cream. Good background families include soft mint, pistachio, sage wash, powder blue, butter yellow, blush pink, lavender mist, coral milk, warm white, and aqua foam.
 - Non-empty first screen rule: every site must show player/targets, sample cards, product hero, prefilled records, starter artwork, furnished layout, route, thumbnails, seed cards, or preview artifact before interaction.
 - Visual artifact rule: each site must include at least one content-bearing visual object/stage/output. UI chrome alone is not enough.
 - Canvas/game first paint rule: draw a high-contrast stage immediately; a Play button may overlay gameplay but must not replace it with a blank/Initialize splash. Puzzle/game cue rule: one short cue near the board.
@@ -236,6 +241,7 @@ Experience contract:
 - Follow genre_contract.copy_density, palette_strategy, chrome_policy, instruction_policy, visual_density, and motion_language. Use one dominant action accent, one optional secondary accent, readable contrast, and no generic fake telemetry.
 - Keep color decisions genre-appropriate: one background family, one surface family, one dominant action accent, optional secondary accent, clear disabled/error/success states, and no arbitrary rainbow palette unless the format needs it. Avoid generic AI palettes: purple/blue gradients, neon soup, cream/orange dashboard defaults, and glassy glowing cards unless the selected format specifically calls for them.
 - Keep the main page background light, warm, bright, or neutral unless the selected format is a game board/canvas that needs contrast. Do not make dark mode, black dashboards, slate shells, or terminal-like pages the default visual language.
+- Avoid beige/cream monoculture. Use full-page light color worlds such as soft green, pistachio, sage, powder blue, blush pink, butter yellow, aqua foam, coral milk, or lavender mist when they fit the format.
 - Do not add a footer, copyright bar, legal strip, fake department signature, or organization sign-off. Generated pages are single-screen experiences; finish on the activity payoff and replay/next action.
 - The onboarding cue must be a diegetic micro-cue, placeholder, label, cursor affordance, or short CTA. Do not create a section titled "Onboarding", "Instructions", "How to use", "Primary Loop", or "Feedback Contract" unless documentation_allowed.
 - Keep the first screen legible in three seconds: clear title, obvious action target, visible score/progress/result, and no lecture. Puzzle/game cue rule: add one short cue near the board, e.g. "Use arrows", "Match two cards", or "Avoid mines".
@@ -267,6 +273,7 @@ Premium build requirements:
 - If you include local fonts, use `<link rel="stylesheet" href="/static/design-kit/fonts.css">`.
 - Create original inline SVG/CSS/canvas artwork when needed; do not invent local asset paths.
 - Generate material textures inline with CSS/SVG/Canvas/Three when useful. Do not depend on texture libraries or static overlay assets.
+- Do not use emoji as the primary illustration system. If emoji appear, keep them incidental and still draw the actual object/stage/output with inline SVG, CSS, Canvas, Paper Shaders, Matter.js, or Three.js.
 	- Three.js core must use `import * as THREE from '/static/vendor/three.module.js';`; addons must use direct local `/static/vendor/three-addons/...` imports.
 	- Since the app renders this HTML in an iframe, no host cleanup code is required; still avoid memory leaks inside the page.
 	- The final fenced block must be a complete document with `<html>`, `<head>`, and `<body>`.

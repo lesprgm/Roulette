@@ -39,6 +39,7 @@ PREMIUM BUILD GUIDANCE:
 - Use the selected layout, palette, and motion preset intentionally. A local overlay is optional.
 - Include at least one content-bearing visual artifact: board/stage/player, product illustration, map/route, receipt/ticket, record set/chart, canvas/editor preview, or simulator object. More is welcome when it supports the format. Panels, buttons, badges, icons, gradients, and wallpaper do not count.
 - Prefer original inline SVG, CSS-generated artwork, Canvas, or Three.js when it better serves the format. Do not force a stock texture onto every page.
+- Do not use emoji as the primary visual system. Emojis are allowed only as small copy flavor; primary visuals should be inline SVG, CSS shapes/sprites, Canvas, Paper Shaders, Matter.js bodies, or Three.js objects.
 - Favor cinematic depth, layered parallax, responsive canvases, or restrained Three.js over flat static UI.
 - Preserve clarity through hierarchy and affordances, not tutorial panels.
 - Aim for genre-appropriate polish: weird is fine, tacky clutter is not.
@@ -80,6 +81,7 @@ SELF QA:
 7. Check activity depth: no slider-only pages unless activity_type is interactive_instrument or simulation; every control must advance a goal, create an output, unlock content, configure a result, or change persistent visible state.
 8. Check naming: games and quizzes must expose the recognizable format in the title, such as Snake, Platform, Tic-Tac-Toe, Quiz, Memory Match, or Word Game.
 9. Check visual language: avoid dark/slate/terminal shells unless the selected game/canvas needs contrast; otherwise use light, warm, bright, or neutral backgrounds.
+10. Check palette variety: avoid beige/cream monoculture. Use soft mint, sage wash, blush pink, powder blue, butter yellow, aqua foam, coral milk, lavender mist, warm white, or another coherent light color world when appropriate.
 """.strip()
 
 PREMIUM_RUNTIME_GUIDANCE = """
@@ -90,6 +92,7 @@ PRODUCT VISUALS:
 - For product/storefront pages: generate SVG product illustrations inline using `<svg>` elements with gradients, paths, and shapes. Draw the product hero — book cover, candle, sneaker, jewelry, skincare bottle, electronics device — as a styled SVG illustration in the product hero area.
 - For app pages: Lucide icons cover UI chrome. Use CSS-styled cards, badges, colored sections, and gradients for visual richness.
 - Never use `<img>` tags pointing to remote URLs. All visuals must be inline SVG, data:image/svg+xml, Lucide icons, CSS gradients/shapes, or Canvas/Three.js.
+- Emoji do not count as product art, sprites, thumbnails, illustrations, or content-bearing visuals.
 
 PREMIUM UI STATE:
 - Alpine.js is available locally through `<script defer src="/static/vendor/alpine.min.js"></script>`. Use it for app/tool/commerce state such as filters, carts, drawers, tabs, selected records, and multi-step forms. Do not use Alpine for canvas/game loops.
