@@ -3,19 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import random
 import re
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from api.generation.experience_grammar import (
-    activity_family_for_variant,
-    all_experience_cell_keys,
-    parse_cell_key,
-    seeded_experience_cell,
-)
+from api.generation.interaction_catalog import format_family_for_id
 from api.generation.experience_quality import score_experience
+from api.generation.quality_html import extract_doc_html, visible_text
 from api.quality import score_page_doc
+from api.settings import SETTINGS
 
 try:
     import redis  # type: ignore
@@ -23,10 +19,10 @@ except Exception:  # pragma: no cover - optional dependency
     redis = None  # type: ignore
 
 
-REDIS_URL = os.getenv("REDIS_URL", "").strip()
-REDIS_DIVERSITY_ENABLED = os.getenv("REDIS_DIVERSITY_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
-HTML_CACHE_TTL_SECONDS = int(os.getenv("DIVERSITY_HTML_CACHE_TTL_SECONDS", "604800") or 604800)
-FINGERPRINT_TTL_SECONDS = int(os.getenv("DIVERSITY_FINGERPRINT_TTL_SECONDS", "604800") or 604800)
+REDIS_URL = SETTINGS.storage.redis_url
+REDIS_DIVERSITY_ENABLED = SETTINGS.storage.diversity_enabled
+HTML_CACHE_TTL_SECONDS = SETTINGS.storage.diversity_html_cache_ttl_seconds
+FINGERPRINT_TTL_SECONDS = SETTINGS.storage.diversity_fingerprint_ttl_seconds
 
 _CLIENT = None
 if redis and REDIS_URL and REDIS_DIVERSITY_ENABLED and not os.getenv("PYTEST_CURRENT_TEST"):
@@ -35,8 +31,6 @@ if redis and REDIS_URL and REDIS_DIVERSITY_ENABLED and not os.getenv("PYTEST_CUR
     except Exception:
         _CLIENT = None
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_HTML_RE = re.compile(r"\s+")
 _WORD_RE = re.compile(r"\b[a-z][a-z0-9-]{3,}\b", re.IGNORECASE)
 
 
@@ -44,22 +38,25 @@ def _client(client: Any = None) -> Any:
     return client if client is not None else _CLIENT
 
 
-def _html_from_doc(doc: Dict[str, Any]) -> str:
-    if not isinstance(doc, dict):
-        return ""
-    html = doc.get("html")
-    if isinstance(html, str):
-        return html
-    components = doc.get("components")
-    if isinstance(components, list):
-        chunks: List[str] = []
-        for comp in components:
-            props = comp.get("props") if isinstance(comp, dict) else None
-            chunk = props.get("html") if isinstance(props, dict) else None
-            if isinstance(chunk, str):
-                chunks.append(chunk)
-        return "\n".join(chunks)
-    return ""
+def _recent_values(redis_client: Any, key: str, legacy_key: str, limit: int) -> List[str]:
+    values = list(redis_client.zrevrange(key, 0, max(0, limit - 1)) or [])
+    if len(values) < limit:
+        values.extend(redis_client.zrevrange(legacy_key, 0, max(0, limit - 1)) or [])
+    return list(dict.fromkeys(str(value) for value in values if value))[:limit]
+
+
+def _empty_recent_memory() -> Dict[str, List[str]]:
+    return {
+        "format_ids": [],
+        "format_families": [],
+        "interaction_loops": [],
+        "reward_mechanics": [],
+        "visual_palettes": [],
+        "compositions": [],
+        "layout_signatures": [],
+        "rendered_layout_families": [],
+        "primary_renderers": [],
+    }
 
 
 def _slug(value: Any, limit: int = 40) -> str:
@@ -77,50 +74,6 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
-def _weighted_sample(items: List[Tuple[str, float]], seed: int | None = None) -> str:
-    if not items:
-        return all_experience_cell_keys()[0]
-    total = sum(max(0.0001, score) for _key, score in items)
-    rng = random.Random(int(seed or time.time_ns()))
-    cursor = rng.random() * total
-    for key, score in items:
-        cursor -= max(0.0001, score)
-        if cursor <= 0:
-            return key
-    return items[-1][0]
-
-
-def choose_experience_cell(seed: int | None = None, client: Any = None) -> Dict[str, str]:
-    redis_client = _client(client)
-    if redis_client is None:
-        return seeded_experience_cell(seed)
-    now = time.time()
-    scored: List[Tuple[str, float]] = []
-    try:
-        for key in all_experience_cell_keys():
-            _archetype, _, loop_type = key.partition(":")
-            count = float(redis_client.zscore("qd:count:experience_cell", key) or 0)
-            avg_quality = float(redis_client.zscore("qd:avg_quality:experience_cell", key) or 0.5)
-            last_used = float(redis_client.zscore("qd:last_used:experience_cell", key) or 0)
-            loop_last_used = float(redis_client.zscore("qd:last_used:primary_loop_type", loop_type) or 0)
-            age_hours = max(0.0, (now - last_used) / 3600.0) if last_used else 24.0
-            loop_age_hours = max(0.0, (now - loop_last_used) / 3600.0) if loop_last_used else 24.0
-            underuse_bonus = 1.0 / (1.0 + count)
-            quality_bonus = max(0.1, min(avg_quality, 1.0))
-            staleness_bonus = min(1.0, age_hours / 24.0)
-            loop_freshness_bonus = min(1.0, loop_age_hours / 24.0)
-            score = (
-                (0.40 * underuse_bonus)
-                + (0.30 * quality_bonus)
-                + (0.20 * staleness_bonus)
-                + (0.10 * loop_freshness_bonus)
-            )
-            scored.append((key, score))
-        return parse_cell_key(_weighted_sample(scored, seed))
-    except Exception:
-        return seeded_experience_cell(seed)
-
-
 def _input_modalities(html: str) -> List[str]:
     found: List[str] = []
     checks = [
@@ -136,7 +89,7 @@ def _input_modalities(html: str) -> List[str]:
 
 
 def _dominant_terms(html: str, limit: int = 8) -> List[str]:
-    text = _HTML_RE.sub(" ", _TAG_RE.sub(" ", html or "")).lower()
+    text = visible_text(html, lowercase=True)
     stop = {"with", "from", "this", "that", "into", "your", "html", "body", "main", "section"}
     counts: Dict[str, int] = {}
     for word in _WORD_RE.findall(text):
@@ -146,8 +99,31 @@ def _dominant_terms(html: str, limit: int = 8) -> List[str]:
     return [word for word, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
 
 
+def _rendered_layout_family(html: str) -> str:
+    lower = (html or "").lower()
+    features: List[str] = []
+    if "<aside" in lower or re.search(r"\b(sidebar|side-rail|control-rail)\b", lower):
+        features.append("side_region")
+    if re.search(r"position\s*:\s*fixed", lower):
+        features.append("fixed_layer")
+    if re.search(r"grid-template-(?:areas|columns)", lower):
+        features.append("explicit_grid")
+    if re.search(r"\b(bottom-sheet|bottom-dock|dock)\b", lower):
+        features.append("bottom_dock")
+    if re.search(r"\b(modal|dialog)\b", lower):
+        features.append("modal_payoff")
+    if "<canvas" in lower:
+        features.append("canvas_stage")
+    narrow_widths = [int(value) for value in re.findall(r"max-width\s*:\s*(\d{2,4})px", lower)]
+    if narrow_widths and min(narrow_widths) <= 900:
+        features.append("narrow_wrapper")
+    section_count = len(re.findall(r"<(?:main|section)\b", lower))
+    features.append(f"regions_{min(section_count, 5)}")
+    return ":".join(features)
+
+
 def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) -> Dict[str, Any]:
-    html = _html_from_doc(doc)
+    html = extract_doc_html(doc)
     debug = doc.get("ndw_debug") if isinstance(doc, dict) else None
     plan = debug.get("premium_plan") if isinstance(debug, dict) else None
     if not isinstance(plan, dict):
@@ -157,40 +133,50 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         visual_quality = score_page_doc(doc)
     experience_quality = score_experience(doc, plan)
     loop = plan.get("primary_loop") if isinstance(plan.get("primary_loop"), dict) else {}
-    anchors = plan.get("semantic_anchors") or plan.get("anchors") or {}
-    activity_contract = plan.get("activity_contract") if isinstance(plan.get("activity_contract"), dict) else {}
-    task_contract = plan.get("task_contract") if isinstance(plan.get("task_contract"), dict) else {}
-    activity_variant = activity_contract.get("activity_variant") or task_contract.get("format") or ""
+    format_spec = plan.get("format_spec") if isinstance(plan.get("format_spec"), dict) else {}
+    if not format_spec and isinstance(plan.get("activity_contract"), dict):
+        format_spec = plan["activity_contract"]
+    task_model = plan.get("task_model") if isinstance(plan.get("task_model"), dict) else {}
+    if not task_model and isinstance(plan.get("task_contract"), dict):
+        task_model = plan["task_contract"]
+    format_id = format_spec.get("format_id") or format_spec.get("activity_variant") or task_model.get("format") or ""
     reward_mechanic = (
         plan.get("reward_mechanic")
-        or task_contract.get("reward_mechanic")
-        or activity_contract.get("reward_mechanic")
+        or task_model.get("reward_mechanic")
+        or format_spec.get("reward_mechanic")
         or ""
     )
     genre_contract = plan.get("genre_contract") if isinstance(plan.get("genre_contract"), dict) else {}
+    visual_spec = plan.get("visual_spec") if isinstance(plan.get("visual_spec"), dict) else {}
+    if not visual_spec and isinstance(plan.get("visual_recipe"), dict):
+        visual_spec = plan["visual_recipe"]
+    layout_model = visual_spec.get("layout_model") if isinstance(visual_spec.get("layout_model"), dict) else {}
     cell = {
-        "experience_archetype": plan.get("experience_archetype") or "unknown",
-        "primary_loop_type": plan.get("primary_loop_type") or "unknown",
+        "interaction_pattern": plan.get("interaction_pattern") or plan.get("experience_archetype") or "unknown",
+        "interaction_loop": plan.get("interaction_loop") or plan.get("primary_loop_type") or "unknown",
     }
     descriptor = {
         "site_id": site_id or _hash_text(html)[:16],
-        "anchors": anchors if isinstance(anchors, dict) else {},
-        "experience_archetype": cell["experience_archetype"],
+        "interaction_pattern": cell["interaction_pattern"],
         "visitor_role": plan.get("visitor_role") or "",
         "visitor_goal": plan.get("visitor_goal") or "",
-        "activity_type": plan.get("activity_type") or activity_contract.get("activity_type") or "",
-        "activity_variant": activity_variant,
-        "activity_family": activity_family_for_variant(str(activity_variant)),
+        "format_category": plan.get("format_category") or plan.get("activity_type") or format_spec.get("format_category") or format_spec.get("activity_type") or "",
+        "format_id": format_id,
+        "format_family": format_family_for_id(str(format_id)),
         "reward_mechanic": reward_mechanic,
-        "palette_strategy": genre_contract.get("palette_strategy") or "",
+        "visual_palette_id": visual_spec.get("palette_id") or "",
+        "visual_composition": visual_spec.get("composition") or "",
+        "layout_signature": layout_model.get("signature") or visual_spec.get("composition") or "",
+        "rendered_layout_family": _rendered_layout_family(html),
+        "primary_renderer": visual_spec.get("primary_renderer") or "",
         "chrome_policy": genre_contract.get("chrome_policy") or "",
-        "task_format": task_contract.get("format") or "",
-        "task_goal": task_contract.get("user_goal") or "",
-        "task_domain_objects": task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else [],
-        "task_state_variables": task_contract.get("state_variables") if isinstance(task_contract.get("state_variables"), list) else [],
-        "task_completion_condition": task_contract.get("completion_condition") or "",
-        "task_allowed_patterns": task_contract.get("allowed_patterns") if isinstance(task_contract.get("allowed_patterns"), list) else [],
-        "primary_loop_type": cell["primary_loop_type"],
+        "task_format": task_model.get("format") or "",
+        "task_goal": task_model.get("user_goal") or "",
+        "task_domain_objects": task_model.get("domain_objects") if isinstance(task_model.get("domain_objects"), list) else [],
+        "task_state_variables": task_model.get("state_variables") if isinstance(task_model.get("state_variables"), list) else [],
+        "task_completion_condition": task_model.get("completion_condition") or "",
+        "task_allowed_patterns": task_model.get("allowed_patterns") if isinstance(task_model.get("allowed_patterns"), list) else [],
+        "interaction_loop": cell["interaction_loop"],
         "state_change_type": _slug(loop.get("state_change") if isinstance(loop, dict) else ""),
         "input_modality": _input_modalities(html),
         "layout_archetype": plan.get("layout_archetype") or plan.get("layout_key") or "",
@@ -214,17 +200,6 @@ def fingerprint_values(descriptor: Dict[str, Any], plan: Dict[str, Any], html: s
     }
 
 
-def descriptor_has_duplicate(descriptor: Dict[str, Any], plan: Dict[str, Any], html: str, client: Any = None) -> bool:
-    redis_client = _client(client)
-    if redis_client is None:
-        return False
-    try:
-        values = fingerprint_values(descriptor, plan, html)
-        return any(redis_client.exists(f"fingerprint:{kind}:{value}") for kind, value in values.items())
-    except Exception:
-        return False
-
-
 def record_generation_event(event: str, fields: Dict[str, Any], client: Any = None) -> None:
     redis_client = _client(client)
     if redis_client is None:
@@ -244,13 +219,11 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
     redis_client = _client(client)
     if redis_client is None:
         return build_site_descriptor(doc)
-    html = _html_from_doc(doc)
+    html = extract_doc_html(doc)
     debug = doc.get("ndw_debug") if isinstance(doc, dict) else None
     plan = debug.get("premium_plan") if isinstance(debug, dict) and isinstance(debug.get("premium_plan"), dict) else {}
     descriptor = build_site_descriptor(doc)
     site_id = str(descriptor["site_id"])
-    cell_key = f"{descriptor['experience_archetype']}:{descriptor['primary_loop_type']}"
-    quality_norm = max(0.0, min(1.0, float(descriptor.get("experience_score") or descriptor.get("quality_score") or 0) / 100.0))
     try:
         pipe = redis_client.pipeline()
         pipe.set(f"site:{site_id}:descriptor", json.dumps(descriptor, ensure_ascii=False, separators=(",", ":")))
@@ -261,36 +234,32 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         }, ensure_ascii=False, separators=(",", ":")))
         if HTML_CACHE_TTL_SECONDS > 0 and html:
             pipe.setex(f"site:{site_id}:html", HTML_CACHE_TTL_SECONDS, html)
-        pipe.zincrby("qd:count:experience_cell", 1, cell_key)
-        pipe.zincrby("qd:count:experience_archetype", 1, str(descriptor["experience_archetype"]))
-        pipe.zincrby("qd:count:primary_loop_type", 1, str(descriptor["primary_loop_type"]))
-        pipe.zincrby("qd:count:activity_variant", 1, str(descriptor["activity_variant"]))
-        pipe.zincrby("qd:count:activity_family", 1, str(descriptor["activity_family"]))
+        pipe.zincrby("qd:count:interaction_pattern", 1, str(descriptor["interaction_pattern"]))
+        pipe.zincrby("qd:count:interaction_loop", 1, str(descriptor["interaction_loop"]))
+        pipe.zincrby("qd:count:format_id", 1, str(descriptor["format_id"]))
+        pipe.zincrby("qd:count:format_family", 1, str(descriptor["format_family"]))
         pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
-        pipe.zincrby("qd:count:palette_strategy", 1, str(descriptor["palette_strategy"]))
-        pipe.zadd("qd:last_used:experience_cell", {cell_key: int(time.time())})
-        pipe.zadd("qd:last_used:primary_loop_type", {str(descriptor["primary_loop_type"]): int(time.time())})
-        pipe.zadd("qd:last_used:activity_variant", {str(descriptor["activity_variant"]): int(time.time())})
-        pipe.zadd("qd:last_used:activity_family", {str(descriptor["activity_family"]): int(time.time())})
+        pipe.zincrby("qd:count:visual_palette_id", 1, str(descriptor["visual_palette_id"]))
+        pipe.zincrby("qd:count:visual_composition", 1, str(descriptor["visual_composition"]))
+        pipe.zincrby("qd:count:layout_signature", 1, str(descriptor["layout_signature"]))
+        pipe.zincrby("qd:count:rendered_layout_family", 1, str(descriptor["rendered_layout_family"]))
+        pipe.zincrby("qd:count:primary_renderer", 1, str(descriptor["primary_renderer"]))
+        pipe.zadd("qd:last_used:interaction_loop", {str(descriptor["interaction_loop"]): int(time.time())})
+        pipe.zadd("qd:last_used:format_id", {str(descriptor["format_id"]): int(time.time())})
+        pipe.zadd("qd:last_used:format_family", {str(descriptor["format_family"]): int(time.time())})
         pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
-        pipe.zadd("qd:last_used:palette_strategy", {str(descriptor["palette_strategy"]): int(time.time())})
-        pipe.zadd("qd:avg_quality:experience_cell", {cell_key: quality_norm})
-        pipe.hincrby(f"qd:cell:{cell_key}", "count", 1)
-        pipe.hset(
-            f"qd:cell:{cell_key}",
-            mapping={
-                "last_generated_at": str(int(time.time())),
-                "last_site_id": site_id,
-                "last_quality": str(quality_norm),
-            },
-        )
+        pipe.zadd("qd:last_used:visual_palette_id", {str(descriptor["visual_palette_id"]): int(time.time())})
+        pipe.zadd("qd:last_used:visual_composition", {str(descriptor["visual_composition"]): int(time.time())})
+        pipe.zadd("qd:last_used:layout_signature", {str(descriptor["layout_signature"]): int(time.time())})
+        pipe.zadd("qd:last_used:rendered_layout_family", {str(descriptor["rendered_layout_family"]): int(time.time())})
+        pipe.zadd("qd:last_used:primary_renderer", {str(descriptor["primary_renderer"]): int(time.time())})
         for kind, value in fingerprint_values(descriptor, plan, html).items():
             pipe.setex(f"fingerprint:{kind}:{value}", FINGERPRINT_TTL_SECONDS, site_id)
         pipe.execute()
         record_generation_event(event, {
             "site_id": site_id,
-            "experience_archetype": descriptor["experience_archetype"],
-            "primary_loop_type": descriptor["primary_loop_type"],
+            "interaction_pattern": descriptor["interaction_pattern"],
+            "interaction_loop": descriptor["interaction_loop"],
             "reward_mechanic": descriptor["reward_mechanic"],
             "quality_score": descriptor["quality_score"],
             "experience_score": descriptor["experience_score"],
@@ -300,22 +269,30 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
     return descriptor
 
 
-def recent_activity_memory(limit: int = 20, client: Any = None) -> Dict[str, List[str]]:
+def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[str]]:
     redis_client = _client(client)
     if redis_client is None:
-        return {"variants": [], "families": [], "loops": [], "rewards": [], "palettes": []}
+        return _empty_recent_memory()
     try:
-        variants = redis_client.zrevrange("qd:last_used:activity_variant", 0, max(0, limit - 1)) or []
-        families = redis_client.zrevrange("qd:last_used:activity_family", 0, max(0, limit - 1)) or []
-        loops = redis_client.zrevrange("qd:last_used:primary_loop_type", 0, max(0, limit - 1)) or []
-        rewards = redis_client.zrevrange("qd:last_used:reward_mechanic", 0, max(0, limit - 1)) or []
-        palettes = redis_client.zrevrange("qd:last_used:palette_strategy", 0, max(0, limit - 1)) or []
+        format_ids = _recent_values(redis_client, "qd:last_used:format_id", "qd:last_used:activity_variant", limit)
+        format_families = _recent_values(redis_client, "qd:last_used:format_family", "qd:last_used:activity_family", limit)
+        interaction_loops = _recent_values(redis_client, "qd:last_used:interaction_loop", "qd:last_used:primary_loop_type", limit)
+        reward_mechanics = list(redis_client.zrevrange("qd:last_used:reward_mechanic", 0, max(0, limit - 1)) or [])
+        visual_palettes = redis_client.zrevrange("qd:last_used:visual_palette_id", 0, max(0, limit - 1)) or []
+        compositions = redis_client.zrevrange("qd:last_used:visual_composition", 0, max(0, limit - 1)) or []
+        layout_signatures = redis_client.zrevrange("qd:last_used:layout_signature", 0, max(0, limit - 1)) or []
+        rendered_layout_families = redis_client.zrevrange("qd:last_used:rendered_layout_family", 0, max(0, limit - 1)) or []
+        primary_renderers = redis_client.zrevrange("qd:last_used:primary_renderer", 0, max(0, limit - 1)) or []
         return {
-            "variants": [str(item) for item in variants if item],
-            "families": [str(item) for item in families if item],
-            "loops": [str(item) for item in loops if item],
-            "rewards": [str(item) for item in rewards if item],
-            "palettes": [str(item) for item in palettes if item],
+            "format_ids": format_ids,
+            "format_families": format_families,
+            "interaction_loops": interaction_loops,
+            "reward_mechanics": [str(item) for item in reward_mechanics if item],
+            "visual_palettes": [str(item) for item in visual_palettes if item],
+            "compositions": [str(item) for item in compositions if item],
+            "layout_signatures": [str(item) for item in layout_signatures if item],
+            "rendered_layout_families": [str(item) for item in rendered_layout_families if item],
+            "primary_renderers": [str(item) for item in primary_renderers if item],
         }
     except Exception:
-        return {"variants": [], "families": [], "loops": [], "rewards": [], "palettes": []}
+        return _empty_recent_memory()
