@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from api import dedupe
+from api.settings import SETTINGS
 
 log = logging.getLogger(__name__)
 
@@ -25,37 +26,32 @@ except Exception:  # pragma: no cover - optional dependency in some envs
     redis = None  # type: ignore
 
 # Legacy file-based storage (fallback)
-PREFETCH_DIR = Path(os.getenv("PREFETCH_DIR", "cache/prefetch"))
-PREMIUM_PREFETCH_DIR = Path(os.getenv("PREMIUM_PREFETCH_DIR", "cache/premium_prefetch"))
-BATCH_MIN = int(os.getenv("PREFETCH_BATCH_MIN", "5"))
-BATCH_MAX = int(os.getenv("PREFETCH_BATCH_MAX", "20"))
-DROP_TEST_FIXTURE_DOCS = os.getenv("PREFETCH_DROP_TEST_FIXTURES", "1").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-    "off",
-}
+PREFETCH_DIR = SETTINGS.queue.prefetch_dir
+PREMIUM_PREFETCH_DIR = SETTINGS.queue.premium_prefetch_dir
+BATCH_MIN = SETTINGS.queue.batch_min
+BATCH_MAX = SETTINGS.queue.batch_max
+DROP_TEST_FIXTURE_DOCS = SETTINGS.queue.drop_test_fixture_docs
 
-_REDIS_URL = os.getenv("REDIS_URL", "").strip()
-_REDIS_QUEUE_KEY = os.getenv("PREFETCH_REDIS_QUEUE_KEY", "ndw:prefetch:queue")
-_REDIS_DOC_PREFIX = os.getenv("PREFETCH_REDIS_DOC_PREFIX", "ndw:prefetch:doc:")
-_PREMIUM_REDIS_QUEUE_KEY = os.getenv("PREMIUM_REDIS_QUEUE_KEY", "ndw:premium:queue")
-_PREMIUM_REDIS_DOC_PREFIX = os.getenv("PREMIUM_REDIS_DOC_PREFIX", "ndw:premium:doc:")
+_REDIS_URL = SETTINGS.storage.redis_url
+_REDIS_QUEUE_KEY = SETTINGS.queue.redis_queue_key
+_REDIS_DOC_PREFIX = SETTINGS.queue.redis_doc_prefix
+_PREMIUM_REDIS_QUEUE_KEY = SETTINGS.queue.premium_redis_queue_key
+_PREMIUM_REDIS_DOC_PREFIX = SETTINGS.queue.premium_redis_doc_prefix
 _REDIS_CLIENT = None
 _REDIS_DISABLED_REASON = ""
 if redis and _REDIS_URL and not os.getenv("PYTEST_CURRENT_TEST"):
     try:
         _REDIS_CLIENT = redis.from_url(_REDIS_URL, decode_responses=True)
-        if os.getenv("PREFETCH_REDIS_HEALTHCHECK", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        if SETTINGS.queue.redis_healthcheck:
             _REDIS_CLIENT.ping()
     except Exception:
         _REDIS_CLIENT = None
         _REDIS_DISABLED_REASON = "initialization_failed"
         log.warning("prefetch.redis: failed to initialize redis client", exc_info=True)
 
-TOKEN_TTL_SECONDS = int(os.getenv("PREFETCH_TOKEN_TTL_SECONDS", "1800"))
-PREMIUM_TOKEN_TTL_SECONDS = int(os.getenv("PREMIUM_TOKEN_TTL_SECONDS", "900"))
-_token_secret_env = os.getenv("PREFETCH_TOKEN_SECRET", "").strip()
+TOKEN_TTL_SECONDS = SETTINGS.queue.token_ttl_seconds
+PREMIUM_TOKEN_TTL_SECONDS = SETTINGS.queue.premium_token_ttl_seconds
+_token_secret_env = SETTINGS.queue.token_secret
 if _token_secret_env:
     _TOKEN_SECRET = _token_secret_env.encode("utf-8")
 else:
