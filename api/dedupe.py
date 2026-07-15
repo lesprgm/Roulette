@@ -1,15 +1,15 @@
 import hashlib
 import json
-import os
 import re
 import time
-from pathlib import Path
-from typing import Dict, Set
+from typing import Dict
+
+from api.settings import SETTINGS
 
 
-DEDUPE_ENABLED = (os.getenv("DEDUPE_ENABLED", "1").lower() in {"1", "true", "yes", "on"})
-DEDUPE_FILE = Path(os.getenv("DEDUPE_RECENT_FILE", "cache/seen_pages.json"))
-DEDUPE_MAX = int(os.getenv("DEDUPE_MAX", "200"))
+DEDUPE_ENABLED = SETTINGS.storage.dedupe_enabled
+DEDUPE_FILE = SETTINGS.storage.dedupe_file
+DEDUPE_MAX = SETTINGS.storage.dedupe_max
 
 
 _WS_RE = re.compile(r"\s+")

@@ -572,14 +572,6 @@ export class InfiniteTunnel {
     this.pointer.y = -(clientY / window.innerHeight) * 2 + 1;
   };
 
-  private handleClick = (e?: MouseEvent): void => {
-    if (e) {
-      this.activateCardAtClientPoint(e.clientX, e.clientY);
-      return;
-    }
-    this.activateCardAtPointer();
-  };
-
   private activateCardAtClientPoint(clientX: number, clientY: number): void {
     this.setPointerFromClient(clientX, clientY);
     this.activateCardAtPointer();
