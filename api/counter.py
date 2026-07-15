@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
-from pathlib import Path
 from typing import Dict, Optional
+
+from api.settings import SETTINGS
 
 log = logging.getLogger(__name__)
 
@@ -15,15 +15,11 @@ except Exception:
     redis = None  
 
 _LOCK = threading.Lock()
-_COUNTER_FILE = Path(os.getenv("COUNTER_FILE", "cache/counter.json"))
-
-_REDIS_URL = os.getenv("REDIS_URL", "").strip()
-_REDIS_COUNTER_KEY = os.getenv("REDIS_COUNTER_KEY", "ndw:metrics:total")
-_REDIS_TIMEOUT = float(os.getenv("REDIS_COUNTER_TIMEOUT", "2.0") or 2.0)
-try:
-    _COUNTER_BASELINE = max(0, int(os.getenv("COUNTER_BASELINE", "0") or 0))
-except ValueError:
-    _COUNTER_BASELINE = 0
+_COUNTER_FILE = SETTINGS.storage.counter_file
+_REDIS_URL = SETTINGS.storage.redis_url
+_REDIS_COUNTER_KEY = SETTINGS.storage.redis_counter_key
+_REDIS_TIMEOUT = SETTINGS.storage.redis_counter_timeout
+_COUNTER_BASELINE = SETTINGS.storage.counter_baseline
 
 _REDIS_CLIENT: Optional["redis.Redis[str]"] = None  # type: ignore[name-defined]
 if redis and _REDIS_URL and _REDIS_URL.startswith(("redis://", "rediss://", "unix://")):
@@ -144,14 +140,20 @@ def status() -> Dict[str, object]:
         "key": _REDIS_COUNTER_KEY,
         "baseline": _COUNTER_BASELINE,
         "backend": "file",
+        "reachable": False,
     }
     if not _REDIS_CLIENT:
+        result["total"] = _file_get_total()
         return result
     try:
-        result["reachable"] = bool(_REDIS_CLIENT.ping())
+        if not _REDIS_CLIENT.ping():
+            result["total"] = _file_get_total()
+            return result
+        result["reachable"] = True
         result["key_exists"] = bool(_REDIS_CLIENT.exists(_REDIS_COUNTER_KEY))
         result["backend"] = "redis"
+        result["total"] = _redis_get_total()
     except Exception as exc:
-        result["reachable"] = False
         result["error"] = type(exc).__name__
+        result["total"] = _file_get_total()
     return result

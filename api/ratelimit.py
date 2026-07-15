@@ -1,12 +1,13 @@
 from __future__ import annotations
-import os
 import time
 from typing import Dict, Tuple
 
-WINDOW_SECONDS: int = int(os.getenv("RATE_WINDOW_SECONDS", "10800"))
-MAX_REQUESTS: int = int(os.getenv("RATE_MAX_REQUESTS", "30"))
-PREMIUM_WINDOW_SECONDS: int = int(os.getenv("PREMIUM_WINDOW_SECONDS", "86400"))
-PREMIUM_DAILY_LIMIT: int = int(os.getenv("PREMIUM_DAILY_LIMIT", "5"))
+from api.settings import SETTINGS
+
+WINDOW_SECONDS = SETTINGS.rate_limit.window_seconds
+MAX_REQUESTS = SETTINGS.rate_limit.max_requests
+PREMIUM_WINDOW_SECONDS = SETTINGS.rate_limit.premium_window_seconds
+PREMIUM_DAILY_LIMIT = SETTINGS.rate_limit.premium_daily_limit
 
 _store: Dict[Tuple[str, str], Dict[str, int]] = {}
 
@@ -40,15 +41,6 @@ def inspect(bucket: str, key: str):
     return allowed, remaining, entry["reset_ts"]
 
 
-def refund(bucket: str, key: str):
-    entry = _ensure_entry(bucket, key)
-    if entry["count"] > 0:
-        entry["count"] -= 1
-    max_requests, _window_seconds = _bucket_limits(bucket)
-    allowed = entry["count"] < max_requests
-    remaining = max(0, max_requests - entry["count"])
-    return allowed, remaining, entry["reset_ts"]
-
 def allow_request(bucket: str, key: str):
     """
     Core API used by some codebases.
@@ -66,7 +58,7 @@ def allow_request(bucket: str, key: str):
 
 def check_and_increment(bucket: str, key: str):
     """
-    Compatibility shim used by your main.py.
+    Compatibility shim used by the shared request policy.
     Same return tuple as allow_request.
     """
     return allow_request(bucket, key)

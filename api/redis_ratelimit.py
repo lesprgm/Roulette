@@ -1,17 +1,18 @@
-import os
 import time
 from typing import Optional, Tuple
+
+from api.settings import SETTINGS
 
 try:
     import redis  # type: ignore
 except Exception:  # pragma: no cover - redis is an optional dependency in some envs
     redis = None  # type: ignore
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-WINDOW_SECONDS = int(os.getenv("RATE_WINDOW_SECONDS", "10800"))
-MAX_REQUESTS = int(os.getenv("RATE_MAX_REQUESTS", "30"))
-PREMIUM_WINDOW_SECONDS = int(os.getenv("PREMIUM_WINDOW_SECONDS", "86400"))
-PREMIUM_DAILY_LIMIT = int(os.getenv("PREMIUM_DAILY_LIMIT", "5"))
+REDIS_URL = SETTINGS.storage.redis_url or "redis://localhost:6379/0"
+WINDOW_SECONDS = SETTINGS.rate_limit.window_seconds
+MAX_REQUESTS = SETTINGS.rate_limit.max_requests
+PREMIUM_WINDOW_SECONDS = SETTINGS.rate_limit.premium_window_seconds
+PREMIUM_DAILY_LIMIT = SETTINGS.rate_limit.premium_daily_limit
 
 
 class RedisRateLimiter:
@@ -72,40 +73,3 @@ class RedisRateLimiter:
         remaining = max(0, max_requests - used)
         reset_ts = current_ts - (current_ts % window_seconds) + window_seconds
         return (used < max_requests, remaining, reset_ts)
-
-    def refund(self, prefix: str, key: str, now: Optional[int] = None) -> Tuple[bool, int, int]:
-        current_ts = now or int(time.time())
-        max_requests, window_seconds = self._bucket_limits(prefix)
-        bucket_key = self._bucket_key(prefix, key, current_ts)
-        try:
-            current = int(self._client.get(bucket_key) or 0)
-        except Exception:
-            current = 0
-        if current > 0:
-            remaining_count = int(self._client.decr(bucket_key, 1))
-            if remaining_count <= 0:
-                self._client.delete(bucket_key)
-                current = 0
-            else:
-                current = remaining_count
-        remaining = max(0, max_requests - current)
-        reset_ts = current_ts - (current_ts % window_seconds) + window_seconds
-        return (current < max_requests, remaining, reset_ts)
-
-
-_default_limiter: Optional[RedisRateLimiter] = None
-
-
-def _get_default_limiter() -> RedisRateLimiter:
-    global _default_limiter
-    if _default_limiter is None:
-        _default_limiter = RedisRateLimiter()
-    return _default_limiter
-
-
-def check_and_increment(prefix: str, key: str, now: Optional[int] = None) -> Tuple[bool, int, int]:
-    """
-    Backwards-compatible module-level helper retained for direct imports.
-    """
-    limiter = _get_default_limiter()
-    return limiter.check_and_increment(prefix, key, now)

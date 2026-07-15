@@ -6,7 +6,9 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+
+from api.settings import SETTINGS
 
 PreflightIssue = Dict[str, str]
 
@@ -142,14 +144,8 @@ _HOST_IDS = {
     "ndwSnippetErrorMsg",
 }
 
-try:
-    _HTML_WARN_BYTES = int(os.getenv("PREFLIGHT_HTML_WARN_BYTES", "180000"))
-except Exception:
-    _HTML_WARN_BYTES = 180000
-try:
-    _HTML_BLOCK_BYTES = int(os.getenv("PREFLIGHT_HTML_BLOCK_BYTES", "280000"))
-except Exception:
-    _HTML_BLOCK_BYTES = 280000
+_HTML_WARN_BYTES = SETTINGS.runtime.preflight_html_warn_bytes
+_HTML_BLOCK_BYTES = SETTINGS.runtime.preflight_html_block_bytes
 
 
 def _issue(severity: str, field: str, message: str) -> PreflightIssue:
@@ -732,19 +728,3 @@ def annotate_doc(doc: Dict[str, Any], issues: Sequence[PreflightIssue]) -> Dict[
     out = dict(doc)
     out["ndw_debug"] = debug
     return out
-
-
-def first_js_syntax_error(doc: Dict[str, Any]) -> Optional[str]:
-    if not isinstance(doc, dict):
-        return None
-    kind = str(doc.get("kind") or "").lower()
-    if kind == "full_page_html" and isinstance(doc.get("html"), str):
-        for script in _extract_scripts(doc["html"]):
-            if script.get("src"):
-                continue
-            err = _check_js_syntax(script.get("code") or "", module="module" in (script.get("type") or ""))
-            if err:
-                return err
-    if kind == "ndw_snippet_v1" and isinstance(doc.get("js"), str):
-        return _check_js_syntax(doc["js"], module=False)
-    return None
