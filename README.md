@@ -15,7 +15,7 @@ Each generation produces something weird, different, or unique (I don't know wha
 The system combines:
 
 - **Combinatorial creative entropy** to keep generations from feeling like the same template each time
-- **Experience grammar** so each site has a role, first action, feedback loop, and reason to keep interacting. No boring generic websites
+- **Interaction model** so each site has a role, first action, feedback loop, and reason to keep interacting. No boring generic websites
 - **Burst queueing** so one LLM request can produce multiple usable websites (I needed to get around rate limits somehow)
 - **Iframe sandboxing** so every generated world can run safely and reset cleanly
 
@@ -125,7 +125,7 @@ graph TD
     H -->|No| I[Normalize & Validate]
     H -->|Yes| H2[Fallback LLM Model]
     H2 --> I
-    I --> Q[Visual + Activity + Experience Checks]
+    I --> Q[Visual + Task + Experience Checks]
     Q --> M{Check Deduplication}
     M -->|Unique| N[Render in Browser]
     M -->|Duplicate| E
@@ -156,17 +156,17 @@ graph TD
 
 Roulette's novelty system is inspired by **Shannon entropy**, the information theory concept introduced by Claude Shannon in 1948 to describe uncertainty and surprise in a message.
 
-Roulette applies that idea to creative generation, but the randomness is not flat. Each generation starts from a recognizable format such as a game, quiz, editor, booking flow, planner, dashboard, simulator, or mini app. Then the system gives that format a task model: user goal, domain objects, state variables, controls, and a completion condition. Only after that does the LLM receive the stranger creative flavor: semantic anchors, palette, motion language, typography, texture, rendering mode, and tone.
+Roulette applies that idea to creative generation, but the randomness is not flat. Each generation starts from a recognizable format such as a game, quiz, editor, booking flow, planner, dashboard, simulator, or mini app. Then the system gives that format a task model: user goal, domain objects, state variables, controls, and a completion condition. The backend composes a spatial graph from page regions and relationships, then assigns a compatible visual specification: exact palette roles, code-generated visual media, state-linked motion, and a format-specific copy budget.
 
-The semantic-anchor layer alone creates **759,375** combinations. Across all current creative buckets, Roulette has over **1,400 quadrillion** possible generation targets. This is **combinatorial creative entropy**: novelty created through structured combinations, while the task model keeps the result recognizable instead of incoherent.
+Across the format, task, reward, visual-specification, palette, composition, renderer, and motion choices, Roulette has over **1,400 quadrillion** possible generation targets. This is **combinatorial creative entropy**: novelty created through structured combinations, while the task model keeps the result recognizable instead of incoherent.
 
 ```mermaid
 flowchart TD
  G["New Generation"] --> A["Concrete Format"]
- A --> B["Task Contract"]
- B --> C["Experience Loop"]
- C --> D["Semantic Anchors"]
- D --> E["Visual System"]
+ A --> B["Task Model"]
+ B --> C["Interaction Loop"]
+ C --> D["Visual Specification"]
+ D --> E["Layout Model + Palette"]
  E --> F["Rendering + Motion"]
  F --> H["One Generated Website"]
 ```
@@ -176,9 +176,9 @@ flowchart LR
  A["Breakout Game"] --> Z["Task Model"]
  B["Paddle + Ball + Bricks"] --> Z
  C["Score + Lives + Restart"] --> Z
- Z --> V["Visual Flavor"]
- D["Ceramic Market + Aurora Palette"] --> V
- E["Elastic Motion + Canvas"] --> V
+ Z --> V["Visual Specification"]
+ D["Exact Palette + Composition"] --> V
+ E["Renderer Stack + Motion"] --> V
  V --> W["Recognizable game, strange world"]
 ```
 
@@ -186,13 +186,14 @@ flowchart LR
 
 | Component             | Location                     | Purpose                                            |
 | ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Frontend UI**          | `templates/index.html`<br/>`static/ts-src/app.ts`<br/>`static/ts-src/frame_renderer.ts` | Landing tunnel, generation controls, and iframe sandbox renderer       |
+| **Frontend UI**          | `templates/index.html`<br/>`static/ts-src/app.ts`<br/>`static/ts-src/landing-controller.ts`<br/>`static/ts-src/generated-site-host.ts` | Landing tunnel, generation controls, and iframe sandbox renderer       |
 | **NDW Runtime**          | `static/ts-src/ndw.ts`              | Custom JavaScript runtime for games: `loop(dt)`, input handling, canvas helpers, RNG      |
-| **API Backend**          | `api/main.py`                   | FastAPI server exposing `/generate`, `/metrics`, `/prefetch` endpoints             |
+| **API Backend**          | `api/main.py`<br/>`api/routes/` | FastAPI application assembly and focused generation, metrics, and prefetch routers |
+| **Configuration**        | `api/settings.py`               | Typed startup settings and validated environment defaults                          |
 | **LLM Client**           | `api/llm_client.py`                | LLM planner, one-shot self-correcting raw-HTML build, fallback routing, and burst parsing |
 | **Prefetch Engine**        | `api/prefetch.py`                 | Shared queue, preview tokens, Redis/file storage, and lane isolation.         |
 | **Deduplication**         | `api/dedupe.py`                  | Content fingerprinting to prevent near-identical outputs                    |
-| **Generation Grammar**       | `api/generation/`                | Task contracts, experience grammar, semantic anchors, prompt contracts, Redis diversity steering, and activity/experience scoring |
+| **Generation Models**       | `api/generation/`                | Task models, compositional layout models, visual specifications, prompt contracts, Redis diversity steering, and task/interaction scoring |
 | **Validators / Quality**      | `api/preflight.py`<br/>`api/quality.py`     | Local asset/runtime preflight and visual scoring                  |
 | **Node.js Tooling**        | `package.json`, `static/ts-src/`         | Tailwind + TypeScript build pipeline for frontend assets                    |
 
@@ -299,7 +300,7 @@ Configure behavior via environment variables:
 | `GEMINI_API_KEY`       | Google AI Studio API key       | required for live generation        |
 | `LLM_TIMEOUT_SECS`      | Request timeout in seconds      | `105`                    |
 
-The live provider is configured through these env vars. Queueing and local gates are the reliability layer; legacy secondary provider routing has been removed from the active architecture.
+The live provider and its fallback model are configured through these environment variables. Queueing and local gates provide the reliability layer around model calls.
 
 ### Queue & Caching
 
@@ -310,7 +311,7 @@ The live provider is configured through these env vars. Queueing and local gates
 | `PREMIUM_QUEUE_ENABLED` | Enable the shared queue lane | `true` |
 | `PREMIUM_FILL_TO` | Target queue size after refill | `10` |
 | `PREMIUM_LOW_WATER` | Trigger top-up when queue drops | `3` |
-| `PREMIUM_BATCH_SIZE` | Number of candidates per live/top-up burst | `12` |
+| `PREMIUM_BATCH_SIZE` | Number of candidates per live/top-up burst | `10` |
 | `PREMIUM_BURST_MIN_HTML_BYTES` | Reject tiny/minimal burst candidates before serving or queueing | `3000` |
 | `PREFLIGHT_HTML_WARN_BYTES` | Warn on unusually large generated pages | `180000` |
 | `PREFLIGHT_HTML_BLOCK_BYTES` | Block extreme generated pages before serving or queueing | `280000` |
@@ -318,11 +319,11 @@ The live provider is configured through these env vars. Queueing and local gates
 | `PREMIUM_TOPUP_ENABLED` | Allow background queue refill | `false` |
 | `STREAM_KEEPALIVE_SECONDS` | Keepalive ping interval while stream generation waits for the first page | `8` |
 | `PREFETCH_PREWARM_COUNT` | Number of docs to generate before startup  | `0`           |
-| `REDIS_DIVERSITY_ENABLED` | Store served-site descriptors and QD counters in Redis when `REDIS_URL` exists | `true` |
+| `REDIS_DIVERSITY_ENABLED` | Store served-site descriptors, recent-choice counters, and fingerprints in Redis when `REDIS_URL` exists | `true` |
 | `REDIS_COUNTER_KEY` | Durable Redis key used by the public served-site counter | `ndw:metrics:total` |
 | `REDIS_COUNTER_TIMEOUT` | Redis counter connection/read timeout in seconds | `2.0` |
 | `COUNTER_BASELINE` | Optional one-time migration floor for an empty replacement database | `0` |
-| `VARIANT_CATALOG_PATH` | Combined private YAML generation catalog supplied as a Render Secret File | `/etc/secrets/variant_catalog.yaml` |
+| `FORMAT_CATALOG_PATH` | Combined private YAML generation catalog supplied as a Render Secret File | `/etc/secrets/variant_catalog.yaml` |
 | `DIVERSITY_HTML_CACHE_TTL_SECONDS` | Optional TTL for cached generated HTML descriptors | `604800` |
 | `DIVERSITY_FINGERPRINT_TTL_SECONDS` | Short-term descriptor/structure fingerprint TTL | `604800` |
 
@@ -334,11 +335,11 @@ into the queue. Failed candidates and unattempted burst slots are discarded; the
 queue miss naturally starts a new burst. By default, startup/top-up refill is disabled to
 avoid burning provider request quota in the background.
 
-Legacy/admin prefill tooling still has `PREFETCH_*` knobs in code because the route names and
-storage module predate the only product path. Those knobs are not a separate public mode.
+`PREFETCH_*` variables configure preview-token behavior, local file fallback, and the operator
+fill endpoint. They do not represent a separate public generation mode.
 
 The catalog loader and schema stay versioned in Python. The proprietary YAML weights and
-variants are intentionally gitignored; production reads the combined catalog from the Render
+formats are intentionally gitignored; production reads the combined catalog from the Render
 Secret File `variant_catalog.yaml`, while local development can use split files under `data/`.
 
 ### Other Settings
@@ -468,11 +469,11 @@ Traditional websites show the same content every time. This project explores the
   - Ensures fresh, varied outputs
 
 4. **Prompt Engineering**
-  - Planner prompts start from a concrete format and task contract before style decisions
-  - Semantic anchors are translated into visual, interaction, content, and motion roles
+  - Planner prompts start from a concrete format and task model before style decisions
+  - Concrete formats and task models determine behavior before visual direction is applied
   - Builder prompts receive stable runtime rules, local design-kit keys, and novelty guidance
   - Runtime constraints keep outputs renderable inside the NDW host
-  - Emergency fallback providers stay available only when primary generation fails
+  - The configured fallback model is used only when primary generation fails
 
 5. **Quality Guardrails**
   - Raw HTML extraction avoids JSON escaping failures
@@ -483,22 +484,29 @@ Traditional websites show the same content every time. This project explores the
 
 ## Development
 
+New contributors should start with [Contributor Onboarding](docs/ONBOARDING.md) for the module map, local setup, request traces, and debugging order.
+
 ### Project Structure
 
 ```
 Roulette/
 ├── api/          # FastAPI backend
-│  ├── main.py      # API routes and server
+│  ├── main.py      # Application assembly, middleware, and static hosting
+│  ├── routes/      # Generation, prefetch, and metrics HTTP endpoints
+│  ├── generation/premium_service.py # Premium queue and burst orchestration
 │  ├── llm_client.py   # LLM planner/builder + burst parser
 │  ├── prefetch.py    # Shared queue storage lanes
-│  ├── novelty.py     # Served-site novelty ledger
+│  ├── settings.py    # Typed startup configuration
 │  ├── dedupe.py     # Duplicate detection
 │  └── validators.py   # Schema validation
 ├── static/
 │  ├── ts-src/      # TypeScript source
-│  │  ├── app.ts     # Main frontend logic
+│  │  ├── app.ts     # Initialization and event wiring
+│  │  ├── generation-client.ts # HTTP and stream parsing
+│  │  ├── generated-site-host.ts # Iframe lifecycle
+│  │  ├── landing-controller.ts # Landing and tunnel state
 │  │  └── ndw.ts     # NDW runtime
-│  └── ts-build/     # Compiled JavaScript
+│  └── js/           # Generated JavaScript (build output)
 ├── templates/
 │  └── index.html     # Landing page
 ├── tests/         # Test suite
@@ -533,16 +541,17 @@ npm run lint
 
 Node.js powers the asset build workflow. The scripts in `package.json` run Tailwind’s CLI
 (`npm run build:css`) and the TypeScript compiler (`npm run build:ts`) to produce
-`static/tailwind.css` and the ES modules in `static/ts-build/`. During development you can
+`static/tailwind.css` and the ES modules in `static/js/`. During development you can
 run `npm run watch` to keep both pipelines hot. Once those assets exist, the FastAPI server
 serves them directly—no Node.js runtime is required in production.
 
 ## Additional Resources
 
+- [docs/ONBOARDING.md](docs/ONBOARDING.md) - First-day setup, module ownership, request traces, debugging order, and glossary
 - [docs/PREMIUM_QUEUE.md](docs/PREMIUM_QUEUE.md) - Queue architecture, queue storage, serving policy, refill behavior, and counter semantics
 - [docs/LLM_ORCHESTRATION.md](docs/LLM_ORCHESTRATION.md) - Primary LLM generation routing and planner/builder flow
-- [docs/EXPERIENCE_GRAMMAR.md](docs/EXPERIENCE_GRAMMAR.md) - Visitor roles, primary loops, semantic translation, and experience-quality scoring
-- [docs/REDIS_DIVERSITY_TRACKING.md](docs/REDIS_DIVERSITY_TRACKING.md) - Redis descriptor archive, QD counters, fingerprints, and event stream
+- [docs/INTERACTION_MODEL.md](docs/INTERACTION_MODEL.md) - Interaction patterns, task coherence, and experience-quality scoring
+- [docs/REDIS_DIVERSITY_TRACKING.md](docs/REDIS_DIVERSITY_TRACKING.md) - Redis descriptor archive, recent-choice counters, fingerprints, and event stream
 
 - **FastAPI Documentation**: https://fastapi.tiangolo.com/
 - **Mermaid Diagrams**: https://mermaid.js.org/
