@@ -134,7 +134,7 @@ export interface NdwRuntime {
       }
 
       try { 
-        NDW._tick && NDW._tick(dt); 
+        if (NDW._tick) NDW._tick(dt);
       } catch(e){ 
         console.error('[NDW] Loop error:', e);
         if ((window as any).__NDW_showSnippetErrorOverlay) (window as any).__NDW_showSnippetErrorOverlay(e);
@@ -210,7 +210,7 @@ export interface NdwRuntime {
       };
       if (opts.fullScreen) _applySize(window.innerWidth, window.innerHeight);
       else _applySize(opts.width||800, opts.height||600);
-      parent && parent.appendChild(c);
+      if (parent) parent.appendChild(c);
       NDW._canvases.add(c);
       NDW._primaryCanvas = c;
       c.ctx = ctx; c.dpr = dpr; c.clear = ()=>ctx.clearRect(0,0,c.width/dpr,c.height/dpr);

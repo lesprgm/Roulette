@@ -1,15 +1,19 @@
-// Migrated TypeScript version of app.js (core client logic)
-// NDW runtime is loaded separately; app.ts owns the host shell and iframe lifecycle.
-import { buildGeneratedFrame, extractDocumentTitle } from './frame_renderer.js';
+// NDW runtime is loaded separately; app.ts wires the landing shell to generation and rendering.
+import { generateOnce, GenerationHttpError, streamGeneration } from './generation-client.js';
+import {
+  destroyGeneratedSiteFrame,
+  NdwSnippet,
+  renderFullPageHost,
+  renderSnippetHost,
+  showHostError,
+} from './generated-site-host.js';
+import { LandingController, resolveTunnelCardAction } from './landing-controller.js';
 
 export { };
 
-interface NdwBackground { style?: string; class?: string }
-interface NdwSnippet { kind: 'ndw_snippet_v1'; title?: string; html?: string; css?: string; js?: string; background?: NdwBackground }
 interface FullPageDoc { kind: 'full_page_html'; html: string }
 interface ErrorDoc { error: string }
 interface ComponentDoc { components: any[] }
-interface QueuePreview { id: string; title: string; category: string; vibe: string; created_at: number }
 type AppNormalizedDoc = NdwSnippet | FullPageDoc | ErrorDoc | ComponentDoc | any;
 
 type AppWindow = Window & {
@@ -20,15 +24,11 @@ type AppWindow = Window & {
 };
 const _w = window as AppWindow;
 
-const bodyEl = document.body;
 let mainEl: HTMLElement | null = null;
-let activeSiteFrame: HTMLIFrameElement | null = null;
-const SANDBOX_SCOPE = '#ndw-sandbox';
 const QUERY_PARAMS = new URLSearchParams(window.location.search);
 const NDW_TEST_MODE = QUERY_PARAMS.has('ndw_test');
 const NDW_DEBUG_MODE = QUERY_PARAMS.has('debug') || QUERY_PARAMS.has('ndw_debug');
 const NDW_TEST_DEBUG_PREVIEWS = NDW_TEST_MODE && QUERY_PARAMS.has('ndw_test_debug');
-let previewStatusBound = false;
 
 function resolveMainEl(): HTMLElement | null {
   if (!mainEl) {
@@ -47,140 +47,13 @@ function buildFloatingGenerateMarkup() {
   `;
 }
 
-function setLandingFallbackVisible(visible: boolean) {
-  const fallback = document.getElementById('landingFallback');
-  if (!fallback) return;
-  fallback.hidden = !visible;
-  fallback.setAttribute('aria-hidden', visible ? 'false' : 'true');
-}
-
-function renderTestPreviewDock(previews: QueuePreview[]) {
-  const dock = document.getElementById('ndwTestPreviewDock');
-  if (!dock) return;
-  if (!NDW_TEST_DEBUG_PREVIEWS) {
-    dock.hidden = true;
-    dock.setAttribute('aria-hidden', 'true');
-    dock.innerHTML = '';
-    return;
-  }
-  const livePreviews = previews.filter(preview => !String(preview.id || '').startsWith('placeholder:')).slice(0, 4);
-  if (!livePreviews.length) {
-    dock.hidden = true;
-    dock.setAttribute('aria-hidden', 'true');
-    dock.innerHTML = '';
-    return;
-  }
-  dock.hidden = false;
-  dock.setAttribute('aria-hidden', 'false');
-  dock.innerHTML = livePreviews
-    .map(preview => `<button type="button" data-test-preview-id="${preview.id}">${preview.title}</button>`)
-    .join('');
-}
-
-function bindPreviewStatusEvents() {
-  if (previewStatusBound) return;
-  previewStatusBound = true;
-  const recoveryBtn = document.getElementById('landingRecoveryBtn');
-  if (recoveryBtn && !(recoveryBtn as any).__ndwBound) {
-    recoveryBtn.addEventListener('click', generateNew);
-    (recoveryBtn as any).__ndwBound = true;
-  }
-  const dock = document.getElementById('ndwTestPreviewDock');
-  if (dock && !(dock as any).__ndwBound) {
-    dock.addEventListener('click', (event) => {
-      const target = event.target as HTMLElement | null;
-      const button = target?.closest<HTMLButtonElement>('[data-test-preview-id]');
-      if (!button) return;
-      const id = button.dataset.testPreviewId;
-      if (id) {
-        void loadPrefetchSite(id);
-      }
-    });
-    (dock as any).__ndwBound = true;
-  }
-  window.addEventListener('ndw:preview-status', (event: Event) => {
-    const detail = (event as CustomEvent<{ hasLivePreviews?: boolean; previews?: QueuePreview[] }>).detail || {};
-    const previews = Array.isArray(detail.previews) ? detail.previews : [];
-    setLandingFallbackVisible(Boolean(document.body.classList.contains('landing-mode') && !detail.hasLivePreviews));
-    renderTestPreviewDock(previews);
-  });
-}
-
-async function primeTestPreviewStatus() {
-  try {
-    const resp = await fetch('/api/prefetch/previews?limit=6', { cache: 'no-store' });
-    if (!resp.ok) throw new Error(`preview status failed: ${resp.status}`);
-    const previews = await resp.json();
-    const livePreviews = Array.isArray(previews) ? previews : [];
-    window.dispatchEvent(
-      new CustomEvent('ndw:preview-status', {
-        detail: {
-          hasLivePreviews: livePreviews.length > 0,
-          count: livePreviews.length,
-          previews: livePreviews,
-        },
-      }),
-    );
-  } catch (error) {
-    console.warn('[ndw] test preview priming failed', error);
-    window.dispatchEvent(
-      new CustomEvent('ndw:preview-status', {
-        detail: {
-          hasLivePreviews: false,
-          count: 0,
-          previews: [],
-        },
-      }),
-    );
-  }
-}
-
-function parseRgb(color: string): [number, number, number] {
-  const match = color.match(/rgba?\(([^)]+)\)/);
-  if (!match) return [255, 255, 255];
-  const parts = match[1].split(',').map(part => Number(part.trim()));
-  return [parts[0] ?? 255, parts[1] ?? 255, parts[2] ?? 255];
-}
-
-function relativeLuminance([r, g, b]: [number, number, number]) {
-  const srgb = [r, g, b].map(v => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-  });
-  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
-}
-
-function ensureReadableTheme(target?: HTMLElement) {
-  try {
-    const el = target || document.body;
-    if (!el.isConnected) return;
-    const style = getComputedStyle(el);
-    const hasImage = style.backgroundImage && style.backgroundImage !== 'none';
-    const bgRgb = parseRgb(style.backgroundColor || 'rgb(255,255,255)');
-    const bgLum = relativeLuminance(bgRgb);
-
-    // If background is very light and there's no image, ensure it has a subtle gradient
-    if (!hasImage && bgLum > 0.9) {
-      el.style.background = 'linear-gradient(140deg,#ffffff,#f1f5f9)';
-    }
-
-    const colorRgb = parseRgb(style.color || 'rgb(51,65,85)');
-    const colorLum = relativeLuminance(colorRgb);
-
-    // Contrast check: if background and text are both light, or both dark, force high contrast
-    if (Math.abs(bgLum - colorLum) < 0.3) {
-      if (bgLum > 0.5) {
-        // Light background -> Force dark text
-        el.style.color = '#1f2937';
-      } else {
-        // Dark background -> Force light text
-        el.style.color = '#f8fafc';
-      }
-    }
-  } catch (err) {
-    console.warn('ensureReadableTheme failed', err);
-  }
-}
+const landingController = new LandingController({
+  testMode: NDW_TEST_MODE,
+  debugPreviews: NDW_TEST_DEBUG_PREVIEWS,
+  onGenerate: event => { void generateNew(event); },
+  onLoadPrefetch: id => { void loadPrefetchSite(id); },
+  destroyGeneratedSite: destroyGeneratedSiteFrame,
+});
 
 function ensureScrollableBody() {
   try {
@@ -270,14 +143,14 @@ export async function __ndwTestRenderEvalDoc(
     document.body.classList.add('ndw-eval-hide-chrome');
   }
   updateJsonOut(doc);
-  hideHeroOverlay();
+  landingController.hideHeroOverlay();
   hideLandingElements();
   await enterSite(doc);
   await sleep(Math.max(0, Number(options.settleMs ?? 0)));
   const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
   const heroHidden = !hero || getComputedStyle(hero).display === 'none' || hero.classList.contains('is-hidden');
   return {
-    ok: !Boolean((doc as any)?.error),
+    ok: !(doc as any)?.error,
     title: document.title,
     generatedMode: document.body.classList.contains('generated-mode'),
     heroHidden,
@@ -569,19 +442,9 @@ export function initApp() {
   ensureControlStyles();
   ensureJsonOverlay();
   installEvalHook();
-  bindPreviewStatusEvents();
+  landingController.bindPreviewStatusEvents();
   ensureFloatingGenerate();
-  renderLanding();
-}
-
-const API_KEY = (_w.API_KEY && String(_w.API_KEY)) || (bodyEl.dataset.apiKey && String(bodyEl.dataset.apiKey)) || '';
-
-function buildAuthHeaders() {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (API_KEY) {
-    headers['x-api-key'] = API_KEY;
-  }
-  return headers;
+  landingController.renderLanding();
 }
 
 async function enterSite(doc: AppNormalizedDoc) {
@@ -604,27 +467,18 @@ async function enterSite(doc: AppNormalizedDoc) {
     showError('No renderable HTML found');
     return;
   }
-  await runTransition(() => renderInline(first.props.html));
+  await runTransition(() => renderFullPage(first.props.html));
 }
 
 export function renderDocForPreview(doc: AppNormalizedDoc) {
   try {
     document.body.classList.add('generated-mode');
     document.body.classList.remove('landing-mode');
-    removeSitesCounterOverlay();
+    landingController.removeSitesCounterOverlay();
   } catch (_) {
     // Ignore DOM errors in headless preview mode.
   }
   void enterSite(doc);
-}
-
-async function callGenerate(brief: string, seed: number) {
-  const resp = await fetch('/generate', { method: 'POST', headers: buildAuthHeaders(), body: JSON.stringify({ brief, seed }) });
-  if (!resp.ok) {
-    const text = await resp.text();
-    return { error: `Generate failed (${resp.status}): ${text || resp.statusText}` };
-  }
-  return resp.json();
 }
 
 function setGenerating(is: boolean) {
@@ -678,61 +532,7 @@ export async function playReveal() {
 }
 
 export function hideLandingElements() {
-    const selectors = ['.blob-cont', '.noise-overlay', '#cursor-glow'];
-    selectors.forEach(sel => {
-        const el = document.querySelector(sel);
-        if (el) el.remove();
-    });
-    setLandingFallbackVisible(false);
-    renderTestPreviewDock([]);
-    const tunnelContainer = document.getElementById('tunnel-container');
-    if (tunnelContainer) tunnelContainer.style.display = 'none';
-    if (tunnel) {
-      tunnel.destroy();
-      tunnel = null;
-    }
-    document.body.classList.add('generated-mode');
-    document.body.classList.remove('landing-mode');
-    document.body.style.removeProperty('min-height');
-    document.body.style.removeProperty('background');
-    document.body.style.removeProperty('background-image');
-    document.body.style.removeProperty('background-color');
-    document.documentElement.style.removeProperty('min-height');
-}
-
-function setupLandingCues() {
-  if ((_w as any).__ndwLandingCues) return;
-  const hint = document.getElementById('heroHint');
-  const cue = document.getElementById('scrollCue');
-  if (!hint && !cue) return;
-  (_w as any).__ndwLandingCues = true;
-
-  if (NDW_TEST_MODE) {
-    hint?.classList.remove('is-hidden');
-    cue?.classList.remove('is-hidden');
-    return;
-  }
-
-  let hintTimer: number | undefined;
-  let cueTimer: number | undefined;
-
-  const hideAll = () => {
-    if (hintTimer) window.clearTimeout(hintTimer);
-    if (cueTimer) window.clearTimeout(cueTimer);
-    hint?.classList.add('is-hidden');
-    cue?.classList.add('is-hidden');
-    window.removeEventListener('scroll', onScroll);
-  };
-
-  const onScroll = () => {
-    if (window.scrollY > 24) {
-      hideAll();
-    }
-  };
-
-  window.addEventListener('scroll', onScroll, { passive: true });
-  hintTimer = window.setTimeout(() => hint?.classList.add('is-hidden'), 8000);
-  cueTimer = window.setTimeout(() => cue?.classList.add('is-hidden'), 10000);
+  landingController.hideLandingElements();
 }
 
 // export function _resetMainEl() {
@@ -777,16 +577,14 @@ async function generateNew(e?: Event) {
     if (btn) btn.textContent = 'Peek under the hood';
   }
 
-  const startTime = Date.now();
   const MIN_DELAY = 3000; // 3s optimistic opening fallback
-  const DEADMAN_DELAY = 62000; // 22s: Give up
+  const DEADMAN_DELAY = 62000;
 
   let deadman: any;
-  let optimisticTimer: any;
   let shutterOpened = false;
   
   // Optimistic Shutter Opening: If 3s pass, ONLY open if we have content ready
-  optimisticTimer = setTimeout(async () => {
+  const optimisticTimer = setTimeout(async () => {
     // Only open if we actually have a page rendered (firstPageSeen)
     // If we haven't seen a page yet, we keep the shutter closed so we don't show a blank white screen.
     if ((_w as any).__ndwGenerating && !(_w as any).__ndwTimedOut && firstPageSeen && !shutterOpened) {
@@ -802,7 +600,7 @@ async function generateNew(e?: Event) {
   const renderFirstPage = async (page: any) => {
     clearTimeout(deadman);
     firstPageSeen = true;
-    hideHeroOverlay();
+    landingController.hideHeroOverlay();
     hideLandingElements();
     hideSpinner();
     updateJsonOut(page);
@@ -881,74 +679,7 @@ async function generateNew(e?: Event) {
   try {
     showSpinner();
     startVerbRotator();
-    const resp = await fetch('/generate/stream', {
-      method: 'POST',
-      headers: buildAuthHeaders(),
-      body: JSON.stringify({ brief: '', seed }),
-      signal
-    });
-
-    if (!resp.ok) {
-      if (resp.status === 429) {
-        try {
-          const rateData = await resp.json();
-          const waitSecs = rateData?.retry_after_seconds || 60;
-          showError(`Rate limit hit. Try again in ${waitSecs} seconds.`);
-          updateJsonOut(rateData);
-        } catch {
-          showError('Too many requests. Wait a moment and try again.');
-        }
-        if (!shutterOpened) { await openShutter(); shutterOpened = true; }
-        return;
-      }
-      throw new Error(`Stream failed: ${resp.status}`);
-    }
-    const reader = resp.body?.getReader();
-    if (!reader) throw new Error('No reader');
-
-    const decoder = new TextDecoder();
-    let messageBuffer = '';
-    let currentEvent = '';
-
-    petDeadman();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      petDeadman(); 
-      messageBuffer += decoder.decode(value, { stream: true });
-      const lines = messageBuffer.split('\n');
-      messageBuffer = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        
-        if (trimmed.startsWith('event: ')) {
-          currentEvent = trimmed.substring(7);
-        } else if (trimmed.startsWith('data: ')) {
-          const dataStr = trimmed.substring(6);
-          try {
-            const data = JSON.parse(dataStr);
-            await handleEvent(currentEvent, data);
-          } catch (e) {
-            console.warn('SSE parse error', e);
-          }
-        } else if (trimmed.startsWith('{')) {
-          try {
-            const payload = JSON.parse(trimmed);
-            const event = payload?.event || '';
-            const data = payload?.data ?? payload;
-            if (event) {
-              await handleEvent(event, data);
-            }
-          } catch (e) {
-            console.warn('NDJSON parse error', e);
-          }
-        }
-      }
-    }
+    await streamGeneration(seed, signal, handleEvent, petDeadman);
     
     if (!firstPageSeen) {
         // Stream ended but we never saw a page?
@@ -963,21 +694,21 @@ async function generateNew(e?: Event) {
     }
 
     ensureFloatingGenerate();
-    adaptGenerateButtons();
   } catch (err) {
     console.error('[ndw] stream error', err);
+    if (err instanceof GenerationHttpError && err.status === 429) {
+      const waitSecs = err.payload?.retry_after_seconds || 60;
+      showError(`Rate limit hit. Try again in ${waitSecs} seconds.`);
+      updateJsonOut(err.payload);
+      if (!shutterOpened) {
+        await openShutter();
+        shutterOpened = true;
+      }
+      return;
+    }
     if (!(_w as any).__ndwTimedOut && !firstPageSeen) {
       try {
-        const fallback = await callGenerate('', seed);
-        if (fallback && !fallback.error) {
-          await renderFirstPage(fallback);
-        } else {
-          showError('The wheel hit a snag. Give it another spin?');
-          if (!shutterOpened) {
-            await openShutter();
-            shutterOpened = true;
-          }
-        }
+        await renderFirstPage(await generateOnce(seed));
       } catch (fallbackErr) {
         console.error('[ndw] fallback generate failed', fallbackErr);
         showError('The wheel hit a snag. Give it another spin?');
@@ -1003,12 +734,6 @@ async function generateNew(e?: Event) {
   }
 }
 
-// Utility to render content to a specific target element
-function renderToTarget(html: string, target: HTMLElement) {
-    target.innerHTML = '';
-    target.appendChild(buildGeneratedFrame(html));
-}
-
 function ensureFloatingGenerate() {
   console.debug('[ndw] ensureFloatingGenerate called');
   if (document.body.classList.contains('landing-mode')) {
@@ -1026,34 +751,8 @@ function ensureFloatingGenerate() {
   document.getElementById('floatingGenerate')?.addEventListener('click', generateNew);
 }
 
-type TunnelLike = {
-  init: () => Promise<void>;
-  setOnCardClick: (callback: (queueId: string) => void) => void;
-  setTheme: (dark: boolean) => void;
-  destroy: () => void;
-};
-
-let tunnel: TunnelLike | null = null;
-
 export function __ndwResolveTunnelCardAction(id: string): 'generate' | 'prefetch' {
-  return String(id || '').startsWith('placeholder:') ? 'generate' : 'prefetch';
-}
-
-async function initTunnel() {
-  const container = document.getElementById('tunnel-container');
-  if (container && !tunnel) {
-    const { InfiniteTunnel } = await import('./tunnel.js');
-    tunnel = new InfiniteTunnel(container);
-    tunnel.setOnCardClick((id) => {
-      if (__ndwResolveTunnelCardAction(id) === 'generate') {
-        void generateNew();
-        return;
-      }
-      void loadPrefetchSite(id);
-    });
-    await tunnel.init();
-    tunnel.setTheme(false); // Default to light mode for tunnel
-  }
+  return resolveTunnelCardAction(id);
 }
 
 async function loadPrefetchSite(id: string) {
@@ -1067,7 +766,7 @@ async function loadPrefetchSite(id: string) {
     const resp = await fetch(`/api/prefetch/${encodeURIComponent(id)}`);
     if (!resp.ok) throw new Error(`Prefetch load failed: ${resp.status}`);
     const page = await resp.json();
-    hideHeroOverlay();
+    landingController.hideHeroOverlay();
     hideLandingElements();
     updateJsonOut(page);
     
@@ -1086,98 +785,6 @@ async function loadPrefetchSite(id: string) {
   }
 }
 
-function lockHeroOverlay() {
-  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
-  if (!hero) return;
-  if (hero.parentElement !== document.body) {
-    document.body.appendChild(hero);
-  }
-  hero.style.position = 'fixed';
-  hero.style.top = '0';
-  hero.style.left = '0';
-  hero.style.width = '100%';
-  hero.style.height = '100vh';
-  hero.style.zIndex = '10';
-  hero.style.pointerEvents = 'none';
-  hero.style.display = 'flex';
-  hero.style.flexDirection = 'column';
-  hero.style.justifyContent = 'center';
-  hero.style.alignItems = 'center';
-  hero.style.textAlign = 'center';
-  hero.style.transform = 'translateZ(0)';
-  hero.style.willChange = 'transform';
-  const container = hero.querySelector('.container') as HTMLElement | null;
-  if (container) {
-    container.style.pointerEvents = 'auto';
-  }
-}
-
-function hideHeroOverlay() {
-  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
-  if (!hero) return;
-  hero.classList.add('is-hidden');
-  setLandingFallbackVisible(false);
-  document.body.classList.remove('landing-mode');
-  document.body.classList.add('generated-mode');
-}
-
-function showHeroOverlay() {
-  const hero = document.querySelector('.hero-wrap') as HTMLElement | null;
-  if (!hero) return;
-  hero.classList.remove('is-hidden');
-  document.body.classList.add('landing-mode');
-  document.body.classList.remove('generated-mode');
-}
-
-function renderLanding() {
-  destroyActiveSiteFrame();
-  setLandingFallbackVisible(false);
-  renderTestPreviewDock([]);
-  lockHeroOverlay();
-  showHeroOverlay();
-  ensureSitesCounterOverlay();
-  void refreshSitesCounter();
-  if (NDW_TEST_MODE) {
-    void primeTestPreviewStatus();
-  } else {
-    // Initialize 3D Tunnel
-    initTunnel().catch(e => console.error('[ndw] Tunnel init failed', e));
-  }
-  setupLandingCues();
-}
-
-function ensureSitesCounterOverlay() {
-  if (!document.body.classList.contains('landing-mode')) return;
-  if (document.getElementById('sitesCounterFloating')) return;
-  const wrap = document.createElement('div');
-  wrap.id = 'sitesCounterFloating';
-  wrap.className = 'ndw-sites-panel';
-  wrap.innerHTML = `
-    <div id="sitesCounterBadge" class="ndw-sites-badge">Sites generated: —</div>
-    <div id="sitesCounterModeMount" class="ndw-sites-mode-mount"></div>
-  `;
-  document.body.appendChild(wrap);
-}
-
-function removeSitesCounterOverlay() {
-  document.getElementById('sitesCounterFloating')?.remove();
-}
-
-async function refreshSitesCounter() {
-  try {
-    const badge = document.getElementById('sitesCounterBadge');
-    const resp = await fetch(`/metrics/total?ts=${Date.now()}`, {
-      headers: { accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (!resp.ok) throw new Error(String(resp.status));
-    const data = await resp.json();
-    if (typeof data?.total !== 'number') throw new Error('invalid counter response');
-    if (badge) badge.textContent = `Sites generated: ${data.total}`;
-  } catch (error) {
-    console.warn('[ndw] Sites counter unavailable', error);
-  }
-}
 function autoInitIfEnabled() {
   if ((_w as any).__ndwDisableAutoInit) return;
   if (document.readyState === 'loading') {
@@ -1188,40 +795,11 @@ function autoInitIfEnabled() {
 }
 autoInitIfEnabled();
 
-// Update browser tab title without showing an on-page overlay.
-function upsertTitleOverlay(title?: string) {
-  const existing = document.getElementById('ndw-title');
-  if (existing && existing.parentNode) {
-    existing.parentNode.removeChild(existing);
-  }
-  if (typeof title === 'string' && title.trim()) {
-    document.title = title.trim();
-  }
-}
-
-function escapeHtml(s: string) { return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
-
-function resetFullPageHostRoot(target: HTMLElement | null) {
-  if (!target) return;
-  target.removeAttribute('style');
-  target.className = 'w-full min-h-screen';
-  target.removeAttribute('data-ndw-fullpage-root');
-}
-
 function postRenderCommon() {
   ensureFloatingGenerate();
-  removeSitesCounterOverlay();
-  adaptGenerateButtons();
+  landingController.removeSitesCounterOverlay();
   ensureScrollableBody();
-  upsertTitleOverlay(undefined);
   try { (window as any).lucide?.createIcons(); } catch (_) { }
-}
-
-function destroyActiveSiteFrame() {
-  if (activeSiteFrame && activeSiteFrame.parentNode) {
-    activeSiteFrame.remove();
-  }
-  activeSiteFrame = null;
 }
 
 function handleGeneratedFrameMessage(event: MessageEvent) {
@@ -1232,105 +810,27 @@ function handleGeneratedFrameMessage(event: MessageEvent) {
 
 function renderFullPage(html: string) {
   try {
-    document.querySelectorAll('style[data-gen-style="1"], style[data-ndw-sandbox="1"]').forEach(s => s.remove());
-    document.body.style.cssText = '';
-    const hostClasses = ['ndw-base', 'generated-mode', 'ndw-eval-hide-chrome'];
-    const currentClasses = Array.from(document.body.classList);
-    const toKeep = currentClasses.filter(c => hostClasses.includes(c));
-    document.body.className = toKeep.join(' ');
     hideLandingElements();
-    document.body.classList.add('generated-mode');
     const target = resolveMainEl();
-    destroyActiveSiteFrame();
-    resetFullPageHostRoot(target);
-    if (target) {
-      target.innerHTML = '';
-      activeSiteFrame = buildGeneratedFrame(html);
-      target.appendChild(activeSiteFrame);
-    }
-    const title = extractDocumentTitle(html);
-    if (title) {
-      document.title = title;
-    }
+    if (!target) return;
+    renderFullPageHost(target, html);
     postRenderCommon();
   } catch (e) { console.error('Full-page render error:', e); showError('Failed to render content.'); }
 }
 
-function renderInline(html: string) {
-  try {
-    renderFullPage(html);
-  } catch (e) { console.error('Inline render error:', e); showError('Failed to render content.'); }
-}
-
 function renderNdwSnippet(snippet: NdwSnippet) {
   try {
-    const title = escapeHtml(snippet.title || 'Generated website');
-    const snippetBg = snippet.background || {};
-    const bgStyle = typeof snippetBg.style === 'string' ? snippetBg.style : '';
-    const bgClass = typeof snippetBg.class === 'string' ? snippetBg.class : '';
-    const html = `
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title}</title>
-  <link rel="stylesheet" href="/tailwind.css">
-  <script src="/js/ndw.js"></script>
-  <style>
-    html, body { margin: 0; min-height: 100%; }
-    body { ${bgStyle || 'background: linear-gradient(135deg,#f1f5f9,#e2e8f0); color: #0f172a;'} }
-    ${snippet.css || ''}
-  </style>
-</head>
-<body class="${escapeHtml(bgClass)}">
-  <main id="ndw-content">${snippet.html || '<canvas id="canvas"></canvas>'}</main>
-  <script>${snippet.js || ''}</script>
-</body>
-</html>`;
-    renderFullPage(html);
-    return;
+    hideLandingElements();
+    const target = resolveMainEl();
+    if (!target) return;
+    renderSnippetHost(target, snippet);
+    postRenderCommon();
   } catch (e) { console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
 
-
-function showError(msg: string) { const target = resolveMainEl(); if (!target) return; const wrap = document.createElement('div'); wrap.className = 'max-w-xl mx-auto mt-8 px-4'; wrap.innerHTML = `<div class="p-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-800">${escapeHtml(String(msg || 'Error'))}</div>`; target.innerHTML = ''; target.appendChild(wrap); }
-
-let __genBtnSeq = 0;
-function buildUiverseButton(id?: string) { const wrap = document.createElement('div'); wrap.className = 'inline-block align-middle'; wrap.innerHTML = `<div class="ndw-button button" aria-label="Generate"><button ${id ? `id="${id}"` : ''} data-gen-button="1" name="checkbox" type="button" aria-label="Generate"></button><span></span><span></span><span></span><span></span></div>`; return wrap; }
-
-function looksLikeGenerate(el: HTMLElement) {
-  const datasetTrigger = (el.dataset?.ndwTrigger || '').toLowerCase();
-  if (datasetTrigger === 'new-site' || datasetTrigger === 'generate') return true;
-  if (el.dataset?.ndwNoHijack === '1') return false;
-  const label = (el.getAttribute('aria-label') || el.textContent || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-  const id = (el.id || '').trim().toLowerCase();
-  const cls = (el.className || '').toLowerCase();
-  if (id === 'landinggenerate' || id === 'floatinggenerate') return false;
-  if (el.closest('.button')) return false;
-  const explicitLabels = new Set(['generate', 'generate website', 'generate a website', 'new site', 'new website']);
-  if (explicitLabels.has(label)) return true;
-  const explicitIds = new Set(['generate', 'generate-website', 'generatewebsite', 'ndw-generate', 'new-site']);
-  if (explicitIds.has(id)) return true;
-  if (/\bndw-(?:global-)?generate\b/.test(cls)) return true;
-  return false;
-}
-
-function adaptGenerateButtons() {
-  const scope = mainEl || document;
-  const candidates = Array.from(scope.querySelectorAll('button, a[role="button"], a[href="#generate"], input[type="button"], input[type="submit"]')) as HTMLElement[];
-  candidates.forEach(el => {
-    if (!looksLikeGenerate(el)) return;
-    const newId = `inlineGenerate_${++__genBtnSeq}`;
-    const comp = buildUiverseButton(newId);
-    comp.style.display = getComputedStyle(el).display === 'block' ? 'block' : 'inline-block';
-    el.replaceWith(comp);
-    const btn = comp.querySelector('button');
-    btn?.addEventListener('click', generateNew);
-  });
+function showError(message: string) {
+  const target = resolveMainEl();
+  if (target) showHostError(target, String(message || 'Error'));
 }
 
 function ensureSpinner() {
@@ -1338,7 +838,7 @@ function ensureSpinner() {
   if (!el) { el = document.createElement('div'); el.id = 'gen-spinner'; el.className = 'hidden fixed inset-0 grid place-items-center bg-black/40 z-50'; el.innerHTML = `<div class="flex flex-col items-center gap-3 text-white"><div class="animate-spin rounded-full h-10 w-10 border-4 border-white border-t-transparent"></div><div id="spinnerMsg" class="text-sm">Generating…</div></div>`; document.body.appendChild(el); }
   return el;
 }
-function showSpinner(msg?: string) { const el = ensureSpinner(); const m = document.getElementById('spinnerMsg'); if (m && msg) m.textContent = msg; el.classList.remove('hidden'); }
+function showSpinner() { ensureSpinner().classList.remove('hidden'); }
 function hideSpinner() { stopVerbRotator(); ensureSpinner().classList.add('hidden'); }
 
 const LOADING_VERBS = [
