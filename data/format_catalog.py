@@ -9,14 +9,26 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 import yaml
 
 
-_VARIANTS_DIR = Path(__file__).resolve().parent / "variants"
+_CATALOG_DIR = Path(__file__).resolve().parent / "variants"
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "variant_weights.yaml"
-_DEFAULT_SECRET_CATALOG_PATH = Path("/etc/secrets/variant_catalog.yaml")
-_CONFIGURED_CATALOG_PATH = os.getenv("VARIANT_CATALOG_PATH", "").strip()
-_CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
+_DEFAULT_SECRET_CATALOG_PATHS = (
+    Path("/etc/secrets/format_catalog.yaml"),
+    Path("/etc/secrets/variant_catalog.yaml"),
+)
+_CONFIGURED_CATALOG_PATH = (
+    os.getenv("FORMAT_CATALOG_PATH", "").strip()
+    or os.getenv("VARIANT_CATALOG_PATH", "").strip()
+)
+_CATEGORY_WEIGHTS_ENV = "FORMAT_CATEGORY_WEIGHTS"
+_LEGACY_CATEGORY_WEIGHTS_ENV = "VARIANT_CATEGORY_WEIGHTS"
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _RETIRED_CATEGORIES = {"apps_heavy_workflow"}
 _LEGACY_CATEGORY_ALIASES = {"extras": "extras_active"}
+_LEGACY_FIELD_ALIASES = {
+    "activity_type": "format_category",
+    "experience_archetype": "interaction_pattern",
+    "primary_loop_type": "interaction_loop",
+}
 
 REWARD_MECHANICS = [
     "score_chase",
@@ -34,17 +46,17 @@ REWARD_MECHANICS = [
 ]
 
 
-def _default_reward_mechanic(variant: Mapping[str, Any]) -> str:
-    category = str(variant.get("category") or "")
-    activity_type = str(variant.get("activity_type") or "")
-    text = " ".join(str(variant.get(key) or "") for key in ("id", "format_name", "core_mechanic", "completion_condition")).lower()
+def _default_reward_mechanic(item: Mapping[str, Any]) -> str:
+    category = str(item.get("category") or "")
+    format_category = str(item.get("format_category") or "")
+    text = " ".join(str(item.get(key) or "") for key in ("id", "format_name", "core_mechanic", "completion_condition")).lower()
     if category == "products":
         if any(term in text for term in ("delivery", "booking", "ticket", "travel")):
             return "route_or_progress_payoff"
         if any(term in text for term in ("pricing", "comparison", "marketplace")):
             return "comparison_reveal"
         return "checkout_or_receipt_payoff"
-    if category == "games" or activity_type in {"platformer", "snake_game", "microgame"}:
+    if category == "games" or format_category in {"platformer", "snake_game", "microgame"}:
         if any(term in text for term in ("quiz", "trivia", "answer")):
             return "score_chase"
         if any(term in text for term in ("memory", "word", "puzzle", "sudoku", "solitaire")):
@@ -67,8 +79,8 @@ def _default_reward_mechanic(variant: Mapping[str, Any]) -> str:
 
 def _load_combined_catalog() -> tuple[Dict[str, Any] | None, Path | None]:
     path = Path(_CONFIGURED_CATALOG_PATH).expanduser() if _CONFIGURED_CATALOG_PATH else None
-    if path is None and _DEFAULT_SECRET_CATALOG_PATH.exists():
-        path = _DEFAULT_SECRET_CATALOG_PATH
+    if path is None:
+        path = next((candidate for candidate in _DEFAULT_SECRET_CATALOG_PATHS if candidate.exists()), None)
     if path is None:
         return None, None
 
@@ -80,8 +92,10 @@ def _load_combined_catalog() -> tuple[Dict[str, Any] | None, Path | None]:
         raise RuntimeError(f"Private generation catalog {path} must contain a mapping")
     if not isinstance(payload.get("category_weights"), dict):
         raise RuntimeError(f"Private generation catalog {path} must define category_weights")
-    if not isinstance(payload.get("variants"), list):
-        raise RuntimeError(f"Private generation catalog {path} must define a variants list")
+    formats = payload.get("formats", payload.get("variants"))
+    if not isinstance(formats, list):
+        raise RuntimeError(f"Private generation catalog {path} must define a formats list")
+    payload["formats"] = formats
     return payload, path
 
 
@@ -89,7 +103,10 @@ _COMBINED_CATALOG, _COMBINED_CATALOG_PATH = _load_combined_catalog()
 
 
 def _load_env_category_weights() -> Dict[str, float] | None:
-    raw = os.getenv(_CATEGORY_WEIGHTS_ENV, "").strip()
+    raw = (
+        os.getenv(_CATEGORY_WEIGHTS_ENV, "").strip()
+        or os.getenv(_LEGACY_CATEGORY_WEIGHTS_ENV, "").strip()
+    )
     if not raw:
         return None
     if raw.startswith("{"):
@@ -210,10 +227,10 @@ FORMAT_PATTERN_GROUPS: Dict[str, List[str]] = {
 _REQUIRED_FIELDS = {
     "id",
     "category",
-    "activity_type",
+    "format_category",
     "core_mechanic",
-    "experience_archetype",
-    "primary_loop_type",
+    "interaction_pattern",
+    "interaction_loop",
     "format_name",
     "user_goal",
     "domain_objects",
@@ -234,13 +251,16 @@ def _string_or_strings(value: Any) -> bool:
 
 def _load_catalog() -> List[Dict[str, Any]]:
     if _COMBINED_CATALOG is not None:
-        sources = [(_COMBINED_CATALOG_PATH, _COMBINED_CATALOG["variants"])]
+        sources = [(
+            _COMBINED_CATALOG_PATH,
+            _COMBINED_CATALOG.get("formats", _COMBINED_CATALOG.get("variants")),
+        )]
     else:
-        files = sorted(_VARIANTS_DIR.glob("*.yaml"))
+        files = sorted(_CATALOG_DIR.glob("*.yaml"))
         if not files:
             raise RuntimeError(
-                "No generation catalog found. Set VARIANT_CATALOG_PATH or provide "
-                f"local YAML files in {_VARIANTS_DIR}"
+                "No generation catalog found. Set FORMAT_CATALOG_PATH or provide "
+                f"local YAML files in {_CATALOG_DIR}"
             )
         sources = []
         for path in files:
@@ -250,7 +270,7 @@ def _load_catalog() -> List[Dict[str, Any]]:
                 raise RuntimeError(f"Invalid generation catalog file {path}: {exc}") from exc
             sources.append((path, payload))
 
-    variants: List[Dict[str, Any]] = []
+    formats: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for path, payload in sources:
         if not isinstance(payload, list):
@@ -260,124 +280,110 @@ def _load_catalog() -> List[Dict[str, Any]]:
             location = f"{path}:{index + 1}"
             if not isinstance(raw, dict):
                 raise RuntimeError(f"{location} must be a mapping")
-            missing = sorted(_REQUIRED_FIELDS - set(raw))
+            item = dict(raw)
+            for legacy, canonical in _LEGACY_FIELD_ALIASES.items():
+                if canonical not in item and legacy in item:
+                    item[canonical] = item[legacy]
+                item.pop(legacy, None)
+            missing = sorted(_REQUIRED_FIELDS - set(item))
             if missing:
                 raise RuntimeError(f"{location} is missing required fields: {', '.join(missing)}")
 
-            variant = dict(raw)
-            variant_id = variant["id"]
-            if not isinstance(variant_id, str) or not _ID_RE.fullmatch(variant_id):
-                raise RuntimeError(f"{location} has invalid id {variant_id!r}")
-            if variant_id in seen:
-                raise RuntimeError(f"Duplicate generation variant id: {variant_id}")
-            seen.add(variant_id)
+            format_id = item["id"]
+            if not isinstance(format_id, str) or not _ID_RE.fullmatch(format_id):
+                raise RuntimeError(f"{location} has invalid id {format_id!r}")
+            if format_id in seen:
+                raise RuntimeError(f"Duplicate generation format id: {format_id}")
+            seen.add(format_id)
 
-            category = _LEGACY_CATEGORY_ALIASES.get(str(variant["category"]), str(variant["category"]))
-            variant["category"] = category
+            category = _LEGACY_CATEGORY_ALIASES.get(str(item["category"]), str(item["category"]))
+            item["category"] = category
             if category in _RETIRED_CATEGORIES:
                 continue
             if category not in CATEGORY_WEIGHTS:
                 raise RuntimeError(f"{location} has unknown category {category!r}")
-            if not _string_or_strings(variant["experience_archetype"]):
-                raise RuntimeError(f"{location} has invalid experience_archetype")
-            if not _string_or_strings(variant["primary_loop_type"]):
-                raise RuntimeError(f"{location} has invalid primary_loop_type")
-            if not _nonempty_strings(variant["domain_objects"]):
+            if not _string_or_strings(item["interaction_pattern"]):
+                raise RuntimeError(f"{location} has invalid interaction_pattern")
+            if not _string_or_strings(item["interaction_loop"]):
+                raise RuntimeError(f"{location} has invalid interaction_loop")
+            if not _nonempty_strings(item["domain_objects"]):
                 raise RuntimeError(f"{location} must define domain_objects")
-            if not _nonempty_strings(variant["state_variables"]):
+            if not _nonempty_strings(item["state_variables"]):
                 raise RuntimeError(f"{location} must define state_variables")
-            for key in ("activity_type", "core_mechanic", "format_name", "user_goal", "completion_condition", "primary_action", "family"):
-                if not isinstance(variant[key], str) or not variant[key].strip():
+            for key in ("format_category", "core_mechanic", "format_name", "user_goal", "completion_condition", "primary_action", "family"):
+                if not isinstance(item[key], str) or not item[key].strip():
                     raise RuntimeError(f"{location} has invalid {key}")
-            if not variant.get("reward_mechanic"):
-                variant["reward_mechanic"] = _default_reward_mechanic(variant)
-            if variant["reward_mechanic"] not in REWARD_MECHANICS:
-                raise RuntimeError(f"{location} has unknown reward_mechanic {variant['reward_mechanic']!r}")
+            if not item.get("reward_mechanic"):
+                item["reward_mechanic"] = _default_reward_mechanic(item)
+            if item["reward_mechanic"] not in REWARD_MECHANICS:
+                raise RuntimeError(f"{location} has unknown reward_mechanic {item['reward_mechanic']!r}")
             if "ritual" in " ".join(
-                str(variant.get(key, "")).lower()
-                for key in ("activity_type", "experience_archetype", "pattern_group", "family")
+                str(item.get(key, "")).lower()
+                for key in ("format_category", "interaction_pattern", "pattern_group", "family")
             ):
                 raise RuntimeError(f"{location} uses retired ritual vocabulary")
 
-            allowed_patterns = variant.get("allowed_patterns")
-            pattern_group = variant.get("pattern_group")
+            allowed_patterns = item.get("allowed_patterns")
+            pattern_group = item.get("pattern_group")
             if allowed_patterns is not None and not _nonempty_strings(allowed_patterns):
                 raise RuntimeError(f"{location} has invalid allowed_patterns")
             if allowed_patterns is None and pattern_group not in FORMAT_PATTERN_GROUPS:
                 raise RuntimeError(f"{location} has unknown pattern_group {pattern_group!r}")
-            if "is_tool" in variant and not isinstance(variant["is_tool"], bool):
+            if "is_tool" in item and not isinstance(item["is_tool"], bool):
                 raise RuntimeError(f"{location} has non-boolean is_tool")
 
-            variants.append(variant)
+            formats.append(item)
 
-    return variants
+    return formats
 
 
-_VARIANTS = _load_catalog()
+_FORMATS = _load_catalog()
 missing_categories = sorted(
     category
     for category in CATEGORY_WEIGHTS
-    if not any(variant["category"] == category for variant in _VARIANTS)
+    if not any(item["category"] == category for item in _FORMATS)
 )
 
-VARIANT_BY_ID: Dict[str, Dict[str, Any]] = {variant["id"]: variant for variant in _VARIANTS}
-VARIANTS_BY_CATEGORY: Dict[str, List[str]] = {
-    category: [variant["id"] for variant in _VARIANTS if variant["category"] == category]
+FORMAT_BY_ID: Dict[str, Dict[str, Any]] = {item["id"]: item for item in _FORMATS}
+FORMATS_BY_CATEGORY: Dict[str, List[str]] = {
+    category: [item["id"] for item in _FORMATS if item["category"] == category]
     for category in CATEGORY_WEIGHTS
 }
 
-GAME_FORMATS = VARIANTS_BY_CATEGORY["games"]
-PRODUCT_FORMATS = VARIANTS_BY_CATEGORY["products"]
-RETENTION_TOY_FORMATS = VARIANTS_BY_CATEGORY["toys"]
-LOW_FRICTION_APP_FORMATS = VARIANTS_BY_CATEGORY["apps_low_friction"]
-EXTRAS_ACTIVE = VARIANTS_BY_CATEGORY["extras_active"]
-EXTRAS_AMBIENT = VARIANTS_BY_CATEGORY["extras_ambient"]
-EXTRAS = EXTRAS_ACTIVE + EXTRAS_AMBIENT
-APP_FORMATS = LOW_FRICTION_APP_FORMATS
-TOOL_FORMATS = [variant["id"] for variant in _VARIANTS if variant.get("is_tool") is True]
-ALL_FORMATS = [variant["id"] for variant in _VARIANTS]
+GAME_FORMATS = FORMATS_BY_CATEGORY["games"]
+PRODUCT_FORMATS = FORMATS_BY_CATEGORY["products"]
+ALL_FORMATS = [item["id"] for item in _FORMATS]
 
-FORMAT_VARIANT_SPECS: Dict[str, Dict[str, Any]] = {
-    variant["id"]: {
-        "activity_type": variant["activity_type"],
-        "core_mechanic": variant["core_mechanic"],
-        "experience_archetype": variant["experience_archetype"],
-        "primary_loop_type": variant["primary_loop_type"],
-        "family": variant["family"],
-        "reward_mechanic": variant["reward_mechanic"],
+FORMAT_SPECS: Dict[str, Dict[str, Any]] = {
+    item["id"]: {
+        "format_category": item["format_category"],
+        "core_mechanic": item["core_mechanic"],
+        "interaction_pattern": item["interaction_pattern"],
+        "interaction_loop": item["interaction_loop"],
+        "family": item["family"],
+        "reward_mechanic": item["reward_mechanic"],
     }
-    for variant in _VARIANTS
+    for item in _FORMATS
 }
-VARIANT_TASK_OVERRIDES: Dict[str, Dict[str, Any]] = {
-    variant["id"]: {
-        "format": variant["format_name"],
-        "user_goal": variant["user_goal"],
-        "domain_objects": list(variant["domain_objects"]),
-        "state_variables": list(variant["state_variables"]),
-        "completion_condition": variant["completion_condition"],
+FORMAT_TASK_OVERRIDES: Dict[str, Dict[str, Any]] = {
+    item["id"]: {
+        "format": item["format_name"],
+        "user_goal": item["user_goal"],
+        "domain_objects": list(item["domain_objects"]),
+        "state_variables": list(item["state_variables"]),
+        "completion_condition": item["completion_condition"],
         "allowed_patterns": list(
-            variant.get("allowed_patterns")
-            or FORMAT_PATTERN_GROUPS[variant["pattern_group"]]
+            item.get("allowed_patterns")
+            or FORMAT_PATTERN_GROUPS[item["pattern_group"]]
         ),
     }
-    for variant in _VARIANTS
+    for item in _FORMATS
 }
-PRIMARY_ACTION_MAP = {variant["id"]: variant["primary_action"] for variant in _VARIANTS}
-CATEGORY_MAP = {variant["id"]: variant["category"] for variant in _VARIANTS}
-PATTERN_GROUP_MAP = {
-    variant["id"]: variant.get("pattern_group", "custom")
-    for variant in _VARIANTS
-}
-ACTIVITY_FAMILY_MAP = {variant["id"]: variant["family"] for variant in _VARIANTS}
-REWARD_MECHANIC_MAP = {variant["id"]: variant["reward_mechanic"] for variant in _VARIANTS}
-CORE_MECHANICS = list(dict.fromkeys(variant["core_mechanic"] for variant in _VARIANTS))
+FORMAT_FAMILY_MAP = {item["id"]: item["family"] for item in _FORMATS}
+REWARD_MECHANIC_MAP = {item["id"]: item["reward_mechanic"] for item in _FORMATS}
+CORE_MECHANICS = list(dict.fromkeys(item["core_mechanic"] for item in _FORMATS))
 
-# Compatibility export for schema construction and deterministic fallback iteration.
-# Selection uses choose_weighted_variant(), not duplicate entries in this list.
-FORMAT_FIRST_VARIANT_POOL = list(ALL_FORMATS)
-
-
-def choose_weighted_variant(
+def choose_weighted_format(
     rng: random.Random,
     *,
     excluded: Iterable[str] = (),
@@ -385,42 +391,42 @@ def choose_weighted_variant(
     excluded_set = set(excluded)
     categories = [
         category
-        for category, variants in VARIANTS_BY_CATEGORY.items()
-        if any(variant not in excluded_set for variant in variants)
+        for category, formats in FORMATS_BY_CATEGORY.items()
+        if any(format_id not in excluded_set for format_id in formats)
     ]
     if not categories:
-        raise RuntimeError("No generation variants remain after exclusions")
+        raise RuntimeError("No generation formats remain after exclusions")
     category = rng.choices(
         categories,
         weights=[CATEGORY_WEIGHTS[item] for item in categories],
         k=1,
     )[0]
-    choices = [variant for variant in VARIANTS_BY_CATEGORY[category] if variant not in excluded_set]
+    choices = [format_id for format_id in FORMATS_BY_CATEGORY[category] if format_id not in excluded_set]
     return rng.choice(choices)
 
 
 def validate_catalog_domains(
     *,
-    activity_types: Sequence[str],
-    experience_archetypes: Sequence[str],
-    primary_loop_types: Sequence[str],
+    format_categories: Sequence[str],
+    interaction_patterns: Sequence[str],
+    interaction_loops: Sequence[str],
 ) -> None:
-    allowed_activity_types = set(activity_types)
-    allowed_archetypes = set(experience_archetypes)
-    allowed_loops = set(primary_loop_types)
-    for variant in _VARIANTS:
-        variant_id = variant["id"]
-        if variant["activity_type"] not in allowed_activity_types:
-            raise RuntimeError(f"{variant_id} has unsupported activity_type {variant['activity_type']!r}")
-        archetypes = variant["experience_archetype"]
-        if isinstance(archetypes, str):
-            archetypes = [archetypes]
-        invalid_archetypes = sorted(set(archetypes) - allowed_archetypes)
-        if invalid_archetypes:
-            raise RuntimeError(f"{variant_id} has unsupported experience_archetype values: {invalid_archetypes}")
-        loops = variant["primary_loop_type"]
+    allowed_format_categories = set(format_categories)
+    allowed_patterns = set(interaction_patterns)
+    allowed_loops = set(interaction_loops)
+    for item in _FORMATS:
+        format_id = item["id"]
+        if item["format_category"] not in allowed_format_categories:
+            raise RuntimeError(f"{format_id} has unsupported format_category {item['format_category']!r}")
+        patterns = item["interaction_pattern"]
+        if isinstance(patterns, str):
+            patterns = [patterns]
+        invalid_patterns = sorted(set(patterns) - allowed_patterns)
+        if invalid_patterns:
+            raise RuntimeError(f"{format_id} has unsupported interaction_pattern values: {invalid_patterns}")
+        loops = item["interaction_loop"]
         if isinstance(loops, str):
             loops = [loops]
         invalid_loops = sorted(set(loops) - allowed_loops)
         if invalid_loops:
-            raise RuntimeError(f"{variant_id} has unsupported primary_loop_type values: {invalid_loops}")
+            raise RuntimeError(f"{format_id} has unsupported interaction_loop values: {invalid_loops}")

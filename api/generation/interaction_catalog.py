@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-from data.load_variants import (
-    ACTIVITY_FAMILY_MAP,
+from data.format_catalog import (
+    FORMAT_FAMILY_MAP,
     ALL_FORMATS,
     CORE_MECHANICS,
-    FORMAT_VARIANT_SPECS,
-    PRODUCT_FORMATS,
-    choose_weighted_variant,
+    FORMAT_SPECS,
+    choose_weighted_format,
     validate_catalog_domains,
 )
 
-
-
-EXPERIENCE_ARCHETYPES = [
+INTERACTION_PATTERNS = [
     "browser_game",
     "quiz_game",
     "saas_workspace",
@@ -34,7 +31,7 @@ EXPERIENCE_ARCHETYPES = [
     "creative_tool_interface",
 ]
 
-PRIMARY_LOOP_TYPES = [
+INTERACTION_LOOPS = [
     "answer_to_score",
     "type_to_reveal",
     "drag_to_transform",
@@ -112,28 +109,6 @@ COPY_DENSITIES = ["almost_none", "low", "medium", "high"]
 
 GENRE_VISUAL_DENSITIES = ["sparse", "focused", "dense", "maximal", "variable_adaptive", "zoned", "generous_white"]
 
-PALETTE_STRATEGIES = [
-    "monochrome_accent",
-    "muted_plus_toxic",
-    "editorial_neutral",
-    "pastel_toy",
-    "soft_mint",
-    "sage_wash",
-    "blush_pink",
-    "powder_blue",
-    "butter_yellow",
-    "aqua_foam",
-    "coral_milk",
-    "lavender_mist",
-    "high_contrast_game",
-    "earth_material_accent",
-    "warm_amber",
-    "forest_natural",
-    "ocean_coastal",
-    "zen_minimal",
-    "tropical_vibrant",
-]
-
 MOTION_LANGUAGES = [
     "snappy_gamefeel",
     "slow_cinematic",
@@ -170,7 +145,7 @@ CHROME_POLICIES = [
     "diegetic_only",
 ]
 
-ACTIVITY_TYPES = [
+FORMAT_CATEGORIES = [
     "platformer",
     "snake_game",
     "tic_tac_toe",
@@ -269,9 +244,9 @@ MECHANIC_PATTERNS = [
 MECHANIC_PATTERNS = list(dict.fromkeys(MECHANIC_PATTERNS + CORE_MECHANICS))
 
 validate_catalog_domains(
-    activity_types=ACTIVITY_TYPES,
-    experience_archetypes=EXPERIENCE_ARCHETYPES,
-    primary_loop_types=PRIMARY_LOOP_TYPES,
+    format_categories=FORMAT_CATEGORIES,
+    interaction_patterns=INTERACTION_PATTERNS,
+    interaction_loops=INTERACTION_LOOPS,
 )
 
 BORING_INTERACTION_PATTERNS = [
@@ -283,7 +258,7 @@ BORING_INTERACTION_PATTERNS = [
     "no_persistent_state",
 ]
 
-EXPERIENCE_FAILURE_MODES = [
+INTERACTION_FAILURE_MODES = [
     "decorative_only_interaction",
     "unclear_first_action",
     "dead_controls",
@@ -292,39 +267,11 @@ EXPERIENCE_FAILURE_MODES = [
     "no_continue_reason",
     "visual_noise_over_primary_action",
     "desktop_only_interaction",
-    "anchors_used_only_as_surface_style",
-]
-
-DEFAULT_EXPERIENCE_CELLS: List[Tuple[str, str]] = [
-    ("browser_game", "collect_to_complete"),
-    ("browser_game", "steer_to_explore"),
-    ("browser_game", "drag_to_transform"),
-    ("quiz_game", "answer_to_score"),
-    ("quiz_game", "choose_to_branch"),
-    ("quiz_game", "collect_to_complete"),
-    ("saas_workspace", "sort_to_understand"),
-    ("saas_workspace", "assemble_to_activate"),
-    ("saas_workspace", "collect_to_complete"),
-    ("commerce_workspace", "sort_to_understand"),
-    ("commerce_workspace", "assemble_to_activate"),
-    ("interactive_instrument", "tune_to_harmonize"),
-    ("simulation_toy", "drag_to_transform"),
-    ("museum_exhibit", "scan_to_compare"),
-    ("spatial_exploration", "steer_to_explore"),
-    ("narrative_microsite", "choose_to_branch"),
-    ("creative_tool_interface", "paint_to_grow"),
-    ("data_sculpture", "scrub_time_to_compare"),
-    ("generative_poster", "mix_to_generate"),
-    ("interactive_editorial", "hover_to_inspect"),
-    ("product_demo_experience", "assemble_to_activate"),
-    ("museum_exhibit", "zoom_to_inspect"),
-    ("creative_tool_interface", "sort_to_understand"),
 ]
 
 
-
-def _resolve_spec(spec: Dict[str, str | List[str]], variant: str, seed: int | None = None) -> Dict[str, str]:
-    rng = random.Random(f"{int(seed or 0)}:{variant}:resolve-spec")
+def _resolve_spec(spec: Dict[str, str | List[str]], format_id: str, seed: int | None = None) -> Dict[str, str]:
+    rng = random.Random(f"{int(seed or 0)}:{format_id}:resolve-spec")
     resolved: Dict[str, str] = {}
     for key, value in spec.items():
         if isinstance(value, list):
@@ -338,195 +285,168 @@ def _as_list(value: str | List[str]) -> List[str]:
     return value if isinstance(value, list) else [value]
 
 
-def _deabstract_loop(activity_type: str, loop_type: str) -> str:
+def _deabstract_loop(format_category: str, loop_type: str) -> str:
     if loop_type == "press_sequence_to_unlock":
-        if activity_type in {"platformer", "snake_game", "microgame"}:
+        if format_category in {"platformer", "snake_game", "microgame"}:
             return "collect_to_complete"
-        if activity_type in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
+        if format_category in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
             return "assemble_to_activate"
-        if activity_type in {"creative_tool", "interactive_instrument", "simulation"}:
+        if format_category in {"creative_tool", "interactive_instrument", "simulation"}:
             return "drag_to_transform"
         return "choose_to_branch"
-    if loop_type == "type_to_reveal" and activity_type not in {"word_game", "narrative_explorer"}:
+    if loop_type == "type_to_reveal" and format_category not in {"word_game", "narrative_explorer"}:
         return "collect_to_complete"
     return loop_type
 
 
-def cell_key(archetype: str, loop_type: str) -> str:
-    return f"{archetype}:{loop_type}"
-
-
-def parse_cell_key(value: str) -> Dict[str, str]:
-    left, _, right = str(value or "").partition(":")
-    archetype = left if left in EXPERIENCE_ARCHETYPES else EXPERIENCE_ARCHETYPES[0]
-    loop_type = right if right in PRIMARY_LOOP_TYPES else PRIMARY_LOOP_TYPES[0]
-    return {
-        "experience_archetype": archetype,
-        "primary_loop_type": loop_type,
-    }
-
-
-def all_experience_cell_keys() -> List[str]:
-    return [cell_key(archetype, loop_type) for archetype, loop_type in DEFAULT_EXPERIENCE_CELLS]
-
-
-def seeded_experience_cell(seed: int | None = None) -> Dict[str, str]:
-    rng = random.Random(int(seed or 0))
-    archetype, loop_type = DEFAULT_EXPERIENCE_CELLS[rng.randrange(len(DEFAULT_EXPERIENCE_CELLS))]
-    return {
-        "experience_archetype": archetype,
-        "primary_loop_type": loop_type,
-    }
-
-
-def _activity_contract_for_variant(seed: int | None, activity_variant: str) -> Dict[str, object]:
-    rng = random.Random(f"{int(seed or 0)}:{activity_variant}:format-first-contract")
-    spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
-    activity_type = spec["activity_type"]
-    spec["primary_loop_type"] = _deabstract_loop(activity_type, spec["primary_loop_type"])
+def _format_spec_for_id(seed: int | None, format_id: str) -> Dict[str, object]:
+    rng = random.Random(f"{int(seed or 0)}:{format_id}:format-first-contract")
+    spec = _resolve_spec(FORMAT_SPECS.get(format_id) or FORMAT_SPECS["breakout_paddle"], format_id, seed)
+    format_category = spec["format_category"]
+    spec["interaction_loop"] = _deabstract_loop(format_category, spec["interaction_loop"])
     mechanic = spec["core_mechanic"]
-    library_profile = _library_profile_for_activity(rng, activity_type, activity_variant, mechanic)
+    library_profile = _library_profile_for_format(rng, format_category, format_id, mechanic)
     disallowed = ["slider_only_controls", "buttons_only_toggle_visual_effects", "fake_metrics_without_task"]
-    if activity_type in {"interactive_instrument", "simulation"}:
+    if format_category in {"interactive_instrument", "simulation"}:
         disallowed = ["buttons_only_toggle_visual_effects", "fake_metrics_without_task", "no_goal_or_payoff"]
     return {
-        "activity_type": activity_type,
-        "activity_variant": activity_variant,
+        "format_category": format_category,
+        "format_id": format_id,
         "core_mechanic": mechanic,
         "reward_mechanic": spec["reward_mechanic"],
         "library_profile": library_profile,
-        "activity_goal": "Implement the selected recognizable format as the product, with semantic anchors used only as flavor.",
+        "implementation_goal": "Implement the selected recognizable format as the product, with art direction supporting its task and payoff.",
         "required_actions": _required_actions_for_mechanic(mechanic),
         "required_state": "Track score, progress, selections, records, cart, created output, unlocked stages, or configured choices in visible state.",
         "payoff": "Show a recognizable result for the selected format: score, win/loss, saved workflow state, checkout/booking result, preview, delivery/route tracker, or created artifact.",
         "boredom_risks": disallowed,
         "success_signal": "The visitor can identify the format, use its core mechanic, and see a concrete result.",
-        "retention_contract": _retention_contract_for_activity(activity_type, activity_variant),
+        "retention_contract": _retention_contract_for_format(format_category, format_id),
     }
 
 
 def seeded_format_first_target(
     seed: int | None = None,
     *,
-    recent_variants: List[str] | None = None,
-    recent_families: List[str] | None = None,
-    recent_loops: List[str] | None = None,
-    recent_rewards: List[str] | None = None,
+    recent_format_ids: List[str] | None = None,
+    recent_format_families: List[str] | None = None,
+    recent_interaction_loops: List[str] | None = None,
+    recent_reward_mechanics: List[str] | None = None,
 ) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:format-first-target")
-    recent_variants_set = set(recent_variants or [])
-    recent_families_set = set(recent_families or [])
-    recent_loops_set = set(recent_loops or [])
-    recent_rewards_set = set(recent_rewards or [])
-    activity_variant = ""
+    recent_format_ids_set = set(recent_format_ids or [])
+    recent_format_families_set = set(recent_format_families or [])
+    recent_interaction_loops_set = set(recent_interaction_loops or [])
+    recent_reward_mechanics_set = set(recent_reward_mechanics or [])
+    format_id = ""
     for attempt in range(120):
-        candidate = choose_weighted_variant(rng)
-        family = activity_family_for_variant(candidate)
-        raw_spec = FORMAT_VARIANT_SPECS.get(candidate) or FORMAT_VARIANT_SPECS["breakout_paddle"]
-        loops = {_deabstract_loop(str(raw_spec["activity_type"]), loop) for loop in _as_list(raw_spec["primary_loop_type"])}
+        candidate = choose_weighted_format(rng)
+        family = format_family_for_id(candidate)
+        raw_spec = FORMAT_SPECS.get(candidate) or FORMAT_SPECS["breakout_paddle"]
+        loops = {_deabstract_loop(str(raw_spec["format_category"]), loop) for loop in _as_list(raw_spec["interaction_loop"])}
         rewards = set(_as_list(raw_spec["reward_mechanic"]))
-        if candidate in recent_variants_set and attempt < 90:
+        if candidate in recent_format_ids_set and attempt < 90:
             continue
-        if family in recent_families_set and attempt < 70:
+        if family in recent_format_families_set and attempt < 70:
             continue
-        if loops & recent_loops_set and attempt < 50:
+        if loops & recent_interaction_loops_set and attempt < 50:
             continue
-        if rewards & recent_rewards_set and attempt < 40:
+        if rewards & recent_reward_mechanics_set and attempt < 40:
             continue
-        activity_variant = candidate
+        format_id = candidate
         break
-    if not activity_variant:
-        activity_variant = choose_weighted_variant(rng)
-    spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(activity_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], activity_variant, seed)
-    activity_contract = _activity_contract_for_variant(seed, activity_variant)
+    if not format_id:
+        format_id = choose_weighted_format(rng)
+    spec = _resolve_spec(FORMAT_SPECS.get(format_id) or FORMAT_SPECS["breakout_paddle"], format_id, seed)
+    format_spec = _format_spec_for_id(seed, format_id)
     return {
-        "experience_archetype": spec["experience_archetype"],
-        "primary_loop_type": spec["primary_loop_type"],
-        "activity_type": spec["activity_type"],
-        "activity_contract": activity_contract,
+        "interaction_pattern": spec["interaction_pattern"],
+        "interaction_loop": spec["interaction_loop"],
+        "format_category": spec["format_category"],
+        "format_spec": format_spec,
         "format_first": True,
-        "format_contract": {
-            "activity_variant": activity_variant,
-            "dominance_rule": "This selected activity_variant is the product. Semantic anchors may flavor visuals/copy but must not rename, obscure, or replace the recognizable format.",
+        "format_selection": {
+            "format_id": format_id,
+            "dominance_rule": "The selected format is the product. Art direction may support it but must not rename, obscure, or replace it.",
         },
     }
 
 
-def activity_family_for_variant(activity_variant: str) -> str:
-    return ACTIVITY_FAMILY_MAP.get(activity_variant, "other")
+def format_family_for_id(format_id: str) -> str:
+    return FORMAT_FAMILY_MAP.get(format_id, "other")
 
 
 def seeded_diverse_format_first_targets(
     seed: int | None,
     count: int,
     *,
-    recent_variants: List[str] | None = None,
-    recent_families: List[str] | None = None,
-    recent_loops: List[str] | None = None,
-    recent_rewards: List[str] | None = None,
+    recent_format_ids: List[str] | None = None,
+    recent_format_families: List[str] | None = None,
+    recent_interaction_loops: List[str] | None = None,
+    recent_reward_mechanics: List[str] | None = None,
 ) -> List[Dict[str, object]]:
     rng = random.Random(f"{int(seed or 0)}:diverse-format-first-targets:{count}")
-    recent_variants_set = set(recent_variants or [])
-    recent_family_set = set(recent_families or [])
-    recent_loop_set = set(recent_loops or [])
-    recent_reward_set = set(recent_rewards or [])
-    used_variants: set[str] = set()
-    used_families: set[str] = set()
+    recent_format_ids_set = set(recent_format_ids or [])
+    recent_format_family_set = set(recent_format_families or [])
+    recent_interaction_loop_set = set(recent_interaction_loops or [])
+    recent_reward_mechanic_set = set(recent_reward_mechanics or [])
+    used_format_ids: set[str] = set()
+    used_format_families: set[str] = set()
     targets: List[Dict[str, object]] = []
     max_count = max(1, int(count or 1))
 
     for index in range(max_count):
-        chosen_variant = ""
-        chosen_family = ""
+        chosen_format_id = ""
+        chosen_format_family = ""
         for attempt in range(120):
-            candidate = choose_weighted_variant(rng, excluded=used_variants)
-            family = activity_family_for_variant(candidate)
-            raw_spec = FORMAT_VARIANT_SPECS.get(candidate) or FORMAT_VARIANT_SPECS["breakout_paddle"]
-            loops = {_deabstract_loop(str(raw_spec["activity_type"]), loop) for loop in _as_list(raw_spec["primary_loop_type"])}
+            candidate = choose_weighted_format(rng, excluded=used_format_ids)
+            family = format_family_for_id(candidate)
+            raw_spec = FORMAT_SPECS.get(candidate) or FORMAT_SPECS["breakout_paddle"]
+            loops = {_deabstract_loop(str(raw_spec["format_category"]), loop) for loop in _as_list(raw_spec["interaction_loop"])}
             rewards = set(_as_list(raw_spec["reward_mechanic"]))
-            if candidate in used_variants:
+            if candidate in used_format_ids:
                 continue
-            if family in used_families and len(used_families) < 10:
+            if family in used_format_families and len(used_format_families) < 10:
                 continue
-            if candidate in recent_variants_set and attempt < 80:
+            if candidate in recent_format_ids_set and attempt < 80:
                 continue
-            if family in recent_family_set and attempt < 60:
+            if family in recent_format_family_set and attempt < 60:
                 continue
-            if loops & recent_loop_set and attempt < 45:
+            if loops & recent_interaction_loop_set and attempt < 45:
                 continue
-            if rewards & recent_reward_set and attempt < 35:
+            if rewards & recent_reward_mechanic_set and attempt < 35:
                 continue
-            chosen_variant = candidate
-            chosen_family = family
+            chosen_format_id = candidate
+            chosen_format_family = family
             break
-        if not chosen_variant:
+        if not chosen_format_id:
             for candidate in ALL_FORMATS:
-                family = activity_family_for_variant(candidate)
-                if candidate not in used_variants and (family not in used_families or len(used_families) >= 10):
-                    chosen_variant = candidate
-                    chosen_family = family
+                family = format_family_for_id(candidate)
+                if candidate not in used_format_ids and (family not in used_format_families or len(used_format_families) >= 10):
+                    chosen_format_id = candidate
+                    chosen_format_family = family
                     break
-        if not chosen_variant:
-            chosen_variant = choose_weighted_variant(rng)
-            chosen_family = activity_family_for_variant(chosen_variant)
-        used_variants.add(chosen_variant)
-        used_families.add(chosen_family)
+        if not chosen_format_id:
+            chosen_format_id = choose_weighted_format(rng)
+            chosen_format_family = format_family_for_id(chosen_format_id)
+        used_format_ids.add(chosen_format_id)
+        used_format_families.add(chosen_format_family)
         site_seed = int(seed or 0) + ((index + 1) * 7919)
-        spec = _resolve_spec(FORMAT_VARIANT_SPECS.get(chosen_variant) or FORMAT_VARIANT_SPECS["breakout_paddle"], chosen_variant, site_seed)
-        spec["primary_loop_type"] = _deabstract_loop(spec["activity_type"], spec["primary_loop_type"])
-        activity_contract = _activity_contract_for_variant(site_seed, chosen_variant)
+        spec = _resolve_spec(FORMAT_SPECS.get(chosen_format_id) or FORMAT_SPECS["breakout_paddle"], chosen_format_id, site_seed)
+        spec["interaction_loop"] = _deabstract_loop(spec["format_category"], spec["interaction_loop"])
+        format_spec = _format_spec_for_id(site_seed, chosen_format_id)
         targets.append(
             {
-                "experience_archetype": spec["experience_archetype"],
-                "primary_loop_type": spec["primary_loop_type"],
-                "activity_type": spec["activity_type"],
-                "activity_family": chosen_family,
-                "activity_contract": activity_contract,
+                "interaction_pattern": spec["interaction_pattern"],
+                "interaction_loop": spec["interaction_loop"],
+                "format_category": spec["format_category"],
+                "format_family": chosen_format_family,
+                "format_spec": format_spec,
                 "format_first": True,
-                "format_contract": {
-                    "activity_variant": chosen_variant,
-                    "activity_family": chosen_family,
-                    "dominance_rule": "This selected activity_variant is the product. Semantic anchors may flavor visuals/copy but must not rename, obscure, or replace the recognizable format.",
+                "format_selection": {
+                    "format_id": chosen_format_id,
+                    "format_family": chosen_format_family,
+                    "dominance_rule": "The selected format is the product. Art direction may support it but must not rename, obscure, or replace it.",
                 },
             }
         )
@@ -537,8 +457,6 @@ def seeded_genre_contract(
     seed: int | None = None,
     archetype: str = "",
     loop_type: str = "",
-    *,
-    recent_palettes: List[str] | None = None,
 ) -> Dict[str, object]:
     rng = random.Random(f"{int(seed or 0)}:{archetype}:{loop_type}:genre-contract")
     page_genre_by_archetype = {
@@ -575,15 +493,10 @@ def seeded_genre_contract(
         instruction_policy = "labels_allowed"
     if page_genre == "data_workspace":
         instruction_policy = "labels_allowed"
-    recent_palette_set = set(recent_palettes or [])
-    palette_choices = [item for item in PALETTE_STRATEGIES if item not in recent_palette_set]
-    if not palette_choices:
-        palette_choices = PALETTE_STRATEGIES
     return {
         "page_genre": page_genre,
         "copy_density": copy_density,
         "visual_density": rng.choice(["sparse", "focused", "dense"]),
-        "palette_strategy": rng.choice(palette_choices),
         "motion_language": rng.choice(MOTION_LANGUAGES),
         "instruction_policy": instruction_policy,
         "chrome_policy": "minimal_functional",
@@ -603,59 +516,31 @@ def seeded_genre_contract(
     }
 
 
-def seeded_activity_contract(seed: int | None = None, archetype: str = "", loop_type: str = "") -> Dict[str, object]:
-    rng = random.Random(f"{int(seed or 0)}:{archetype}:{loop_type}:activity-contract")
-    def matching_variants(*, require_archetype: bool, require_loop: bool) -> List[str]:
-        matches: List[str] = []
-        for variant, raw_spec in FORMAT_VARIANT_SPECS.items():
-            archetypes = raw_spec["experience_archetype"]
-            loops = raw_spec["primary_loop_type"]
-            if isinstance(archetypes, str):
-                archetypes = [archetypes]
-            if isinstance(loops, str):
-                loops = [loops]
-            if require_archetype and archetype and archetype not in archetypes:
-                continue
-            if require_loop and loop_type and loop_type not in loops:
-                continue
-            matches.append(variant)
-        return matches
-
-    candidates = matching_variants(require_archetype=True, require_loop=True)
-    if not candidates:
-        candidates = matching_variants(require_archetype=True, require_loop=False)
-    if not candidates:
-        candidates = matching_variants(require_archetype=False, require_loop=True)
-    if not candidates:
-        candidates = list(ALL_FORMATS)
-    return _activity_contract_for_variant(seed, rng.choice(candidates))
-
-
-def _library_profile_for_activity(rng: random.Random, activity_type: str, activity_variant: str, mechanic: str) -> str:
-    physics_variants = {
+def _library_profile_for_format(rng: random.Random, format_category: str, format_id: str, mechanic: str) -> str:
+    physics_formats = {
         "breakout_paddle",
         "pinball_table",
         "basketball_arcade",
         "fishing_timing",
         "whack_a_target",
     }
-    if activity_variant in physics_variants:
+    if format_id in physics_formats:
         return "matter_physics_game"
-    if activity_type in {"platformer", "snake_game", "microgame"}:
+    if format_category in {"platformer", "snake_game", "microgame"}:
         return rng.choice(["ndw_canvas_game_loop", "ndw_audio_particles", "dom_css_state_machine"])
-    if activity_type in {"tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
+    if format_category in {"tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
         return rng.choice(["dom_css_state_machine", "gsap_state_transition", "alpine_ui_state", "ndw_audio_particles"])
-    if "map" in activity_variant or "orbit" in mechanic:
+    if "map" in format_id or "orbit" in mechanic:
         return rng.choice(["three_orbit_scene", "three_bloom_scene", "ndw_canvas_game_loop"])
-    if activity_type in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
+    if format_category in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
         return "alpine_ui_state"
-    if activity_type in {"creative_tool", "simulation", "interactive_instrument"}:
+    if format_category in {"creative_tool", "simulation", "interactive_instrument"}:
         return rng.choice(["ndw_canvas_game_loop", "gsap_timeline_dom", "three_orbit_scene", "ndw_audio_particles"])
     return rng.choice(LIBRARY_PROFILES)
 
 
-def _retention_contract_for_activity(activity_type: str, activity_variant: str) -> Dict[str, str]:
-    if activity_type in {"platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game", "microgame"}:
+def _retention_contract_for_format(format_category: str, format_id: str) -> Dict[str, str]:
+    if format_category in {"platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game", "microgame"}:
         return {
             "entry": "Start immediately or with one obvious Play button. No fake workspace, protocol, calibration, or terminal wrapper.",
             "loop_length": "A satisfying attempt should take 20-60 seconds.",
@@ -663,7 +548,7 @@ def _retention_contract_for_activity(activity_type: str, activity_variant: str) 
             "copy": "Use a plain recognizable game title and a 3-7 word control cue.",
             "feedback": "Every input should cause visible motion, collision, progress, soundless juice, or score/state feedback.",
         }
-    if activity_type == "product_or_storefront":
+    if format_category == "product_or_storefront":
         return {
             "entry": "Open with a complete product hero: product image/visual, name, price or plan, benefits/specs, variant selector, and primary buy/reserve/add-to-cart action.",
             "loop_length": "The first commerce payoff should be reachable in one click: selected variant, cart drawer, checkout summary, receipt, or reserved ticket.",
@@ -671,7 +556,7 @@ def _retention_contract_for_activity(activity_type: str, activity_variant: str) 
             "copy": "Use normal ecommerce words: product, price, size, color, plan, cart, checkout, reserve, buy, compare.",
             "feedback": "Variant, quantity, plan, or add-to-cart actions must visibly update the product preview and checkout/cart state.",
         }
-    if activity_type in {"saas_replica", "commerce_or_booking_flow", "data_investigation", "fake_os_app"}:
+    if format_category in {"saas_replica", "commerce_or_booking_flow", "data_investigation", "fake_os_app"}:
         return {
             "entry": "Open with sample records/items already loaded. No blank dashboard or empty table as the first view.",
             "loop_length": "The first useful result should be reachable in one click or one edit.",
@@ -679,7 +564,7 @@ def _retention_contract_for_activity(activity_type: str, activity_variant: str) 
             "copy": "Use normal app language and concrete domain nouns; avoid sci-fi labels unless the domain is actually fictional.",
             "feedback": "Search, filter, select, create, save, or configure actions must visibly change data and status.",
         }
-    if activity_type in {"creative_tool", "interactive_instrument", "simulation"}:
+    if format_category in {"creative_tool", "interactive_instrument", "simulation"}:
         return {
             "entry": "Show an existing preview/artifact first, then invite direct manipulation.",
             "loop_length": "The visitor should create or transform something in the first 10 seconds.",
