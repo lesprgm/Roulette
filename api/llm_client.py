@@ -1,25 +1,19 @@
 from __future__ import annotations
-import json
 import logging
 import os
 import random
-import time
-from typing import Any, Dict, Iterable, Optional, Tuple, List, Pattern, Sequence, Set
+from typing import Any, Dict, Iterable, Optional, Tuple, List, Sequence, Set
 import requests
-from api.generation.activity_quality import score_activity_depth
+from api.generation.task_quality import score_task_quality
 from api.generation.design_quality import score_design_discipline
 from api.generation.experience_quality import score_experience
-from api.generation.prompts import (
-    PAGE_SHAPE_HINT as _PAGE_SHAPE_HINT,
-    PREMIUM_PLAN_SCHEMA,
-)
+from api.generation.prompts import PREMIUM_PLAN_SCHEMA
 from api.llm_parsing import _normalize_doc
 from api.generation.novelty import novelty_summary
 from api.generation.output_parsing import (
     extract_completed_premium_burst_sites as _extract_completed_premium_burst_sites,
     extract_final_html_blocks as _extract_final_html_blocks,
     extract_gemini_text as _parse_gemini_text,
-    premium_burst_site_pattern as _premium_burst_site_pattern_impl,
 )
 from api.generation.premium_prompts import (
     build_premium_burst_prompt as _build_premium_burst_prompt_impl,
@@ -29,7 +23,6 @@ from api.generation.premium_prompts import (
 from api.generation.premium_quality import (
     attach_premium_evaluations as _attach_premium_evaluations_impl,
     attach_quality_score as _attach_quality_score_impl,
-    has_full_experience_plan as _has_full_experience_plan_impl,
 )
 from api.generation.provider_gemini import (
     call_structured as _provider_call_structured,
@@ -42,19 +35,18 @@ from api.generation.provider_gemini import (
     was_quota_exhausted,
 )
 from api.preflight import annotate_doc as _annotate_preflight_doc
-from api.preflight import first_js_syntax_error as _first_js_syntax_error
 from api.preflight import has_blocking_issues as _preflight_has_blocking_issues
 from api.preflight import preflight_doc as _preflight_doc
 from api.quality import score_page_doc
-from api.generation.experience_grammar import (
-    seeded_activity_contract,
+from api.generation.interaction_catalog import (
     seeded_diverse_format_first_targets,
     seeded_format_first_target,
     seeded_genre_contract,
 )
-from api.generation.redis_diversity import recent_activity_memory
-from api.generation.semantic_anchors import select_semantic_anchors
-from api.generation.task_grammar import task_contract_for_variant
+from api.generation.redis_diversity import recent_format_memory
+from api.generation.task_model import task_model_for_format
+from api.generation.visual_spec import visual_spec_for_target
+from api.settings import SETTINGS
 
 
 def _testing_stub_enabled() -> bool:
@@ -71,59 +63,19 @@ def _testing_stub_enabled() -> bool:
     return True
 log = logging.getLogger(__name__)
 
-try:
-    TEMPERATURE = float(os.getenv("TEMPERATURE", "1.5"))
-except Exception:
-    TEMPERATURE = 1.5
-
-# Premium burst generation: number of sites requested from Gemini in one streaming call.
-try:
-    BURST_SITE_COUNT = int(os.getenv("BURST_SITE_COUNT", "10"))
-except Exception:
-    BURST_SITE_COUNT = 10
-BURST_SITE_COUNT = max(1, min(BURST_SITE_COUNT, 50))
-
-# Token and timeout configuration
-# Defaults favor longer generations; adjust via .env if provider rejects
-try:
-    LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "15000"))
-except Exception:
-    LLM_MAX_TOKENS = 15000
-try:
-    LLM_TIMEOUT_SECS = int(os.getenv("LLM_TIMEOUT_SECS", "105"))
-except Exception:
-    LLM_TIMEOUT_SECS = 105
-_DEFAULT_GEMINI_MAX_OUTPUT_TOKENS = 64000
-try:
-    GEMINI_MAX_OUTPUT_TOKENS = int(
-        os.getenv("GEMINI_MAX_OUTPUT_TOKENS", str(_DEFAULT_GEMINI_MAX_OUTPUT_TOKENS))
-    )
-except Exception:
-    GEMINI_MAX_OUTPUT_TOKENS = _DEFAULT_GEMINI_MAX_OUTPUT_TOKENS
-try:
-    GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS = int(
-        os.getenv("GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS", "0") or 0
-    )
-except Exception:
-    GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS = 0
-try:
-    PREMIUM_BURST_MIN_HTML_BYTES = int(os.getenv("PREMIUM_BURST_MIN_HTML_BYTES", "3000"))
-except Exception:
-    PREMIUM_BURST_MIN_HTML_BYTES = 3000
-GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "medium").strip().lower()
-GEMINI_STREAM_DEBUG = os.getenv("GEMINI_STREAM_DEBUG", "0").lower() in {"1", "true", "yes", "on"}
-try:
-    GEMINI_STREAM_DEBUG_CHARS = int(os.getenv("GEMINI_STREAM_DEBUG_CHARS", "4000"))
-except Exception:
-    GEMINI_STREAM_DEBUG_CHARS = 4000
-GEMINI_STREAM_DEBUG_WRITE = os.getenv("GEMINI_STREAM_DEBUG_WRITE", "0").lower() in {"1", "true", "yes", "on"}
-GEMINI_STREAM_DEBUG_DIR = os.getenv("GEMINI_STREAM_DEBUG_DIR", "cache/gemini_stream").strip()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+TEMPERATURE = SETTINGS.llm.temperature
+BURST_SITE_COUNT = SETTINGS.llm.burst_site_count
+LLM_MAX_TOKENS = SETTINGS.llm.max_tokens
+LLM_TIMEOUT_SECS = SETTINGS.llm.timeout_seconds
+GEMINI_MAX_OUTPUT_TOKENS = SETTINGS.llm.gemini_max_output_tokens
+GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS = SETTINGS.llm.premium_build_max_output_tokens
+PREMIUM_BURST_MIN_HTML_BYTES = SETTINGS.llm.premium_burst_min_html_bytes
+GEMINI_THINKING_LEVEL = SETTINGS.llm.thinking_level
+GEMINI_API_KEY = SETTINGS.llm.api_key
 _ENV_GEMINI_API_KEY = GEMINI_API_KEY
 
-GEMINI_GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-3.5-flash").strip()
-GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3-flash-preview").strip()
+GEMINI_GENERATION_MODEL = SETTINGS.llm.generation_model
+GEMINI_FALLBACK_MODEL = SETTINGS.llm.fallback_model
 GEMINI_GENERATION_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
 )
@@ -188,83 +140,25 @@ def _attach_quality_score(doc: Dict[str, Any], mode: str) -> Dict[str, Any]:
     return _attach_quality_score_impl(doc, mode, score_page_doc=score_page_doc)
 
 
-def _has_full_experience_plan(plan: Dict[str, Any]) -> bool:
-    return _has_full_experience_plan_impl(plan)
-
-
-def _semantic_translation_from_anchors(anchors: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
-    readable_format = str(task.get("format") or "the selected activity").replace("_", " ")
-    translation: Dict[str, Dict[str, str]] = {}
-    for key, value in (anchors or {}).items():
-        anchor = str(value or "").strip()
-        if not anchor:
-            continue
-        if key == "material":
-            visual_role = (
-                f"Embody {anchor} as a material system for {readable_format}: synthesize texture, surface, "
-                "shape, border, shadow, or generated pattern with CSS gradients, pseudo-elements, inline SVG, "
-                "Canvas, or Three.js material when appropriate."
-            )
-            interaction_role = (
-                f"Let {anchor} affect interaction feedback, such as compression, spring, scrape, stitch, shine, "
-                "grain, reflection, or other tactile response tied to state changes."
-            )
-            content_role = (
-                f"Do not put {anchor} in the title or major labels unless the UI visibly embodies it. "
-                f"The recognizable format name for {readable_format} should remain dominant."
-            )
-            motion_role = (
-                f"Translate {anchor} into restrained material motion only when useful: thread sweep, dust, "
-                "polish, grain drift, soft rebound, shimmer, crack, or surface reveal."
-            )
-        elif key == "everyday_object":
-            visual_role = f"Use {anchor} as a UI metaphor, affordance shape, icon idea, control object, or content prop for {readable_format}."
-            interaction_role = f"Let {anchor} influence how the user manipulates the interface, without replacing the {readable_format} behavior."
-            content_role = f"Use {anchor} in copy only if it clarifies the product/task; otherwise keep it implicit in component design."
-            motion_role = f"Translate {anchor} into small object-like feedback tied to the primary action."
-        elif key == "layout_metaphor":
-            visual_role = f"Use {anchor} to shape composition, grouping, navigation, or information flow for {readable_format}."
-            interaction_role = f"Let {anchor} guide how sections open, move, sort, or connect."
-            content_role = f"Use {anchor} as structure, not as random title wording."
-            motion_role = f"Translate {anchor} into transitions between regions or states."
-        elif key == "interaction_verb":
-            visual_role = f"Make the main affordance visually support the action '{anchor}'."
-            interaction_role = f"The primary action or feedback should feel like '{anchor}' while preserving the {readable_format} mechanic."
-            content_role = f"Use action copy related to '{anchor}' only if it helps the user know what to do."
-            motion_role = f"Use motion that communicates '{anchor}' after input."
-        else:
-            visual_role = f"Use {anchor} as a subtle surface, palette, or object-detail flavor for {readable_format}."
-            interaction_role = f"Let {anchor} influence small feedback moments without replacing the {readable_format} behavior."
-            content_role = f"Use {anchor} only in labels or microcopy when it clarifies the task."
-            motion_role = f"Translate {anchor} into restrained motion accents tied to state changes."
-        translation[key] = {
-            "visual_role": visual_role,
-            "interaction_role": interaction_role,
-            "content_role": content_role,
-            "motion_role": motion_role,
-        }
-    return translation
-
-
 def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     controls = task.get("controls") if isinstance(task.get("controls"), list) else []
     first_control = controls[0] if controls and isinstance(controls[0], dict) else {}
     first_label = str(first_control.get("label") or "Try the main action").strip()
-    user_goal = str(task.get("user_goal") or target.get("activity_contract", {}).get("activity_goal") or "Try the activity.").strip()
-    completion = str(task.get("completion_condition") or target.get("activity_contract", {}).get("payoff") or "a visible result updates").strip()
+    user_goal = str(task.get("user_goal") or target.get("format_spec", {}).get("implementation_goal") or "Try the activity.").strip()
+    completion = str(task.get("completion_condition") or target.get("format_spec", {}).get("payoff") or "a visible result updates").strip()
     payoff_scene = task.get("payoff_scene") if isinstance(task.get("payoff_scene"), dict) else {}
     payoff_scene_text = str(payoff_scene.get("scene") or completion).strip()
     payoff_continue = str(payoff_scene.get("continue_action") or f"Improve, complete, compare, or replay the {str(task.get('format') or 'activity').replace('_', ' ')}.").strip()
     state_vars = task.get("state_variables") if isinstance(task.get("state_variables"), list) else []
     state_change = ", ".join(str(item) for item in state_vars[:3]) or "the visible state"
-    activity_type = str(target.get("activity_type") or "")
-    if activity_type in {"microgame", "platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
+    format_category = str(target.get("format_category") or "")
+    if format_category in {"microgame", "platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
         visitor_role = "player"
-    elif activity_type == "product_or_storefront":
+    elif format_category == "product_or_storefront":
         visitor_role = "shopper"
-    elif activity_type in {"saas_replica", "commerce_or_booking_flow", "fake_os_app"}:
+    elif format_category in {"saas_replica", "commerce_or_booking_flow", "fake_os_app"}:
         visitor_role = "operator"
-    elif activity_type == "creative_tool":
+    elif format_category == "creative_tool":
         visitor_role = "creator"
     else:
         visitor_role = "visitor"
@@ -299,7 +193,7 @@ def _attach_premium_evaluations(
         plan,
         score_experience=score_experience,
         score_design_discipline=score_design_discipline,
-        score_activity_depth=score_activity_depth,
+        score_task_quality=score_task_quality,
         include_experience=include_experience,
     )
 
@@ -443,10 +337,6 @@ def extract_final_html_blocks(text: str) -> List[str]:
     return _extract_final_html_blocks(text)
 
 
-def _premium_burst_site_pattern() -> Pattern[str]:
-    return _premium_burst_site_pattern_impl()
-
-
 def extract_completed_premium_burst_sites(text: str) -> List[Tuple[int, str]]:
     return _extract_completed_premium_burst_sites(text)
 
@@ -524,23 +414,34 @@ def generate_page_premium_burst(
         }
         return
 
-    memory = recent_activity_memory(limit=20)
+    memory = recent_format_memory(limit=20)
     base_targets = seeded_diverse_format_first_targets(
         seed_val,
         target_count,
-        recent_variants=memory.get("variants"),
-        recent_families=memory.get("families"),
-        recent_loops=memory.get("loops"),
-        recent_rewards=memory.get("rewards"),
+        recent_format_ids=memory.get("format_ids"),
+        recent_format_families=memory.get("format_families"),
+        recent_interaction_loops=memory.get("interaction_loops"),
+        recent_reward_mechanics=memory.get("reward_mechanics"),
     )
     targets = []
+    visual_reservations: Dict[str, List[str]] = {
+        "palettes": list(memory.get("visual_palettes") or [])[:4],
+        "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:6],
+        "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:3],
+        "primary_renderers": list(memory.get("primary_renderers") or [])[:1],
+    }
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
-        base_target["_recent_palettes"] = memory.get("palettes")
+        base_target["_visual_reservations"] = visual_reservations
         target = _premium_experience_target(site_seed, base_target=base_target)
         target["site_index"] = idx + 1
         target["seed"] = site_seed
         targets.append(target)
+        spec = target.get("visual_spec") if isinstance(target.get("visual_spec"), dict) else {}
+        for key, spec_key in (("palettes", "palette_id"), ("layout_signatures", "composition"), ("primary_renderers", "primary_renderer")):
+            value = str(spec.get(spec_key) or "").strip()
+            if value and value not in visual_reservations[key]:
+                visual_reservations[key].append(value)
 
     parts: List[Dict[str, Any]] = [{"text": _build_premium_burst_prompt(brief or "", seed_val, targets)}]
     generation_config: Dict[str, Any] = {
@@ -686,38 +587,48 @@ def generate_page_premium_burst(
 
 def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     memory: Dict[str, Any] = {}
+    visual_reservations: Dict[str, Any] = {}
     if isinstance(base_target, dict):
-        memory = {"palettes": base_target.get("_recent_palettes") or []}
         target = dict(base_target)
-        target.pop("_recent_palettes", None)
+        visual_reservations = target.pop("_visual_reservations", {})
     else:
-        memory = recent_activity_memory(limit=20)
+        memory = recent_format_memory(limit=20)
+        visual_reservations = {
+            "palettes": memory.get("visual_palettes") or [],
+            "layout_signatures": memory.get("layout_signatures") or memory.get("compositions") or [],
+            "rendered_layout_families": memory.get("rendered_layout_families") or [],
+            "primary_renderers": memory.get("primary_renderers") or [],
+        }
         target = seeded_format_first_target(
             seed,
-            recent_variants=memory.get("variants"),
-            recent_families=memory.get("families"),
-            recent_loops=memory.get("loops"),
-            recent_rewards=memory.get("rewards"),
+            recent_format_ids=memory.get("format_ids"),
+            recent_format_families=memory.get("format_families"),
+            recent_interaction_loops=memory.get("interaction_loops"),
+            recent_reward_mechanics=memory.get("reward_mechanics"),
         )
-    archetype = str(target["experience_archetype"])
-    loop_type = str(target["primary_loop_type"])
-    cell_key = f"{target['activity_contract']['activity_variant']}:{archetype}:{loop_type}"
-    anchors = select_semantic_anchors(seed, cell_key)
-    task = task_contract_for_variant(
-        str(target["activity_contract"]["activity_variant"]),
-        str(target["activity_type"]),
+    archetype = str(target["interaction_pattern"])
+    loop_type = str(target["interaction_loop"])
+    task = task_model_for_format(
+        str(target["format_spec"]["format_id"]),
+        str(target["format_category"]),
     )
     experience_fields = _experience_fields_from_task(target, task)
+    visual_spec = visual_spec_for_target(
+        seed=seed,
+        format_category=str(target["format_category"]),
+        format_id=str(target["format_spec"]["format_id"]),
+        task_model=task,
+        reserved=visual_reservations,
+    )
     return {
         **target,
         **experience_fields,
         "reward_mechanic": task.get("reward_mechanic"),
         "reward_contract": task.get("reward_contract"),
-        "semantic_anchors": anchors,
-        "semantic_translation": _semantic_translation_from_anchors(anchors, task),
-        "task_contract": task,
-        "genre_contract": seeded_genre_contract(seed, archetype, loop_type, recent_palettes=memory.get("palettes")),
-        "title_policy": "Semantic anchor words must be embodied or hidden. Do not put anchor words in <title>, <h1>, or major labels unless the UI expresses them through material, texture, shape, motion, interaction feedback, or metaphor. The concrete format name remains dominant.",
+        "task_model": task,
+        "genre_contract": seeded_genre_contract(seed, archetype, loop_type),
+        "visual_spec": visual_spec,
+        "title_policy": "The concrete format name remains dominant. If the page itself names a material or object in a title or major label, visibly support that claim through the interface; otherwise keep the claim out of copy.",
     }
 
 
@@ -744,18 +655,10 @@ def _call_gemini_premium_plan(
     parts: List[Dict[str, Any]] = [{"text": _build_premium_plan_prompt(brief, seed, experience_target)}]
     out = _call_gemini_structured(parts, PREMIUM_PLAN_SCHEMA, temperature=0.8, max_output_tokens=4096)
     if isinstance(out, dict):
-        # The model owns art direction; the backend owns the concrete product contract.
-        # This prevents the planner from drifting a Snake/booking/tool target into abstract FUI.
-        out["experience_archetype"] = experience_target["experience_archetype"]
-        out["primary_loop_type"] = experience_target["primary_loop_type"]
-        out["semantic_anchors"] = experience_target["semantic_anchors"]
-        out["activity_type"] = experience_target["activity_type"]
-        out["reward_mechanic"] = experience_target["reward_mechanic"]
-        out["reward_contract"] = experience_target["reward_contract"]
-        out["activity_contract"] = experience_target["activity_contract"]
-        out["task_contract"] = experience_target["task_contract"]
-        out["genre_contract"] = experience_target["genre_contract"]
-    return out if isinstance(out, dict) else None
+        # The model only supplies a compact creative brief. Every product, task,
+        # reward, and visual-system contract remains deterministic backend state.
+        return {**out, **experience_target}
+    return None
 
 
 def _call_gemini_premium_build(
@@ -779,46 +682,3 @@ def _call_gemini_premium_build(
 
 def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
     return _parse_gemini_text(payload)
-
-
-def _log_gemini_stream_debug(
-    full_text: str,
-    parsed_docs: int,
-    finish_reasons: Set[str],
-    prompt_feedback: Optional[Dict[str, Any]],
-    safety_ratings: List[Any],
-) -> None:
-    if not GEMINI_STREAM_DEBUG:
-        return
-    text = full_text or ""
-    length = len(text)
-    max_chars = max(200, int(GEMINI_STREAM_DEBUG_CHARS or 0))
-    head = text[:max_chars]
-    tail = text[-max_chars:] if length > max_chars else ""
-    block_reason = None
-    if isinstance(prompt_feedback, dict):
-        block_reason = prompt_feedback.get("blockReason")
-    logging.warning(
-        "Gemini stream debug: len=%d parsed_docs=%d finishReasons=%s blockReason=%s head=%s",
-        length,
-        parsed_docs,
-        sorted(finish_reasons),
-        block_reason,
-        head,
-    )
-    if tail and tail != head:
-        logging.warning("Gemini stream debug tail: %s", tail)
-    if safety_ratings:
-        logging.warning("Gemini stream debug safetyRatings: %s", safety_ratings[:3])
-    if GEMINI_STREAM_DEBUG_WRITE:
-        try:
-            os.makedirs(GEMINI_STREAM_DEBUG_DIR, exist_ok=True)
-            path = os.path.join(
-                GEMINI_STREAM_DEBUG_DIR,
-                f"gemini_stream_{int(time.time() * 1000)}.txt",
-            )
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(text)
-            logging.warning("Gemini stream debug saved: %s", path)
-        except Exception as exc:
-            logging.warning("Gemini stream debug write failed: %r", exc)
