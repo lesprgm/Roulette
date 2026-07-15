@@ -1,27 +1,25 @@
-# Experience Grammar
+# Interaction Model
 
-Roulette is not prompt-to-site. It generates random interactive mini-experiences. The experience grammar is the layer that turns randomness into something a visitor can understand and play with.
+Roulette is not prompt-to-site. It generates random interactive mini-experiences. The interaction model is the layer that turns randomness into something a visitor can understand and play with.
 
-## Contract
+## Model Fields
 
 Every plan should define:
 
-- `task_contract.format`
-- `task_contract.user_goal`
-- `task_contract.domain_objects`
-- `task_contract.state_variables`
-- `task_contract.controls`
-- `task_contract.completion_condition`
-- `task_contract.allowed_patterns`
-- `experience_archetype`
-- `primary_loop_type`
-- `semantic_anchors`
-- `semantic_translation`
+- `task_model.format`
+- `task_model.user_goal`
+- `task_model.domain_objects`
+- `task_model.state_variables`
+- `task_model.controls`
+- `task_model.completion_condition`
+- `task_model.allowed_patterns`
+- `interaction_pattern`
+- `interaction_loop`
 - `visitor_role`
 - `visitor_goal`
 - `first_interaction`
-- `activity_contract.activity_variant`
-- `activity_contract.library_profile`
+- `format_spec.format_id`
+- `format_spec.library_profile`
 - `primary_loop`
 - `feedback_contract`
 - `progression_model`
@@ -29,9 +27,9 @@ Every plan should define:
 - `onboarding_cue`
 - `mobile_interaction`
 
-## Task Contract First
+## Task Model First
 
-The task contract is the first layer of coherence. It says what the generated page actually is before any poetic theme, material, palette, or motion language is applied.
+The task model is the first layer of coherence. It says what the generated page actually is before art direction, palette, or motion language is applied.
 
 ```mermaid
 flowchart LR
@@ -53,13 +51,13 @@ Examples:
 - `restaurant_ordering`: menu, cart, receipt, delivery status, courier route, checkout state.
 - `music_step_sequencer`: steps, tempo, instruments, pattern state, play/stop, clear/randomize.
 
-Semantic anchors must not rename or obscure the task. A Snake game should not become “Echo Migration.” A booking flow should not become “Signal Pilgrimage.” The anchors can influence object names, surface treatment, copy tone, texture, and micro-motion, but the user must still recognize the format.
+Art direction must not rename or obscure the task. A Snake game should not become “Echo Migration.” A booking flow should not become “Signal Pilgrimage.” The user must still recognize the format.
 
 ```mermaid
 flowchart TD
  A["Format: music_step_sequencer"]
- B["Task contract: steps, tempo, instruments, playback"]
- C["Flavor: ceramic market + aurora palette"]
+ B["Task model: steps, tempo, instruments, playback"]
+ C["Art direction: playful ceramic palette"]
  D["Output: a recognizable sequencer with unusual visual styling"]
  E["Bad output: abstract glowing control sliders"]
 
@@ -74,7 +72,7 @@ The primary loop must answer:
 - What state is now different?
 - Why would the visitor continue?
 
-`activity_type` is intentionally broad; `activity_variant` is the concrete product/game format. For example, `microgame` can resolve to Breakout, Minesweeper, 2048, rhythm tap, pinball, maze escape, basketball arcade, or other lightweight formats. This prevents the generator from converging on only Snake, Tic-Tac-Toe, and quiz pages.
+`format_category` is intentionally broad; `format_id` is the concrete product/game format. For example, `microgame` can resolve to Breakout, Minesweeper, 2048, rhythm tap, pinball, maze escape, basketball arcade, or other lightweight formats. This prevents the generator from converging on only Snake, Tic-Tac-Toe, and quiz pages.
 
 `library_profile` tells the builder which local primitive should carry the interaction:
 
@@ -82,17 +80,6 @@ The primary loop must answer:
 - `gsap_timeline_dom` or `gsap_state_transition` for DOM/state choreography.
 - `lucide_app_chrome` for app, SaaS, commerce, and booking interfaces.
 - `three_orbit_scene` or `three_bloom_scene` for one focused spatial/3D scene.
-
-## Semantic Translation
-
-Semantic anchors are not surface decoration. The planner must translate each anchor into:
-
-- `visual_role`
-- `interaction_role`
-- `content_role`
-- `motion_role`
-
-Example: if the anchors are `concrete`, `bioluminescence`, and `typewriter`, the generated page should not merely use gray surfaces, blue glow, and monospace text. It should make typing crack a slab, reveal light, unlock message fragments, and give the visitor a reason to continue.
 
 ## Quality Checks
 
@@ -112,7 +99,7 @@ Example: if the anchors are `concrete`, `bioluminescence`, and `typewriter`, the
 
 This scorer is deterministic infrastructure. It is not an LLM beauty judge and it is not meant to replace visual review. Its purpose is to emit repair signals for pages that look interactive but do not behave like an experience; it should not hard-block production serving by itself.
 
-`api/generation/activity_quality.py` adds task-model checks:
+`api/generation/task_quality.py` adds task-model checks:
 
 - planned domain objects appear in the UI or script
 - planned state variables are implemented
@@ -125,10 +112,11 @@ These are repair and diagnostic signals. Hard preflight remains reserved for uns
 
 ## Implementation Files
 
-- `api/generation/experience_grammar.py`: archetypes, loop types, affordances, feedback patterns, and failure modes.
-- `api/generation/task_grammar.py`: concrete format task contracts.
-- `api/generation/activity_quality.py`: activity-depth checks, including selected game/app variant coverage.
-- `api/generation/semantic_anchors.py`: stratified semantic anchor buckets.
+- `api/generation/interaction_catalog.py`: interaction patterns, loops, affordances, feedback patterns, and failure modes.
+- `api/generation/task_model.py`: concrete format task models.
+- `api/generation/layout_model.py`: compositional region graphs, spatial relations, responsive transformations, and copy budgets.
+- `api/generation/visual_spec.py`: task-derived visual subjects, palettes, layout models, and renderer stacks.
+- `api/generation/task_quality.py`: task-quality checks, including selected game/app format coverage.
 - `api/generation/experience_quality.py`: deterministic experience scoring.
-- `api/generation/prompts.py`: planner schema and prompt contract.
+- `api/generation/prompts.py`: compact creative planner schema and runtime contract.
 - `api/llm_client.py`: LLM calls, raw HTML extraction, burst streaming, and fallback routing.

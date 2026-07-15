@@ -15,26 +15,35 @@ Roulette has two user-facing states:
 
 - **Frontend**
  - `templates/index.html`: initial HTML shell (landing + runtime container).
- - `static/ts-src/app.ts`: main frontend controller (landing, enter, transitions/shutter, JSON overlay).
- - `static/ts-src/frame_renderer.ts`: generated-site iframe creation, title extraction, and `postMessage` bridge injection.
+ - `static/ts-src/app.ts`: frontend initialization, transitions, and event wiring.
+ - `static/ts-src/generation-client.ts`: generation HTTP requests and streaming event parsing.
+ - `static/ts-src/generated-site-host.ts`: generated iframe ownership and host rendering.
+ - `static/ts-src/landing-controller.ts`: tunnel, landing hero, preview state, and counter UI.
  - `static/ts-src/ndw.ts`: the NDW runtime API used by many generated pages.
  - `static/ts-src/tunnel.ts`: 3D tunnel visual.
  - `static/js/*.js`: generated build output, not source.
 
 - **API**
- - `api/main.py`: FastAPI routes (`/generate`, `/generate/stream`, `/api/prefetch/*`, `/api/premium/previews`, `/prefetch/fill`, `/metrics/*`).
+ - `api/main.py`: FastAPI application assembly, startup checks, middleware, static hosting, and router registration.
+ - `api/routes/generation.py`: `/generate`, `/generate/stream`, and `/validate` endpoints.
+ - `api/routes/prefetch.py`: queue previews, queue status, queue consumption, and `/prefetch/fill`.
+ - `api/routes/metrics.py`: LLM status/probe and public/operator metrics endpoints.
+ - `api/routes/shared.py`: shared request rate policy and served-site recording.
+ - `api/generation/premium_service.py`: premium burst generation, first-page selection, leftovers, and queue top-up orchestration.
  - `api/llm_client.py`: LLM planner/builder orchestration, raw-HTML extraction, and fallback routing.
- - `api/generation/experience_grammar.py`: concrete activity formats, interaction archetypes, primary loop types, feedback patterns, and failure modes.
- - `api/generation/task_grammar.py`: task-model contracts for each concrete format: user goal, objects, state, controls, completion, and allowed UI patterns.
+ - `api/generation/interaction_catalog.py`: concrete formats, interaction patterns, interaction loops, feedback patterns, and failure modes.
+ - `api/generation/task_model.py`: task-model contracts for each concrete format: user goal, objects, state, controls, completion, and allowed UI patterns.
  - `api/generation/experience_quality.py`: deterministic checks for visible first action, state change, feedback, replay, and mobile fallback.
- - `api/generation/activity_quality.py`: deterministic activity-depth and task-contract checks for games, apps, tools, quizzes, and simulations.
+ - `api/generation/task_quality.py`: deterministic task-quality and task-model checks for games, apps, tools, quizzes, and simulations.
+ - `api/generation/quality_html.py`: shared generated-document HTML and visible-text extraction.
  - `api/generation/prompts.py`: shared prompt contracts and planner response schema.
- - `api/generation/redis_diversity.py`: Redis descriptor archive, quality-diversity counters, fingerprints, and event logging.
+ - `api/generation/redis_diversity.py`: Redis descriptor archive, recent-choice counters, fingerprints, and event logging.
  - `api/prefetch.py`: shared queue implementation (Redis-first, file fallback) + preview tokening.
  - `api/dedupe.py`: “seen” signatures to reduce near-duplicate outputs.
  - `api/auth.py`: API key parsing / admin bypass.
  - `api/redis_ratelimit.py`: optional Redis-backed rate limiting.
  - `api/counter.py`: usage counter (Redis-first, file fallback).
+ - `api/settings.py`: typed, validated startup configuration for generation, queues, storage, rate limits, and runtime behavior.
 
 ## System Layers (Why This Is More Than a Demo)
 
@@ -47,7 +56,7 @@ Think of Roulette as multiple planes stacked together:
 3. **Guardrails plane (quality/safety + runtime compatibility)**
   - Normalization, asset rewriting (avoid external CDNs), JS syntax checks, preflight, visual scoring, and experience scoring.
 4. **Persistence plane (queues + state)**
- - Redis-first queue, compact descriptors, quality-diversity counters, event logs, fingerprints, and file fallback for local/dev.
+ - Redis-first queue, compact descriptors, recent-choice counters, event logs, fingerprints, and file fallback for local/dev.
 5. **Ops plane (rate limits + knobs)**
   - App-level rate limiting, admin keys, feature flags, deploy constraints (free-tier restarts).
 
@@ -72,9 +81,9 @@ flowchart LR
   D["Dedupe\\nseen signatures"]
   N["Normalize/Sanitize\\nasset rewrite + JS checks"]
   C["Local Acceptance\\npreflight + visual + experience flags"]
-  X["Format + Task Grammar\\nformat + goal + state + controls"]
-  E["Experience Grammar\\nrole + first action + primary loop"]
-  A["Redis Diversity\\ndescriptors + QD counters"]
+  X["Format Catalog + Task Model\\nformat + goal + state + controls"]
+  E["Interaction Model\\nrole + first action + interaction loop"]
+  A["Redis Diversity\\ndescriptors + recent-choice counters"]
   O["LLM Orchestrator\\nplanner/build + fallbacks"]
  end
 
@@ -97,18 +106,18 @@ The generator is intentionally format-first. Randomness is still present, but it
 ```mermaid
 flowchart TD
  A["Choose concrete format\\nSnake, invoice builder, booking flow, quiz, sequencer"]
- B["Instantiate task contract\\nGoal, objects, state variables, controls, completion"]
- C["Derive experience contract\\nVisitor role, first action, primary loop, feedback"]
- D["Apply semantic and visual flavor\\nMaterial, palette, motion, texture, rendering mode"]
+ B["Instantiate task model\\nGoal, objects, state variables, controls, completion"]
+ C["Derive interaction model\\nVisitor role, first action, interaction loop, feedback"]
+ D["Compose visual specification\\nLayout model, copy budget, palette, renderer"]
  E["Plan with the LLM\\nStructured JSON contract"]
  F["Build with the LLM\\nRaw HTML + self-review"]
- G["Local gates\\npreflight + activity/experience repair signals"]
+ G["Local gates\\npreflight + task/experience repair signals"]
  H["Serve or queue\\niframe sandbox + Redis descriptor archive"]
 
  A --> B --> C --> D --> E --> F --> G --> H
 ```
 
-This order matters. A Snake game can be styled like a lunar warehouse or a clay arcade, but it should still visibly play like Snake. A booking flow can have strange art direction, but it still needs destinations, dates, selections, price/result state, and a completion action. Semantic anchors are flavor, not the product.
+This order matters. A Snake game can have unusual art direction, but it should still visibly play like Snake. A booking flow can have a distinctive visual system, but it still needs destinations, dates, selections, price/result state, and a completion action. The format is the product.
 
 ## Data Flow
 
@@ -148,13 +157,13 @@ This order matters. A Snake game can be styled like a lunar warehouse or a clay 
 
 Behind the simple “generate” action, the backend can do a multi-stage pipeline:
 
-1. **Select** a recognizable activity format first.
-2. **Instantiate** the task contract: goal, domain objects, state variables, controls, completion condition, and allowed UI patterns.
-3. **Plan** semantic translation, visitor role, first interaction, primary loop, and art direction with the LLM.
+1. **Select** a recognizable format first.
+2. **Instantiate** the task model: goal, domain objects, state variables, controls, completion condition, and allowed UI patterns.
+3. **Plan** visitor role, first interaction, interaction loop, and art direction with the LLM.
 4. **Build** a complete renderable page with one-shot self-review and a final fenced HTML block.
 5. **Normalize/sanitize** docs so they render in the host runtime and don’t rely on external CDNs.
 6. **Dedupe and annotate** visual/render quality, task coherence, and experience behavior as repair signals.
-7. **Record descriptors** after user-visible serving so Redis can steer future formats and experience cells without prompt bloat.
+7. **Record descriptors** after user-visible serving so Redis can steer future concrete formats and visual choices without prompt bloat.
 
 Generation has one active product path: raw-HTML sites produced by the configured LLM, accepted by local gates, then served immediately or cached in the queue.
 
@@ -162,8 +171,8 @@ Generation has one active product path: raw-HTML sites produced by the configure
 
 - **Shared queues:** make the UX “instant” most of the time and amortize LLM cost across users.
 - **Single generation lane:** keeps quality consistent instead of exposing users to mixed output tiers.
-- **Format-first task grammar:** prevents abstract anchor soup by making every page start from a recognizable game, app, tool, quiz, simulator, or workflow.
-- **Experience grammar:** forces pages to define what the visitor does, what changes, and why to continue.
+- **Format-first task model:** prevents abstract anchor soup by making every page start from a recognizable game, app, tool, quiz, simulator, or workflow.
+- **Interaction model:** forces pages to define what the visitor does, what changes, and why to continue.
 - **Redis descriptor tracking:** reduces repeated behavioral cells without injecting prior full websites into prompts.
 - **Redis-first storage:** enables persistence across restarts and avoids “free-tier wipes” (file-only queues reset).
 - **Iframe sandbox rendering:** destroys the previous site iframe on each generation, isolating WebGL, timers, styles, and event listeners from the host app.
