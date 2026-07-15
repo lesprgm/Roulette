@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -10,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 import requests
 
 from api.llm_parsing import _json_from_text
+from api.settings import SETTINGS
 
 JsonExtractor = Callable[[Dict[str, Any]], Optional[str]]
 
@@ -17,10 +17,7 @@ _tls = threading.local()
 _high_demand_lock = threading.Lock()
 _high_demand_until = 0.0
 
-try:
-    HIGH_DEMAND_COOLDOWN_SECONDS = int(os.getenv("GEMINI_HIGH_DEMAND_COOLDOWN_SECONDS", "180"))
-except Exception:
-    HIGH_DEMAND_COOLDOWN_SECONDS = 180
+HIGH_DEMAND_COOLDOWN_SECONDS = SETTINGS.llm.high_demand_cooldown_seconds
 
 
 def _quota_flag_set(val: bool) -> None:

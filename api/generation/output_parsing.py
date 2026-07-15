@@ -5,6 +5,17 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
+_ALPINE_SCRIPT_RE = re.compile(
+    r'<script(?![^>]*\bdefer\b)([^>]*\bsrc=["\']/static/vendor/alpine\.min\.js["\'][^>]*)>',
+    re.IGNORECASE,
+)
+
+
+def normalize_generated_html(html: str) -> str:
+    """Apply narrow runtime-safe normalization without changing page semantics."""
+    return _ALPINE_SCRIPT_RE.sub(r"<script defer\1>", html)
+
+
 def extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
     try:
         candidates = payload.get("candidates") or []
@@ -61,7 +72,7 @@ def extract_final_html_blocks(text: str) -> List[str]:
     for match in pattern.finditer(text):
         html = (match.group(1) or match.group(2) or "").strip()
         if html:
-            blocks.append(html)
+            blocks.append(normalize_generated_html(html))
     if blocks:
         return blocks
     lowered = text.lower()
@@ -69,7 +80,7 @@ def extract_final_html_blocks(text: str) -> List[str]:
     if start < 0:
         start = lowered.find("<html")
     if start >= 0:
-        blocks.append(text[start:].strip())
+        blocks.append(normalize_generated_html(text[start:].strip()))
     return blocks
 
 
