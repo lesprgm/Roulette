@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
+from api.generation.quality_html import extract_doc_html
+
 
 PREMIUM_SCORE_THRESHOLD = 70
 
@@ -45,26 +47,6 @@ _ACCESSIBILITY_ATTR_RE = re.compile(
 )
 
 
-def _extract_html(doc: Dict[str, Any]) -> str:
-    if not isinstance(doc, dict):
-        return ""
-    html = doc.get("html")
-    if isinstance(html, str):
-        return html
-    components = doc.get("components")
-    if isinstance(components, list):
-        parts: List[str] = []
-        for comp in components:
-            if not isinstance(comp, dict):
-                continue
-            props = comp.get("props")
-            chunk = props.get("html") if isinstance(props, dict) else None
-            if isinstance(chunk, str):
-                parts.append(chunk)
-        return "\n".join(parts)
-    return ""
-
-
 def _normalized_color_tokens(html: str) -> List[str]:
     if not html:
         return []
@@ -77,7 +59,7 @@ def _normalized_color_tokens(html: str) -> List[str]:
 
 
 def extract_review_metrics(doc: Dict[str, Any]) -> Dict[str, Any]:
-    html = _extract_html(doc)
+    html = extract_doc_html(doc)
     doc_kind = doc.get("kind") if isinstance(doc, dict) else None
     iframe_isolated = str(doc_kind or "").lower() == "full_page_html"
     region_count = len(_REGION_RE.findall(html))
@@ -137,7 +119,6 @@ def extract_review_metrics(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def score_page_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
-    html = _extract_html(doc)
     metrics = extract_review_metrics(doc)
     reasons: List[str] = []
     flags: Dict[str, Any] = {}

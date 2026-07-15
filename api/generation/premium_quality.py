@@ -41,7 +41,7 @@ def attach_premium_evaluations(
     *,
     score_experience: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
     score_design_discipline: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
-    score_activity_depth: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
+    score_task_quality: Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]],
     include_experience: Optional[bool] = None,
 ) -> Dict[str, Any]:
     debug = dict(scored.get("ndw_debug") or {})
@@ -58,9 +58,9 @@ def attach_premium_evaluations(
             "reason": "full planner experience loop not available for this generation path",
         }
     debug["design_quality"] = score_design_discipline(scored, plan)
-    debug["activity_quality"] = score_activity_depth(scored, plan)
+    debug["task_quality"] = score_task_quality(scored, plan)
     repair_signals: List[str] = []
-    for key in ("experience_quality", "design_quality", "activity_quality"):
+    for key in ("experience_quality", "design_quality", "task_quality"):
         result = debug.get(key)
         if not isinstance(result, dict) or result.get("passes", True):
             continue

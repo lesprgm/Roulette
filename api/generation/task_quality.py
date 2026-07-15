@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List
 
+from api.generation.quality_html import extract_doc_html, visible_text
+
 
 ACTIVITY_SCORE_THRESHOLD = 75
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_STYLE_SCRIPT_RE = re.compile(r"<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)>", re.IGNORECASE)
 _RANGE_RE = re.compile(r"<input\b[^>]*type=['\"]?range", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"<(?:button|input|select|textarea)\b|role=['\"](?:button|slider|tab)['\"]", re.IGNORECASE)
 _EVENT_RE = re.compile(
@@ -40,27 +40,17 @@ _HIDDEN_REVEAL_RE = re.compile(r"\b(hidden|reveal|unlock|decode|transmission|sig
 _EMPTY_START_RE = re.compile(r"\b(empty|blank|placeholder|start from scratch|no items|0 items|slot\s+\d+)\b", re.IGNORECASE)
 
 
-def _extract_html(doc: Dict[str, Any]) -> str:
-    html = doc.get("html") if isinstance(doc, dict) else ""
-    return html if isinstance(html, str) else ""
-
-
-def _visible_text(html: str) -> str:
-    stripped = _STYLE_SCRIPT_RE.sub(" ", html or "")
-    return re.sub(r"\s+", " ", _TAG_RE.sub(" ", stripped)).strip().lower()
-
-
-def _activity_contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
+def _format_spec(plan: Dict[str, Any] | None) -> Dict[str, Any]:
     if not isinstance(plan, dict):
         return {}
-    contract = plan.get("activity_contract")
+    contract = plan.get("format_spec")
     return contract if isinstance(contract, dict) else {}
 
 
-def _task_contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
+def _task_model(plan: Dict[str, Any] | None) -> Dict[str, Any]:
     if not isinstance(plan, dict):
         return {}
-    contract = plan.get("task_contract")
+    contract = plan.get("task_model")
     return contract if isinstance(contract, dict) else {}
 
 
@@ -70,7 +60,7 @@ def _reward_contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
     contract = plan.get("reward_contract")
     if isinstance(contract, dict):
         return contract
-    task = _task_contract(plan)
+    task = _task_model(plan)
     contract = task.get("reward_contract")
     return contract if isinstance(contract, dict) else {}
 
@@ -85,31 +75,33 @@ def _payoff_keywords(value: str) -> List[str]:
     return [word for word in words if word not in stop][:10]
 
 
-def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    html = _extract_html(doc)
-    text = _visible_text(html)
-    contract = _activity_contract(plan)
-    task_contract = _task_contract(plan)
+def score_task_quality(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    html = extract_doc_html(doc)
+    text = visible_text(html, lowercase=True)
+    contract = _format_spec(plan)
+    task_model = _task_model(plan)
     reward_contract = _reward_contract(plan)
-    activity_type = str((plan or {}).get("activity_type") or contract.get("activity_type") or "")
-    activity_variant = str(contract.get("activity_variant") or "")
-    task_format = str(task_contract.get("format") or "")
+    format_category = str((plan or {}).get("format_category") or contract.get("format_category") or "")
+    format_id = str(contract.get("format_id") or "")
+    task_format = str(task_model.get("format") or "")
     task_head = task_format.split("_", 1)[0]
-    variant_head = activity_variant.split("_", 1)[0]
+    variant_head = format_id.split("_", 1)[0]
     if (
-        activity_variant
+        format_id
         and task_format
-        and task_format != activity_variant
-        and activity_variant not in task_format
-        and task_format not in activity_variant
+        and task_format != format_id
+        and format_id not in task_format
+        and task_format not in format_id
         and task_head != variant_head
     ):
-        task_contract = {}
-        reward_contract = _reward_contract({"reward_contract": (plan or {}).get("reward_contract"), "activity_contract": contract})
+        task_model = {}
+        reward_contract = _reward_contract(
+            {"reward_contract": (plan or {}).get("reward_contract"), "format_spec": contract}
+        )
     reward_mechanic = str(
         (plan or {}).get("reward_mechanic")
         or reward_contract.get("reward_mechanic")
-        or task_contract.get("reward_mechanic")
+        or task_model.get("reward_mechanic")
         or contract.get("reward_mechanic")
         or ""
     )
@@ -121,13 +113,13 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
     ranges = len(_RANGE_RE.findall(html))
     has_events = bool(_EVENT_RE.search(html))
     has_state = bool(_STATE_RE.search(html))
-    has_task_language = bool(_TASK_RE.search(text)) or bool(contract.get("activity_goal"))
+    has_task_language = bool(_TASK_RE.search(text)) or bool(contract.get("implementation_goal"))
     has_payoff = bool(_PAYOFF_RE.search(text)) or bool(contract.get("payoff"))
-    task_controls = task_contract.get("controls") if isinstance(task_contract.get("controls"), list) else []
-    task_state_variables = task_contract.get("state_variables") if isinstance(task_contract.get("state_variables"), list) else []
-    task_domain_objects = task_contract.get("domain_objects") if isinstance(task_contract.get("domain_objects"), list) else []
-    task_completion = str(task_contract.get("completion_condition") or "").strip()
-    payoff_scene = task_contract.get("payoff_scene") if isinstance(task_contract.get("payoff_scene"), dict) else {}
+    task_controls = task_model.get("controls") if isinstance(task_model.get("controls"), list) else []
+    task_state_variables = task_model.get("state_variables") if isinstance(task_model.get("state_variables"), list) else []
+    task_domain_objects = task_model.get("domain_objects") if isinstance(task_model.get("domain_objects"), list) else []
+    task_completion = str(task_model.get("completion_condition") or "").strip()
+    payoff_scene = task_model.get("payoff_scene") if isinstance(task_model.get("payoff_scene"), dict) else {}
     payoff_scene_text = " ".join(str(payoff_scene.get(key) or "") for key in ("trigger", "scene", "continue_action")).strip()
     if not reward_contract:
         legacy_payoff = str(contract.get("payoff") or task_completion or payoff_scene_text or "").strip()
@@ -135,7 +127,7 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             reward_mechanic = reward_mechanic or "completion_meter"
             reward_contract = {
                 "reward_mechanic": reward_mechanic,
-                "user_action": str(contract.get("activity_goal") or task_contract.get("user_goal") or "use the main action"),
+                "user_action": str(contract.get("implementation_goal") or task_model.get("user_goal") or "use the main action"),
                 "immediate_feedback": "visible state updates immediately",
                 "progress_state_change": legacy_payoff,
                 "payoff_moment": legacy_payoff,
@@ -150,7 +142,6 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
     else:
         feedback = str(reward_contract.get("immediate_feedback") or "").strip()
         continue_reason = str(reward_contract.get("continue_reason") or "").strip()
-        payoff_moment = str(reward_contract.get("payoff_moment") or "").strip()
         if not feedback or (controls > 0 and not (has_events and has_state)):
             tags.append("no_immediate_feedback")
             notes.append("reward_contract does not have clear immediate feedback in the rendered interaction")
@@ -168,11 +159,11 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             notes.append("tactile/ambient reward lacks visible completion, reset, or satisfying payoff language")
             score -= 6
 
-    if controls and ranges == controls and activity_type not in {"interactive_instrument", "simulation"}:
+    if controls and ranges == controls and format_category not in {"interactive_instrument", "simulation"}:
         tags.append("slider_only_activity")
-        notes.append("all controls are sliders, but the selected activity type should require a richer mechanic")
+        notes.append("all controls are sliders, but the selected format category should require a richer mechanic")
         score -= 28
-    elif ranges >= 3 and activity_type not in {"interactive_instrument", "simulation"}:
+    elif ranges >= 3 and format_category not in {"interactive_instrument", "simulation"}:
         tags.append("slider_dominant_activity")
         notes.append("sliders dominate the interaction surface outside an instrument/simulation activity")
         score -= 16
@@ -197,10 +188,10 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         notes.append("page does not expose a result, completion, output, score, saved state, or reveal payoff")
         score -= 14
 
-    if task_contract:
+    if task_model:
         if len(task_domain_objects) < 2:
             tags.append("task_objects_missing")
-            notes.append("task_contract does not define enough domain objects")
+            notes.append("task_model does not define enough domain objects")
             score -= 8
         elif not _has_any_term(text, task_domain_objects):
             tags.append("domain_objects_not_visible")
@@ -209,18 +200,18 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
 
         if len(task_state_variables) < 2:
             tags.append("state_model_missing")
-            notes.append("task_contract does not define enough state variables")
+            notes.append("task_model does not define enough state variables")
             score -= 8
         else:
             state_hits = sum(1 for value in task_state_variables if str(value or "").lower() in html.lower())
             if state_hits == 0:
                 tags.append("state_variables_not_implemented")
-                notes.append("generated code does not reference task_contract state variables")
+                notes.append("generated code does not reference task_model state variables")
                 score -= 12
 
         if not task_completion:
             tags.append("completion_condition_missing")
-            notes.append("task_contract does not define a completion condition")
+            notes.append("task_model does not define a completion condition")
             score -= 10
         elif not (_PAYOFF_RE.search(text) or re.search(r"\b(done|finished|complete|saved|reserved|export|win|loss|result|preview|receipt)\b", text, re.IGNORECASE)):
             tags.append("completion_condition_not_visible")
@@ -229,7 +220,7 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
 
         if not payoff_scene and not reward_contract:
             tags.append("payoff_scene_missing")
-            notes.append("task_contract does not define a specific payoff_scene")
+            notes.append("task_model does not define a specific payoff_scene")
             score -= 10
         elif not _PAYOFF_RE.search(text):
             tags.append("payoff_scene_not_visible")
@@ -254,11 +245,11 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             score -= 10
         if task_controls and controls == 0:
             tags.append("planned_controls_not_rendered")
-            notes.append("task_contract declares controls but generated UI has no controls")
+            notes.append("task_model declares controls but generated UI has no controls")
             score -= 14
     elif plan:
-        tags.append("task_contract_missing")
-        notes.append("plan lacks task_contract for goal/domain/state/control validation")
+        tags.append("task_model_missing")
+        notes.append("plan lacks task_model for goal/domain/state/control validation")
         score -= 12
 
     if _VISUAL_ONLY_RE.search(text) and not (_PAYOFF_RE.search(text) or "appendChild" in html or "classList" in html):
@@ -266,13 +257,13 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         notes.append("copy suggests controls mainly tune visual effects without meaningful outcome")
         score -= 10
 
-    if activity_type == "saas_replica":
+    if format_category == "saas_replica":
         if not re.search(r"\b(search|filter|record|table|card|workspace|project|create|save|status|team|customer|invoice|ticket)\b", text, re.IGNORECASE):
             tags.append("saas_workflow_missing")
             notes.append("saas_replica lacks an app-like workflow vocabulary or data surface")
             score -= 18
 
-    if activity_type == "product_or_storefront":
+    if format_category == "product_or_storefront":
         if not re.search(r"\b(product|price|plan|cart|checkout|buy|reserve|order|size|color|variant|quantity|ticket|stock|drop|compare)\b", text, re.IGNORECASE):
             tags.append("product_contract_missing")
             notes.append("product_or_storefront lacks product, pricing, options, or checkout vocabulary")
@@ -282,12 +273,12 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             notes.append("product_or_storefront lacks visible commerce payoff state")
             score -= 12
 
-    if activity_type in {"creative_tool", "simulation", "product_or_storefront", "saas_replica", "commerce_or_booking_flow"} and _EMPTY_START_RE.search(text):
+    if format_category in {"creative_tool", "simulation", "product_or_storefront", "saas_replica", "commerce_or_booking_flow"} and _EMPTY_START_RE.search(text):
         tags.append("blank_stage_first_paint")
         notes.append("visible copy suggests the first screen starts blank or placeholder-like")
         score -= 14
 
-    if activity_type in {"microgame", "platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
+    if format_category in {"microgame", "platformer", "snake_game", "tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
         if not re.search(r"\b(score|level|collect|timer|win|complete|restart|reset|mission|target|lives|streak|lost|cleared|mine-count)\b", text + " " + html, re.IGNORECASE):
             tags.append("game_goal_missing")
             notes.append("game activity lacks score, level, target, timer, completion, or replay signal")
@@ -361,68 +352,60 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         "case_file_sorter": r"\b(case|file|sort|evidence|folder|clue|record)\b",
         "operating_panel": r"\b(panel|operate|control|system|setting|apply|status)\b",
     }
-    pattern = variant_patterns.get(activity_variant)
+    pattern = variant_patterns.get(format_id)
     variant_visible = bool(pattern and re.search(pattern, text, re.IGNORECASE))
     if pattern and not variant_visible:
-        tags.append("activity_variant_mismatch")
-        notes.append(f"activity_variant {activity_variant} is not visibly represented")
+        tags.append("format_id_mismatch")
+        notes.append(f"format_id {format_id} is not visibly represented")
         score -= 18
         if _ABSTRACT_GLUE_RE.search(text):
             tags.append("poetic_renaming_of_known_format")
             notes.append("abstract metaphor language appears to replace the recognizable format name")
             score -= 10
 
-    semantic = (plan or {}).get("semantic_anchors") if isinstance(plan, dict) else None
-    if isinstance(semantic, dict) and semantic:
-        anchor_mentions = sum(1 for value in semantic.values() if str(value).lower() in text)
-        if anchor_mentions >= 3 and pattern and not variant_visible:
-            tags.append("semantic_anchor_overrides_activity")
-            notes.append("semantic anchors are more visible than the selected concrete activity format")
-            score -= 8
-
     reveal_terms = len(_HIDDEN_REVEAL_RE.findall(text))
-    reveal_friendly = activity_variant in {"word_guess", "case_file_sorter", "record_investigation", "timeline_compare"}
+    reveal_friendly = format_id in {"word_guess", "case_file_sorter", "record_investigation", "timeline_compare"}
     if reveal_terms >= 5 and not reveal_friendly:
         tags.append("abstract_hidden_reveal_loop")
         notes.append("hidden/reveal/archive language dominates a format that should expose a concrete activity")
         score -= 8
 
-    if activity_variant and not pattern:
-        tags.append("format_contract_missing")
-        notes.append(f"no activity-quality pattern exists for activity_variant {activity_variant}")
+    if format_id and not pattern:
+        tags.append("format_selection_missing")
+        notes.append(f"no activity-quality pattern exists for format_id {format_id}")
         score -= 6
 
-    if activity_type == "platformer":
+    if format_category == "platformer":
         if not re.search(r"\b(jump|platform|coin|collect|level|enemy|obstacle|ground)\b", text, re.IGNORECASE):
             tags.append("platformer_mechanic_missing")
             notes.append("platformer lacks jump/platform/collect/obstacle vocabulary")
             score -= 18
 
-    if activity_type == "snake_game":
+    if format_category == "snake_game":
         if not re.search(r"\b(snake|food|grow|grid|collision|score)\b", text, re.IGNORECASE):
             tags.append("snake_mechanic_missing")
             notes.append("snake_game lacks snake/food/grow/grid/collision/score vocabulary")
             score -= 18
 
-    if activity_type == "tic_tac_toe":
+    if format_category == "tic_tac_toe":
         if not re.search(r"\b(tic|toe|square|board|turn|row|winner|opponent)\b", text, re.IGNORECASE):
             tags.append("tic_tac_toe_mechanic_missing")
             notes.append("tic_tac_toe lacks board/turn/winner/opponent vocabulary")
             score -= 18
 
-    if activity_type == "quiz_game":
+    if format_category == "quiz_game":
         if not re.search(r"\b(quiz|question|answer|correct|incorrect|score|option)\b", text, re.IGNORECASE):
             tags.append("quiz_mechanic_missing")
             notes.append("quiz_game lacks question/answer/correct/score vocabulary")
             score -= 18
 
-    if activity_type == "memory_match":
+    if format_category == "memory_match":
         if not re.search(r"\b(memory|match|pair|card|flip|turn|score)\b", text, re.IGNORECASE):
             tags.append("memory_match_mechanic_missing")
             notes.append("memory_match lacks card/flip/pair/match vocabulary")
             score -= 18
 
-    if activity_type == "word_game":
+    if format_category == "word_game":
         if not re.search(r"\b(word|guess|letter|attempt|solve|hint|score)\b", text, re.IGNORECASE):
             tags.append("word_game_mechanic_missing")
             notes.append("word_game lacks word/guess/letter/attempt vocabulary")
@@ -435,8 +418,8 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
         "tags": sorted(set(tags)),
         "notes": notes,
         "metrics": {
-            "activity_type": activity_type,
-            "activity_variant": activity_variant,
+            "format_category": format_category,
+            "format_id": format_id,
             "reward_mechanic": reward_mechanic,
             "reward_contract_present": bool(reward_contract),
             "control_count": controls,
@@ -446,7 +429,7 @@ def score_activity_depth(doc: Dict[str, Any], plan: Dict[str, Any] | None = None
             "has_task_language": has_task_language,
             "has_payoff": has_payoff,
             "has_payoff_scene": bool(payoff_scene),
-            "task_contract_present": bool(task_contract),
+            "task_model_present": bool(task_model),
             "task_control_count": len(task_controls),
             "task_state_variable_count": len(task_state_variables),
             "task_domain_object_count": len(task_domain_objects),

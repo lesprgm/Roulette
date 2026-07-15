@@ -3,11 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Tuple
 
+from api.generation.quality_html import extract_doc_html, visible_text
+
 
 DESIGN_SCORE_THRESHOLD = 75
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_STYLE_SCRIPT_RE = re.compile(r"<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)>", re.IGNORECASE)
 _COLOR_RE = re.compile(r"(#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|\b(?:black|white|red|orange|yellow|green|blue|purple|pink|cyan|magenta|lime)\b)")
 _CONTROL_RE = re.compile(r"<(?:button|input|select|textarea)\b|role=['\"](?:button|slider|tab)['\"]", re.IGNORECASE)
 _PANEL_RE = re.compile(r"\b(card|panel|badge|stat|metric|telemetry|registry|dashboard|console|slot|rail|sidebar)\b", re.IGNORECASE)
@@ -27,7 +27,6 @@ _PRIMARY_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 _EMPTY_STAGE_RE = re.compile(r"\b(empty|blank|placeholder|start from scratch|slot\s+\d+|no items|0 items)\b", re.IGNORECASE)
-_TITLE_TEXT_RE = re.compile(r"<(?:title|h1|h2)[^>]*>(.*?)</(?:title|h1|h2)>", re.IGNORECASE | re.DOTALL)
 _STRUCTURAL_VISUAL_RE = re.compile(r"<(?:svg|canvas|figure)\b|<table\b", re.IGNORECASE)
 _CONTENT_VISUAL_TERM_RE = re.compile(
     r"\b(product|preview|thumbnail|gallery|image|illustration|sprite|player|enemy|target|board|grid|map|route|"
@@ -36,13 +35,6 @@ _CONTENT_VISUAL_TERM_RE = re.compile(
     re.IGNORECASE,
 )
 _CHROME_ONLY_RE = re.compile(r"\b(panel|button|badge|stat|metric|toolbar|sidebar|icon|gradient|background)\b", re.IGNORECASE)
-_MATERIAL_EMBODIMENT_RE = re.compile(
-    r"(repeating-linear-gradient|radial-gradient|linear-gradient|::before|::after|border-(?:image|style|radius)|"
-    r"box-shadow|filter|feTurbulence|feDisplacementMap|<pattern\b|<mask\b|clip-path|canvas|getContext|"
-    r"Mesh(?:Standard|Physical)?Material|texture|grain|fiber|fibre|woven|weave|stitch|stitched|thread|"
-    r"fabric|soft|padded|quilt|brushed|polished|metallic|marble|woodgrain|leather|ceramic|glassmorphism)",
-    re.IGNORECASE,
-)
 _MATERIAL_SPEC_LEAK_RE = re.compile(
     r"\b(?:material|finish|chassis material|surface material)\s*:\s*[a-z][a-z -]{2,}"
     r"|\b[a-z][a-z -]{2,}\s+finish\b"
@@ -57,22 +49,8 @@ _COPY_LIMITS = {
 }
 
 
-def _extract_html(doc: Dict[str, Any]) -> str:
-    html = doc.get("html") if isinstance(doc, dict) else ""
-    return html if isinstance(html, str) else ""
-
-
-def _visible_text(html: str) -> str:
-    stripped = _STYLE_SCRIPT_RE.sub(" ", html or "")
-    return re.sub(r"\s+", " ", _TAG_RE.sub(" ", stripped)).strip()
-
-
 def _word_count(text: str) -> int:
     return len(re.findall(r"\b[\w'-]+\b", text or ""))
-
-
-def _title_text(html: str) -> str:
-    return " ".join(re.sub(r"\s+", " ", _TAG_RE.sub(" ", match)).strip() for match in _TITLE_TEXT_RE.findall(html or ""))
 
 
 def _contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -82,7 +60,16 @@ def _contract(plan: Dict[str, Any] | None) -> Dict[str, Any]:
     return contract if isinstance(contract, dict) else {}
 
 
-def _copy_limit(contract: Dict[str, Any]) -> Tuple[str, int]:
+def _copy_limit(plan: Dict[str, Any] | None, contract: Dict[str, Any]) -> Tuple[str, int]:
+    visual_spec = plan.get("visual_spec") if isinstance(plan, dict) else None
+    copy_budget = visual_spec.get("copy_budget") if isinstance(visual_spec, dict) else None
+    if isinstance(copy_budget, dict):
+        try:
+            maximum = int(copy_budget.get("max_visible_words") or 0)
+        except (TypeError, ValueError):
+            maximum = 0
+        if maximum > 0:
+            return "format_budget", maximum
     density = str(contract.get("copy_density") or "medium")
     return density, _COPY_LIMITS.get(density, _COPY_LIMITS["medium"])
 
@@ -92,10 +79,10 @@ def _has_content_visual_artifact(html: str, text: str, plan: Dict[str, Any] | No
         return True
     if _CONTENT_VISUAL_TERM_RE.search(text):
         return True
-    activity = (plan or {}).get("activity_contract") if isinstance(plan, dict) else None
+    activity = (plan or {}).get("format_spec") if isinstance(plan, dict) else None
     if isinstance(activity, dict):
-        variant = str(activity.get("activity_variant") or "").replace("_", " ")
-        family = str(activity.get("activity_family") or "").replace("_", " ")
+        variant = str(activity.get("format_id") or "").replace("_", " ")
+        family = str(activity.get("format_family") or "").replace("_", " ")
         if variant and variant in text.lower():
             return True
         if family and family in text.lower():
@@ -104,8 +91,8 @@ def _has_content_visual_artifact(html: str, text: str, plan: Dict[str, Any] | No
 
 
 def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    html = _extract_html(doc)
-    text = _visible_text(html)
+    html = extract_doc_html(doc)
+    text = visible_text(html)
     lower_text = text.lower()
     contract = _contract(plan)
     tags: List[str] = []
@@ -113,7 +100,7 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
     score = 100
     control_count = len(_CONTROL_RE.findall(html))
 
-    copy_density, copy_limit = _copy_limit(contract)
+    copy_density, copy_limit = _copy_limit(plan, contract)
     words = _word_count(text)
     if words > copy_limit:
         tags.append("copy_over_budget")
@@ -166,7 +153,7 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
 
     if _MATERIAL_SPEC_LEAK_RE.search(text):
         tags.append("material_spec_label_leakage")
-        notes.append("material anchor appears as generic spec-label copy instead of embodied surface/form")
+        notes.append("generic material/spec label leaked into a page instead of supported surface/form")
         score -= 10
 
     if control_count and not _PRIMARY_ACTION_RE.search(text):
@@ -197,25 +184,6 @@ def score_design_discipline(doc: Dict[str, Any], plan: Dict[str, Any] | None = N
         tags.append("weak_content_visual")
         notes.append("visible content names a format, but UI chrome appears to dominate over a primary visual object/stage")
         score -= 6
-
-    semantic = (plan or {}).get("semantic_anchors") if isinstance(plan, dict) else None
-    if isinstance(semantic, dict) and semantic:
-        matched = sum(1 for value in semantic.values() if str(value).lower() in lower_text)
-        if matched >= 3 and control_count < 2:
-            tags.append("semantic_anchors_only_decorative")
-            notes.append("semantic anchors are visible as surface labels but interaction appears thin")
-            score -= 8
-        title_text = _title_text(html).lower()
-        anchor_in_title = any(
-            (term := str(value or "").strip().lower()) and term in title_text
-            for value in semantic.values()
-        )
-        if anchor_in_title and not _MATERIAL_EMBODIMENT_RE.search(html):
-            tags.append("semantic_anchor_label_only")
-            notes.append(
-                "semantic anchor appears in title/heading but no material, texture, shape, motion, or metaphor embodiment cues were found"
-            )
-            score -= 12
 
     return {
         "score": max(0, min(100, score)),

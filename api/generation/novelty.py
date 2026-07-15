@@ -5,18 +5,18 @@ import os
 import re
 import time
 from collections import Counter
-from pathlib import Path
 from typing import Any, Dict, List
 
+from api.generation.quality_html import extract_doc_html, visible_text
 from api.quality import extract_review_metrics
+from api.settings import SETTINGS
 
 
-LEDGER_PATH = Path(os.getenv("NOVELTY_LEDGER_PATH", "cache/novelty_ledger.json"))
-LEDGER_SIZE = max(10, int(os.getenv("NOVELTY_LEDGER_SIZE", "80") or 80))
+LEDGER_PATH = SETTINGS.storage.novelty_ledger_path
+LEDGER_SIZE = SETTINGS.storage.novelty_ledger_size
 
 _WORD_RE = re.compile(r"\b[a-z][a-z0-9-]{3,}\b", re.IGNORECASE)
 _TITLE_RE = re.compile(r"<(?:title|h1)[^>]*>(.*?)</(?:title|h1)>", re.IGNORECASE | re.DOTALL)
-_TAG_RE = re.compile(r"<[^>]+>")
 
 _GENERIC_WORDS = {
     "with",
@@ -34,25 +34,8 @@ _GENERIC_WORDS = {
 }
 
 
-def _doc_html(doc: Dict[str, Any]) -> str:
-    if not isinstance(doc, dict):
-        return ""
-    html = doc.get("html")
-    if isinstance(html, str):
-        return html
-    comps = doc.get("components")
-    if isinstance(comps, list):
-        parts: List[str] = []
-        for comp in comps:
-            props = comp.get("props") if isinstance(comp, dict) else None
-            if isinstance(props, dict) and isinstance(props.get("html"), str):
-                parts.append(props["html"])
-        return "\n".join(parts)
-    return ""
-
-
 def _clean_text(html: str) -> str:
-    return re.sub(r"\s+", " ", _TAG_RE.sub(" ", html or "")).strip().lower()
+    return visible_text(html, lowercase=True)
 
 
 def _dominant_terms(html: str, limit: int = 8) -> List[str]:
@@ -73,7 +56,7 @@ def _title_terms(html: str) -> List[str]:
 
 
 def fingerprint_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
-    html = _doc_html(doc)
+    html = extract_doc_html(doc)
     metrics = extract_review_metrics(doc)
     flags = metrics.get("quality_flags", {})
     layout = metrics.get("layout_metrics", {})

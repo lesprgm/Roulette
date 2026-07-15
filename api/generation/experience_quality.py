@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Set
 
+from api.generation.quality_html import extract_doc_html, visible_text
+
 
 EXPERIENCE_SCORE_THRESHOLD = 75
 
@@ -20,7 +22,6 @@ EXPERIENCE_QUALITY_WEIGHTS = {
     "word_salad_risk_low": 5,
 }
 
-_TAG_RE = re.compile(r"<[^>]+>")
 _TITLE_RE = re.compile(r"<(?:title|h1|h2)[^>]*>(.*?)</(?:title|h1|h2)>", re.IGNORECASE | re.DOTALL)
 _CONTROL_RE = re.compile(r"(<button\b|<input\b|<select\b|<textarea\b|role=['\"](?:button|slider|tab)['\"])", re.IGNORECASE)
 _EVENT_RE = re.compile(
@@ -47,30 +48,6 @@ _CUE_RE = re.compile(
     re.IGNORECASE,
 )
 _WORD_RE = re.compile(r"\b[a-z][a-z0-9-]{3,}\b", re.IGNORECASE)
-
-
-def _extract_html(doc: Dict[str, Any]) -> str:
-    if not isinstance(doc, dict):
-        return ""
-    html = doc.get("html")
-    if isinstance(html, str):
-        return html
-    components = doc.get("components")
-    if isinstance(components, list):
-        chunks: List[str] = []
-        for comp in components:
-            props = comp.get("props") if isinstance(comp, dict) else None
-            chunk = props.get("html") if isinstance(props, dict) else None
-            if isinstance(chunk, str):
-                chunks.append(chunk)
-        return "\n".join(chunks)
-    return ""
-
-
-def _visible_text(html: str) -> str:
-    without_scripts = re.sub(r"<script\b[^>]*>[\s\S]*?</script>", " ", html or "", flags=re.IGNORECASE)
-    without_styles = re.sub(r"<style\b[^>]*>[\s\S]*?</style>", " ", without_scripts, flags=re.IGNORECASE)
-    return re.sub(r"\s+", " ", _TAG_RE.sub(" ", without_styles)).strip().lower()
 
 
 def _keywords(value: Any, limit: int = 8) -> Set[str]:
@@ -100,24 +77,9 @@ def _required_loop_fields_present(loop: Dict[str, Any]) -> bool:
     ))
 
 
-def _semantic_translation_integrated(plan: Dict[str, Any], text: str) -> bool:
-    translation = plan.get("semantic_translation") if isinstance(plan, dict) else None
-    if not isinstance(translation, dict) or not translation:
-        return False
-    matched = 0
-    for anchor, roles in translation.items():
-        terms = _keywords(anchor, limit=4)
-        if isinstance(roles, dict):
-            for role_text in roles.values():
-                terms.update(_keywords(role_text, limit=6))
-        if any(term in text for term in terms):
-            matched += 1
-    return matched >= max(1, min(2, len(translation)))
-
-
 def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    html = _extract_html(doc)
-    text = _visible_text(html)
+    html = extract_doc_html(doc)
+    text = visible_text(html, lowercase=True)
     plan = plan if isinstance(plan, dict) else {}
     loop = _plan_primary_loop(plan)
     reasons: List[str] = []
@@ -196,13 +158,8 @@ def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) ->
         score += EXPERIENCE_QUALITY_WEIGHTS["word_salad_risk_low"]
         reasons.append("low word-salad risk")
 
-    semantic_integration = _semantic_translation_integrated(plan, text)
-    flags["semantic_integration"] = semantic_integration
-    if not semantic_integration and plan.get("semantic_translation"):
-        reasons.append("semantic anchors weakly integrated")
-
-    task_contract = plan.get("task_contract") if isinstance(plan.get("task_contract"), dict) else {}
-    payoff_scene = task_contract.get("payoff_scene") if isinstance(task_contract.get("payoff_scene"), dict) else {}
+    task_model = plan.get("task_model") if isinstance(plan.get("task_model"), dict) else {}
+    payoff_scene = task_model.get("payoff_scene") if isinstance(task_model.get("payoff_scene"), dict) else {}
     payoff_scene_visible = bool(payoff_scene) and bool(_PAYOFF_RE.search(text))
     flags["payoff_scene_visible"] = payoff_scene_visible
     if payoff_scene and payoff_scene_visible:
@@ -232,7 +189,6 @@ def score_experience(doc: Dict[str, Any], plan: Dict[str, Any] | None = None) ->
             "has_controls": bool(_CONTROL_RE.search(html)),
             "has_event_handlers": bool(_EVENT_RE.search(html)),
             "has_state_updates": bool(_STATE_RE.search(html)),
-            "semantic_integration": semantic_integration,
             "payoff_scene_visible": payoff_scene_visible,
         },
     }
