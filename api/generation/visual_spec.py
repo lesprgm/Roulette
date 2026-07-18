@@ -25,15 +25,36 @@ PALETTE_SYSTEMS: Dict[str, Dict[str, str]] = {
 }
 
 
-_CATEGORY_VISUALS = {
-    "game": (["canvas_scene", "canvas_scene", "canvas_scene", "inline_svg", "inline_svg"], ["inline_svg", "gsap_motion"], "game board, pieces, targets, and score state"),
-    "product": (["inline_svg", "inline_svg", "canvas_scene"], ["paper_surface", "gsap_motion"], "product object, option state, and cart or receipt"),
-    "commerce": (["inline_svg", "canvas_scene", "inline_svg"], ["gsap_motion", "alpine_state"], "selected items, route or ticket, and checkout result"),
-    "creative_tool": (["canvas_scene", "canvas_scene", "canvas_scene", "inline_svg", "inline_svg"], ["inline_svg", "gsap_motion"], "created artifact, active tool, and export or save result"),
-    "simulation": (["canvas_scene", "canvas_scene", "canvas_scene", "inline_svg", "inline_svg"], ["paper_surface", "gsap_motion"], "reactive scene, changed material state, and reset result"),
-    "investigation": (["inline_svg", "inline_svg", "inline_svg", "canvas_scene", "canvas_scene"], ["gsap_motion", "alpine_state"], "evidence objects, selected record, and solved or saved state"),
-    "app": (["inline_svg", "canvas_scene", "inline_svg"], ["alpine_state", "gsap_motion"], "real starter records, selection, and saved workflow result"),
+_SUBJECTS = {
+    "game": "game board, pieces, targets, and score state",
+    "product": "product object, option state, and cart or receipt",
+    "commerce": "selected items, route or ticket, and checkout result",
+    "creative_tool": "created artifact, active tool, and export or save result",
+    "simulation": "reactive scene, changed material state, and reset result",
+    "investigation": "evidence objects, selected record, and solved or saved state",
+    "app": "real starter records, selection, and saved workflow result",
 }
+
+_CANVAS_TOOLS = {"falling_sand_lab", "drawing_studio", "room_layout_builder"}
+_SVG_TOOLS = {"map_route_planner", "poster_generator", "avatar_customizer"}
+
+
+def _renderer_profile(format_id: str, category: str, library_profile: str) -> tuple[str, list[str]]:
+    if category in {"app", "commerce", "product", "investigation"}:
+        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
+    if category == "creative_tool":
+        if format_id in _CANVAS_TOOLS:
+            return "canvas_scene", ["semantic_dom", "inline_svg", "gsap_motion"]
+        if format_id in _SVG_TOOLS:
+            return "inline_svg", ["semantic_dom", "alpine_state", "gsap_motion"]
+        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
+    if library_profile == "matter_physics_game":
+        return "matter_scene", ["semantic_dom", "gsap_motion"]
+    if library_profile in {"three_orbit_scene", "three_bloom_scene"}:
+        return "three_scene", ["semantic_dom", "gsap_motion"]
+    if library_profile in {"dom_css_state_machine", "alpine_ui_state", "gsap_state_transition", "gsap_timeline_dom"}:
+        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
+    return "canvas_scene", ["semantic_dom", "inline_svg", "gsap_motion"]
 
 
 def _first_available(candidates: Iterable[str], reserved: set[str], rng: random.Random) -> str:
@@ -47,14 +68,14 @@ def visual_spec_for_target(
     format_category: str,
     format_id: str,
     task_model: Mapping[str, Any],
+    library_profile: str = "",
     reserved: Mapping[str, Iterable[str]] | None = None,
 ) -> Dict[str, Any]:
     """Build a compact visual specification from the selected format."""
     rng = random.Random(f"{seed}:{format_id}:visual-specification")
     used = {key: set(values) for key, values in (reserved or {}).items()}
     category = category_for_format(format_id, format_category)
-    primary_renderers, supporting, fallback_subject = _CATEGORY_VISUALS[category]
-    primary = _first_available(primary_renderers, used.get("primary_renderers", set()), rng)
+    primary, supporting = _renderer_profile(format_id, category, library_profile)
     palette_id = _first_available(PALETTE_SYSTEMS.keys(), used.get("palettes", set()), rng)
     layout_model = layout_model_for_target(
         seed=seed,
@@ -65,7 +86,7 @@ def visual_spec_for_target(
         recent_rendered_families=used.get("rendered_layout_families", set()),
     )
     objects = [str(value).replace("_", " ") for value in task_model.get("domain_objects", []) if str(value).strip()]
-    subject = ", ".join(objects[:3]) or fallback_subject
+    subject = ", ".join(objects[:3]) or _SUBJECTS[category]
     return {
         "palette_id": palette_id,
         "palette": PALETTE_SYSTEMS[palette_id],

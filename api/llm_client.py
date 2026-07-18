@@ -429,7 +429,6 @@ def generate_page_premium_burst(
         "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:12],
         "silhouette_families": [],
         "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
-        "primary_renderers": list(memory.get("primary_renderers") or [])[:1],
     }
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
@@ -439,7 +438,7 @@ def generate_page_premium_burst(
         target["seed"] = site_seed
         targets.append(target)
         spec = target.get("visual_spec") if isinstance(target.get("visual_spec"), dict) else {}
-        for key, spec_key in (("palettes", "palette_id"), ("layout_signatures", "composition"), ("primary_renderers", "primary_renderer")):
+        for key, spec_key in (("palettes", "palette_id"), ("layout_signatures", "composition")):
             value = str(spec.get(spec_key) or "").strip()
             if value and value not in visual_reservations[key]:
                 visual_reservations[key].append(value)
@@ -601,7 +600,6 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
             "palettes": memory.get("visual_palettes") or [],
             "layout_signatures": memory.get("layout_signatures") or memory.get("compositions") or [],
             "rendered_layout_families": memory.get("rendered_layout_families") or [],
-            "primary_renderers": memory.get("primary_renderers") or [],
         }
         target = seeded_format_first_target(
             seed,
@@ -622,6 +620,7 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
         format_category=str(target["format_category"]),
         format_id=str(target["format_spec"]["format_id"]),
         task_model=task,
+        library_profile=str(target["format_spec"].get("library_profile") or ""),
         reserved=visual_reservations,
     )
     return {

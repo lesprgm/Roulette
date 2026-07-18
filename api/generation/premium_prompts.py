@@ -25,8 +25,11 @@ In <self_review>, list only failures you found and corrected. Apply every correc
 VISUAL_ARTIFACT_GUIDANCE = """
 Visual subject rules:
 - The target's visual_spec.visual_subject is visible on first paint and changes with state, selection, progress, or payoff.
+- `semantic_dom` means the product is built from semantic HTML, CSS layout, real records or products, and task state. Use Alpine only where its declarative state improves the workflow; do not replace the interface with a decorative Canvas.
 - `inline_svg` means original SVG illustration, map, board, product, or record visualization; icons alone do not count.
 - `canvas_scene` means an initial rendered board, drawing, map, product view, or simulation scene; never an empty canvas.
+- `matter_scene` means Matter.js owns visible physics, collisions, scoring, and reset while semantic DOM supplies only the necessary HUD and controls.
+- `three_scene` means Three.js owns a genuinely spatial subject or interaction; do not use it for ordinary app, product, or commerce chrome.
 - `paper_surface` means one named material surface using local Paper Shaders and `mountPaperShader(...)` with CSS fallback, never full-page wallpaper.
 - `gsap_motion` means one state-linked reveal, transition, route, transformation, or payoff.
 - `alpine_state` means task state such as cart, filter, drawer, selection, or configuration visibly drives the subject and result.
@@ -102,7 +105,7 @@ def _build_rules() -> str:
     return f"""
 Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
-- The visual_spec is mandatory. Treat its palette values as anchor colors and derive a coherent tonal system with tints, shades, translucent states, and localized contrast where useful. Build its visual subject using the primary renderer, then apply the listed supporting renderers only where useful.
+- The visual_spec is mandatory. Treat its palette values as anchor colors and derive a coherent tonal system with tints, shades, translucent states, and localized contrast where useful. Build the task itself using the primary renderer, then apply listed supporting renderers only where they add meaningful artwork, state feedback, or motion.
 - Implement visual_spec.layout_model as a page topology: honor its viewport contract, region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
 - Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.

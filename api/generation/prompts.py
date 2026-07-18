@@ -43,14 +43,14 @@ PREMIUM INTROS:
 - GSAP creates one state-linked reveal, transformation, or payoff. Do not hide all content until animation completes.
 
 CANONICAL CANVAS TEMPLATE:
-- Use Canvas for game boards, drawing tools, maps, product views, and simulations. Render a complete initial frame before interaction.
+- Use Canvas for game boards, drawing surfaces, and genuine simulations. Render a complete initial frame before interaction. Do not use Canvas as the primary surface for ordinary apps, commerce, booking, product pages, or record workflows.
 """.strip()
 
 
 PREMIUM_STYLE_GUIDANCE = """
 PREMIUM BUILD GUIDANCE:
 - The concrete format is the product. Use the task model and visual specification as the source of truth.
-- Build the named primary subject with the visual specification's primary renderer, then use supporting renderers only where they reinforce that subject or its state changes.
+- Build the task itself with the visual specification's primary renderer, then use supporting renderers only where they reinforce its subject or state changes. `semantic_dom` means real HTML/CSS controls, records, products, and workflow state; it is not permission to make a generic dashboard.
 - Use `visual_spec.palette` as an anchor system. Derive coherent tonal variants for hierarchy and state instead of repeating generic white cards, and use `surface_ink` on the supplied surface color.
 - Implement `visual_spec.layout_model` as a page-level topology: apply its silhouette family and viewport contract fields directly to `html`, `body`, and `#ndw-content`, then preserve its region hierarchy, source order, control placement, result transition, and mobile transformation without reusing a forbidden shell.
 - Size `#ndw-content` around the selected topology and useful content. Avoid both a narrow centered card and artificially enlarged empty regions.
