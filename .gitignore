@@ -27,6 +27,7 @@ pnpm-debug.log*
 data/variant_weights.yaml
 data/variant_catalog.yaml
 data/variants/*.yaml
+data/layout_topologies.yaml
 
 # Build artifacts
 dist/
