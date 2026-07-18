@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import re
 from pathlib import Path
@@ -11,7 +12,14 @@ from api.generation.layout_model import copy_budget_for_category, layout_model_f
 from api.generation.task_model import category_for_format
 
 
-_COLOR_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "color_strategies.yaml"
+_LOCAL_COLOR_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "color_strategies.yaml"
+_SECRET_COLOR_CATALOG_PATH = Path("/etc/secrets/color_strategies.yaml")
+_CONFIGURED_COLOR_CATALOG_PATH = os.getenv("COLOR_STRATEGIES_PATH", "").strip()
+_COLOR_CATALOG_PATH = (
+    Path(_CONFIGURED_COLOR_CATALOG_PATH).expanduser()
+    if _CONFIGURED_COLOR_CATALOG_PATH
+    else _SECRET_COLOR_CATALOG_PATH if _SECRET_COLOR_CATALOG_PATH.exists() else _LOCAL_COLOR_CATALOG_PATH
+)
 _COLOR_ROLES = {"background", "surface", "ink", "surface_ink", "action", "secondary"}
 _COLOR_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
