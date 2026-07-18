@@ -46,8 +46,6 @@ def _float(name: str, default: float, *, minimum: Optional[float] = None) -> flo
 @dataclass(frozen=True)
 class LlmSettings:
     temperature: float
-    burst_site_count: int
-    max_tokens: int
     timeout_seconds: int
     gemini_max_output_tokens: int
     premium_build_max_output_tokens: int
@@ -138,8 +136,6 @@ def load_settings() -> Settings:
     return Settings(
         llm=LlmSettings(
             temperature=_float("TEMPERATURE", 1.5, minimum=0.0),
-            burst_site_count=_int("BURST_SITE_COUNT", 10, minimum=1, maximum=50),
-            max_tokens=_int("LLM_MAX_TOKENS", 15_000, minimum=1),
             timeout_seconds=_int("LLM_TIMEOUT_SECS", 105, minimum=1),
             gemini_max_output_tokens=_int("GEMINI_MAX_OUTPUT_TOKENS", 64_000, minimum=1),
             premium_build_max_output_tokens=_int("GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS", 0, minimum=0),
@@ -167,7 +163,7 @@ def load_settings() -> Settings:
             premium_enabled=_bool("PREMIUM_QUEUE_ENABLED", True),
             premium_low_water=_int("PREMIUM_LOW_WATER", 3, minimum=0),
             premium_fill_to=_int("PREMIUM_FILL_TO", 10, minimum=1),
-            premium_batch_size=_int("PREMIUM_BATCH_SIZE", 10, minimum=1, maximum=50),
+            premium_batch_size=_int("PREMIUM_BATCH_SIZE", 7, minimum=1, maximum=50),
             premium_topup_enabled=_bool("PREMIUM_TOPUP_ENABLED", False),
         ),
         rate_limit=RateLimitSettings(

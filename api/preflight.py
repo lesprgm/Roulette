@@ -25,6 +25,11 @@ _ALPINE_SCRIPT_RE = re.compile(
     r"<script\b[^>]*\bsrc\s*=\s*['\"]/static/vendor/alpine\.min\.js['\"][^>]*>",
     re.IGNORECASE,
 )
+_SVG_RE = re.compile(r"<svg\b[^>]*>(.*?)</svg\s*>", re.IGNORECASE | re.DOTALL)
+_ALPINE_SVG_TEMPLATE_RE = re.compile(
+    r"<template\b[^>]*\bx-(?:if|for)\s*=",
+    re.IGNORECASE,
+)
 _ID_RE = re.compile(r'\bid\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _CLASS_RE = re.compile(r'\bclass\s*=\s*("([^"]+)"|\'([^\']+)\')', re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -565,6 +570,14 @@ def _inspect_html(
             )
         )
     issues.extend(_check_alpine_state_order(html, field=field))
+    if any(_ALPINE_SVG_TEMPLATE_RE.search(svg) for svg in _SVG_RE.findall(html or "")):
+        issues.append(
+            _issue(
+                "block",
+                field,
+                "Alpine x-if/x-for templates inside SVG can leave the visual subject blank; render SVG variants with static markup or plain JavaScript.",
+            )
+        )
 
     visible_text = _visible_text(html)
     if _VISIBLE_CODE_ARTIFACT_RE.search(visible_text):

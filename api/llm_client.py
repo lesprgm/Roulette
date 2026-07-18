@@ -64,8 +64,6 @@ def _testing_stub_enabled() -> bool:
 log = logging.getLogger(__name__)
 
 TEMPERATURE = SETTINGS.llm.temperature
-BURST_SITE_COUNT = SETTINGS.llm.burst_site_count
-LLM_MAX_TOKENS = SETTINGS.llm.max_tokens
 LLM_TIMEOUT_SECS = SETTINGS.llm.timeout_seconds
 GEMINI_MAX_OUTPUT_TOKENS = SETTINGS.llm.gemini_max_output_tokens
 GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS = SETTINGS.llm.premium_build_max_output_tokens
@@ -425,10 +423,10 @@ def generate_page_premium_burst(
     )
     targets = []
     visual_reservations: Dict[str, List[str]] = {
-        "palettes": list(memory.get("visual_palettes") or [])[:4],
         "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:12],
-        "silhouette_families": [],
+        "silhouette_families": list(memory.get("silhouette_families") or [])[:8],
         "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
+        "surface_treatments": list(memory.get("surface_treatments") or [])[:1],
     }
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
@@ -438,13 +436,16 @@ def generate_page_premium_burst(
         target["seed"] = site_seed
         targets.append(target)
         spec = target.get("visual_spec") if isinstance(target.get("visual_spec"), dict) else {}
-        for key, spec_key in (("palettes", "palette_id"), ("layout_signatures", "composition")):
+        for key, spec_key in (("layout_signatures", "composition"),):
             value = str(spec.get(spec_key) or "").strip()
             if value and value not in visual_reservations[key]:
                 visual_reservations[key].append(value)
         silhouette_family = str((spec.get("layout_model") or {}).get("silhouette_family") or "").strip()
         if silhouette_family and silhouette_family not in visual_reservations["silhouette_families"]:
             visual_reservations["silhouette_families"].append(silhouette_family)
+        surface_mode = str(((spec.get("visual_direction") or {}).get("surface_treatment") or {}).get("mode") or "").strip()
+        if surface_mode == "paper_shader" and surface_mode not in visual_reservations["surface_treatments"]:
+            visual_reservations["surface_treatments"].append(surface_mode)
 
     parts: List[Dict[str, Any]] = [{"text": _build_premium_burst_prompt(brief or "", seed_val, targets)}]
     generation_config: Dict[str, Any] = {
@@ -597,9 +598,10 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
     else:
         memory = recent_format_memory(limit=20)
         visual_reservations = {
-            "palettes": memory.get("visual_palettes") or [],
             "layout_signatures": memory.get("layout_signatures") or memory.get("compositions") or [],
+            "silhouette_families": memory.get("silhouette_families") or [],
             "rendered_layout_families": memory.get("rendered_layout_families") or [],
+            "surface_treatments": memory.get("surface_treatments") or [],
         }
         target = seeded_format_first_target(
             seed,

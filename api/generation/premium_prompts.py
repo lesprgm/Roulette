@@ -14,7 +14,7 @@ Repair audit before final HTML:
 5. First paint: the primary subject, real starter content, and usable controls are visible immediately; Canvas/SVG scenes draw a complete initial frame without waiting for interaction.
 6. Payoff: the primary loop can reach its declared completion/payoff, keeps the result visible, and offers the declared reset, replay, save, checkout, or continue action.
 7. Games: verify rules, score/progress, collision or answer logic, failure/completion, restart, and keyboard/touch controls. Apps/tools/commerce: verify create/select/filter/configure/save and visible result or confirmation flows.
-8. Visual and layout: use the assigned palette anchors and primary renderer, then implement the layout model's silhouette family, source order, control placement, result transition, and viewport contract. Inspect the final root CSS: display, columns, rows, edge anchors, and scroll axis must match the contract, and none of its forbidden shells may appear. Do not fall back to a generic hero, stage-plus-sidebar, or centered app shell. Empty Canvas, wallpaper, particles, and oversized color fields do not count as meaningful content.
+8. Visual and layout: implement visual_direction.subject_artwork, palette_behavior, and the selected surface_treatment, then implement the layout model's silhouette family, source order, control placement, result transition, and viewport contract. If surface_treatment.mode is `paper_shader`, verify exactly one named subject mounts the local shader, has a CSS fallback, and is not full-page wallpaper. Inspect the final root CSS: display, columns, rows, edge anchors, and scroll axis must match the contract, and none of its forbidden shells may appear. Inspect the page with its text mentally blurred: the subject must remain recognizable through content-bearing artwork, objects, previews, diagrams, or scenes. Empty Canvas, icons, wallpaper, particles, oversized color fields, and repeated bordered panels do not count as meaningful content.
 9. Copy: stay under copy_budget.max_visible_words, keep headings and instructions within their limits, and remove paragraphs that merely explain obvious controls.
 10. Runtime: use only required local libraries, valid load order, bounded animation/canvas work, and no script error that prevents later handlers from registering.
 11. Discipline: retain the recognizable format and remove blank panels, placeholders, dead controls, footer chrome, fake telemetry, planning language, `//`, TODO, undefined, and null.
@@ -25,8 +25,10 @@ In <self_review>, list only failures you found and corrected. Apply every correc
 VISUAL_ARTIFACT_GUIDANCE = """
 Visual subject rules:
 - The target's visual_spec.visual_subject is visible on first paint and changes with state, selection, progress, or payoff.
+- Implement visual_spec.visual_direction.subject_artwork. A semantic-DOM page still needs task-native imagery, previews, diagrams, charts, maps, object illustrations, or other information-bearing visuals when its format calls for them.
+- Use as many content-bearing visual elements as the composition needs. Do not reduce a product, destination, game world, or creative artifact to an icon, colored circle, or text label.
 - `semantic_dom` means the product is built from semantic HTML, CSS layout, real records or products, and task state. Use Alpine only where its declarative state improves the workflow; do not replace the interface with a decorative Canvas.
-- `inline_svg` means original SVG illustration, map, board, product, or record visualization; icons alone do not count.
+- `inline_svg` means original SVG illustration, map, board, product, or record visualization; icons alone do not count. Its complete initial artwork must be static SVG markup. Update named SVG groups with plain JavaScript; never put `<template>`, Alpine directives, or Alpine-bound attributes inside SVG.
 - `canvas_scene` means an initial rendered board, drawing, map, product view, or simulation scene; never an empty canvas.
 - `matter_scene` means Matter.js owns visible physics, collisions, scoring, and reset while semantic DOM supplies only the necessary HUD and controls.
 - `three_scene` means Three.js owns a genuinely spatial subject or interaction; do not use it for ordinary app, product, or commerce chrome.
@@ -92,7 +94,7 @@ def _prompt_target(target: Dict[str, Any]) -> Dict[str, Any]:
 
 def _output_protocol(index: int) -> str:
     return f"""===NDW_SITE_{index}_START===
-<plan>Four short bullets: subject, controls/state, render stack, payoff.</plan>
+<plan>Four short bullets: subject artwork; palette/type/surface identity; controls/state; payoff/motion.</plan>
 <self_review>Concrete corrections applied to the final HTML.</self_review>
 ```html
 <!doctype html>
@@ -105,14 +107,16 @@ def _build_rules() -> str:
     return f"""
 Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
-- The visual_spec is mandatory. Treat its palette values as anchor colors and derive a coherent tonal system with tints, shades, translucent states, and localized contrast where useful. Build the task itself using the primary renderer, then apply listed supporting renderers only where they add meaningful artwork, state feedback, or motion.
+- The visual_spec is mandatory. Treat its palette as a coherent strategy, not a requirement to display every supplied color. White space, neutral surfaces, and single-hue tonal depth are intentional when selected. Implement subject_artwork and the selected surface_treatment, then build the task with the primary renderer and use supporting renderers for meaningful artwork, state feedback, or motion. A `none` surface treatment means do not invent one.
+- Use as many content-bearing visual elements as the composition needs. Original inline SVG, CSS illustration, Canvas, charts, diagrams, and task-native library output are allowed; Lucide icons, wallpaper, and color fields do not count by themselves.
+- Choose one typography composition and one surface/component language that fit this site's format and artwork. These are authored decisions, not extra random themes: vary type scale, alignment, casing, border use, corner treatment, shadow behavior, and spacing as one coherent system. Do not default to rounded outlined panels.
 - Implement visual_spec.layout_model as a page topology: honor its viewport contract, region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
 - Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
 - Games show the board/stage/player/targets and score immediately. Apps, commerce, and products show real starter content and one useful action immediately.
 - Keep the main page light unless a game/canvas playfield needs contrast. Do not substitute generic white-card/dashboard layouts for the assigned composition.
-- Use `surface_ink` for text on the supplied surface color. Do not dilute every palette into a pale background plus near-white cards; use decisive color blocking and readable chromatic contrast.
+- Use `surface_ink` for text on a colored surface. Use the least color needed to support the subject, hierarchy, and state; novelty must come from the experience and composition, not forced chromatic variety.
 - Use `/static/design-kit/fonts.css` for local fonts. Do not use emoji as primary artwork or invent asset paths.
 - Include reset/replay and touch fallback where the task declares them.
 
@@ -163,6 +167,7 @@ Per-site backend targets:
 Burst layout manifest:
 {json.dumps(layout_manifest, separators=(',', ':'), ensure_ascii=True)}
 Before coding, compare this manifest across the whole batch. Implement each silhouette family's root tracks at the page root and make the resulting outlines visibly different; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
+Silently compare the visual identities across the batch as well. Do not repeat the same typography composition or component language on neighboring sites. In particular, one site's thick outlined rounded panels cannot become the burst-wide default.
 
 {_build_rules()}
 
@@ -197,7 +202,7 @@ def build_premium_page_prompt(
     return f"""
 Build one premium interactive mini-site.
 Output only this compact protocol:
-<plan>Four short bullets: subject, controls/state, render stack, payoff.</plan>
+<plan>Four short bullets: subject artwork; palette/type/surface identity; controls/state; payoff/motion.</plan>
 <self_review>Concrete corrections applied to the final HTML.</self_review>
 ```html
 <!doctype html>
