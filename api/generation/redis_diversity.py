@@ -104,12 +104,24 @@ def _rendered_layout_family(html: str) -> str:
     features: List[str] = []
     if "<aside" in lower or re.search(r"\b(sidebar|side-rail|control-rail)\b", lower):
         features.append("side_region")
-    if re.search(r"position\s*:\s*fixed", lower):
-        features.append("fixed_layer")
-    if re.search(r"grid-template-(?:areas|columns)", lower):
+    if re.search(r"position\s*:\s*(?:absolute|fixed)", lower):
+        features.append("layered")
+    if re.search(r"grid-template-areas", lower):
+        features.append("named_grid")
+    elif re.search(r"grid-template-columns", lower):
         features.append("explicit_grid")
+    if re.search(r"flex-direction\s*:\s*column", lower):
+        features.append("vertical_flow")
+    if re.search(r"flex-direction\s*:\s*row", lower):
+        features.append("horizontal_flow")
     if re.search(r"\b(bottom-sheet|bottom-dock|dock)\b", lower):
         features.append("bottom_dock")
+    if re.search(r"\b(timeline|journey|progress-path|stepper)\b", lower):
+        features.append("progressive_path")
+    if re.search(r"\b(gallery|masonry|media-sequence)\b", lower):
+        features.append("gallery")
+    if re.search(r"\b(map|route-canvas|map-stage)\b", lower):
+        features.append("map_stage")
     if re.search(r"\b(modal|dialog)\b", lower):
         features.append("modal_payoff")
     if "<canvas" in lower:
