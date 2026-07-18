@@ -427,6 +427,7 @@ def generate_page_premium_burst(
     visual_reservations: Dict[str, List[str]] = {
         "palettes": list(memory.get("visual_palettes") or [])[:4],
         "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:12],
+        "silhouette_families": [],
         "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
         "primary_renderers": list(memory.get("primary_renderers") or [])[:1],
     }
@@ -442,6 +443,9 @@ def generate_page_premium_burst(
             value = str(spec.get(spec_key) or "").strip()
             if value and value not in visual_reservations[key]:
                 visual_reservations[key].append(value)
+        silhouette_family = str((spec.get("layout_model") or {}).get("silhouette_family") or "").strip()
+        if silhouette_family and silhouette_family not in visual_reservations["silhouette_families"]:
+            visual_reservations["silhouette_families"].append(silhouette_family)
 
     parts: List[Dict[str, Any]] = [{"text": _build_premium_burst_prompt(brief or "", seed_val, targets)}]
     generation_config: Dict[str, Any] = {

@@ -52,7 +52,7 @@ PREMIUM BUILD GUIDANCE:
 - The concrete format is the product. Use the task model and visual specification as the source of truth.
 - Build the named primary subject with the visual specification's primary renderer, then use supporting renderers only where they reinforce that subject or its state changes.
 - Use `visual_spec.palette` as an anchor system. Derive coherent tonal variants for hierarchy and state instead of repeating generic white cards, and use `surface_ink` on the supplied surface color.
-- Implement `visual_spec.layout_model` as a content-native topology: preserve its region hierarchy, source order, control placement, result transition, and mobile transformation without reusing a generic shell.
+- Implement `visual_spec.layout_model` as a page-level topology: apply its silhouette family and viewport contract fields directly to `html`, `body`, and `#ndw-content`, then preserve its region hierarchy, source order, control placement, result transition, and mobile transformation without reusing a forbidden shell.
 - Size `#ndw-content` around the selected topology and useful content. Avoid both a narrow centered card and artificially enlarged empty regions.
 - Stay within `visual_spec.copy_budget`. Prefer visible state, objects, and affordances over explanatory paragraphs.
 - A strong visual stack has a dominant subject, one or two supporting layers, and one state-linked motion moment. It does not mean every available library must be loaded.

@@ -61,6 +61,7 @@ def visual_spec_for_target(
         category=category,
         task_model=task_model,
         reserved_signatures=used.get("layout_signatures", used.get("compositions", set())),
+        reserved_silhouette_families=used.get("silhouette_families", set()),
         recent_rendered_families=used.get("rendered_layout_families", set()),
     )
     objects = [str(value).replace("_", " ") for value in task_model.get("domain_objects", []) if str(value).strip()]

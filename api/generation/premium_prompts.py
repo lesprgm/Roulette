@@ -14,7 +14,7 @@ Repair audit before final HTML:
 5. First paint: the primary subject, real starter content, and usable controls are visible immediately; Canvas/SVG scenes draw a complete initial frame without waiting for interaction.
 6. Payoff: the primary loop can reach its declared completion/payoff, keeps the result visible, and offers the declared reset, replay, save, checkout, or continue action.
 7. Games: verify rules, score/progress, collision or answer logic, failure/completion, restart, and keyboard/touch controls. Apps/tools/commerce: verify create/select/filter/configure/save and visible result or confirmation flows.
-8. Visual and layout: use the assigned palette anchors and primary renderer, then implement the layout model's content-native topology, source order, control placement, and result transition. Do not fall back to a generic hero, stage-plus-sidebar, or centered app shell. Empty Canvas, wallpaper, particles, and oversized color fields do not count as meaningful content.
+8. Visual and layout: use the assigned palette anchors and primary renderer, then implement the layout model's silhouette family, source order, control placement, result transition, and viewport contract. Inspect the final root CSS: display, columns, rows, edge anchors, and scroll axis must match the contract, and none of its forbidden shells may appear. Do not fall back to a generic hero, stage-plus-sidebar, or centered app shell. Empty Canvas, wallpaper, particles, and oversized color fields do not count as meaningful content.
 9. Copy: stay under copy_budget.max_visible_words, keep headings and instructions within their limits, and remove paragraphs that merely explain obvious controls.
 10. Runtime: use only required local libraries, valid load order, bounded animation/canvas work, and no script error that prevents later handlers from registering.
 11. Discipline: retain the recognizable format and remove blank panels, placeholders, dead controls, footer chrome, fake telemetry, planning language, `//`, TODO, undefined, and null.
@@ -36,6 +36,8 @@ Visual subject rules:
 LAYOUT_MODEL_GUIDANCE = """
 Layout model:
 - `topology` is specific to the selected kind of product, game, tool, or workflow. It is not a decorative theme.
+- `silhouette_family` and `viewport_contract` control the page-level architecture. Apply root_display, root_columns, root_rows, edge_anchors, and scroll_axis to `html`, `body`, and `#ndw-content`; do not implement them only inside an otherwise centered wrapper.
+- Use dominant_region, control_region, and result_region to place real content. Never use any layout named in forbidden_shells, even if it would be easier for the selected format.
 - Preserve the hierarchy and relationships in `regions`, `source_order`, `desktop_flow`, `control_placement`, and `result_transition`, while choosing sensible exact CSS dimensions from the content.
 - Different topologies must produce different root structures, dominant axes, region proportions, control locations, and result behavior. A palette swap or renamed panel does not count as a different layout.
 - Side regions, overlays, docks, vertical journeys, maps, galleries, timelines, editorial spreads, and workspaces are allowed when the selected topology calls for them.
@@ -101,7 +103,7 @@ def _build_rules() -> str:
 Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
 - The visual_spec is mandatory. Treat its palette values as anchor colors and derive a coherent tonal system with tints, shades, translucent states, and localized contrast where useful. Build its visual subject using the primary renderer, then apply the listed supporting renderers only where useful.
-- Implement visual_spec.layout_model as a content topology: honor its region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
+- Implement visual_spec.layout_model as a page topology: honor its viewport contract, region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
 - Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
@@ -130,6 +132,12 @@ def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, An
             "site": target.get("site_index") or index,
             "format": (target.get("format_spec") or {}).get("format_id"),
             "topology": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("topology"),
+            "silhouette_family": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("silhouette_family"),
+            "viewport_behavior": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("behavior"),
+            "root_display": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("root_display"),
+            "root_columns": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("root_columns"),
+            "root_rows": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("root_rows"),
+            "desktop_flow": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("desktop_flow"),
             "control_placement": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("control_placement"),
             "result_transition": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("result_transition"),
         }
@@ -151,7 +159,7 @@ Per-site backend targets:
 
 Burst layout manifest:
 {json.dumps(layout_manifest, separators=(',', ':'), ensure_ascii=True)}
-Before coding, compare this manifest across the whole batch. Implement visibly different root compositions; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
+Before coding, compare this manifest across the whole batch. Implement each silhouette family's root tracks at the page root and make the resulting outlines visibly different; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
 
 {_build_rules()}
 
