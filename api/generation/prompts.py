@@ -51,13 +51,14 @@ PREMIUM_STYLE_GUIDANCE = """
 PREMIUM BUILD GUIDANCE:
 - The concrete format is the product. Use the task model and visual specification as the source of truth.
 - Build the task itself with the visual specification's primary renderer, then use supporting renderers only where they reinforce its subject or state changes. `semantic_dom` means real HTML/CSS controls, records, products, and workflow state; it is not permission to make a generic dashboard.
-- Use `visual_spec.palette` as an anchor system. Derive coherent tonal variants for hierarchy and state instead of repeating generic white cards, and use `surface_ink` on the supplied surface color.
+- Use `visual_spec.palette` as a reference color strategy, not a quota of colors to display. White, near-white, neutral, or one-hue tonal pages are complete choices; derive only the variants the subject and state need.
+- Follow `visual_spec.visual_direction`: implement its content-bearing subject artwork and palette behavior, then author typography and component geometry as a coherent identity. Icons, wallpaper, and text labels are not substitutes for the subject.
 - Implement `visual_spec.layout_model` as a page-level topology: apply its silhouette family and viewport contract fields directly to `html`, `body`, and `#ndw-content`, then preserve its region hierarchy, source order, control placement, result transition, and mobile transformation without reusing a forbidden shell.
 - Size `#ndw-content` around the selected topology and useful content. Avoid both a narrow centered card and artificially enlarged empty regions.
 - Stay within `visual_spec.copy_budget`. Prefer visible state, objects, and affordances over explanatory paragraphs.
-- A strong visual stack has a dominant subject, one or two supporting layers, and one state-linked motion moment. It does not mean every available library must be loaded.
+- A strong visual stack has a dominant subject, the supporting visual elements its composition actually needs, and one state-linked motion moment. It does not mean every available library must be loaded or that every site is limited to one primitive.
 - Keep copy short, controls attached to what they affect, and make the site identifiable from the subject before body copy is read.
-- Avoid generic AI-generated aesthetics: purple/blue gradients, centered white-card shells, dashboard telemetry, repetitive wave/grid wallpaper, emoji illustration systems, and timid color use.
+- Avoid generic AI-generated aesthetics: purple/blue gradients, centered card shells, dashboard telemetry, repetitive wave/grid wallpaper, emoji illustration systems, and arbitrary pastel combinations.
 - Use original inline SVG, Canvas, CSS shapes, Paper Shaders, Matter bodies, or Three.js only when the visual specification calls for them.
 """.strip()
 

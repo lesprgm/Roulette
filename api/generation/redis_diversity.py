@@ -52,8 +52,10 @@ def _empty_recent_memory() -> Dict[str, List[str]]:
         "interaction_loops": [],
         "reward_mechanics": [],
         "visual_palettes": [],
+        "surface_treatments": [],
         "compositions": [],
         "layout_signatures": [],
+        "silhouette_families": [],
         "rendered_layout_families": [],
         "primary_renderers": [],
     }
@@ -163,6 +165,8 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
     if not visual_spec and isinstance(plan.get("visual_recipe"), dict):
         visual_spec = plan["visual_recipe"]
     layout_model = visual_spec.get("layout_model") if isinstance(visual_spec.get("layout_model"), dict) else {}
+    visual_direction = visual_spec.get("visual_direction") if isinstance(visual_spec.get("visual_direction"), dict) else {}
+    surface_treatment = visual_direction.get("surface_treatment") if isinstance(visual_direction.get("surface_treatment"), dict) else {}
     cell = {
         "interaction_pattern": plan.get("interaction_pattern") or plan.get("experience_archetype") or "unknown",
         "interaction_loop": plan.get("interaction_loop") or plan.get("primary_loop_type") or "unknown",
@@ -177,8 +181,10 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "format_family": format_family_for_id(str(format_id)),
         "reward_mechanic": reward_mechanic,
         "visual_palette_id": visual_spec.get("palette_id") or "",
+        "surface_treatment": surface_treatment.get("mode") or "none",
         "visual_composition": visual_spec.get("composition") or "",
         "layout_signature": layout_model.get("signature") or visual_spec.get("composition") or "",
+        "silhouette_family": layout_model.get("silhouette_family") or "",
         "rendered_layout_family": _rendered_layout_family(html),
         "primary_renderer": visual_spec.get("primary_renderer") or "",
         "chrome_policy": genre_contract.get("chrome_policy") or "",
@@ -252,8 +258,10 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:format_family", 1, str(descriptor["format_family"]))
         pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
         pipe.zincrby("qd:count:visual_palette_id", 1, str(descriptor["visual_palette_id"]))
+        pipe.zincrby("qd:count:surface_treatment", 1, str(descriptor["surface_treatment"]))
         pipe.zincrby("qd:count:visual_composition", 1, str(descriptor["visual_composition"]))
         pipe.zincrby("qd:count:layout_signature", 1, str(descriptor["layout_signature"]))
+        pipe.zincrby("qd:count:silhouette_family", 1, str(descriptor["silhouette_family"]))
         pipe.zincrby("qd:count:rendered_layout_family", 1, str(descriptor["rendered_layout_family"]))
         pipe.zincrby("qd:count:primary_renderer", 1, str(descriptor["primary_renderer"]))
         pipe.zadd("qd:last_used:interaction_loop", {str(descriptor["interaction_loop"]): int(time.time())})
@@ -261,8 +269,10 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zadd("qd:last_used:format_family", {str(descriptor["format_family"]): int(time.time())})
         pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
         pipe.zadd("qd:last_used:visual_palette_id", {str(descriptor["visual_palette_id"]): int(time.time())})
+        pipe.zadd("qd:last_used:surface_treatment", {str(descriptor["surface_treatment"]): int(time.time())})
         pipe.zadd("qd:last_used:visual_composition", {str(descriptor["visual_composition"]): int(time.time())})
         pipe.zadd("qd:last_used:layout_signature", {str(descriptor["layout_signature"]): int(time.time())})
+        pipe.zadd("qd:last_used:silhouette_family", {str(descriptor["silhouette_family"]): int(time.time())})
         pipe.zadd("qd:last_used:rendered_layout_family", {str(descriptor["rendered_layout_family"]): int(time.time())})
         pipe.zadd("qd:last_used:primary_renderer", {str(descriptor["primary_renderer"]): int(time.time())})
         for kind, value in fingerprint_values(descriptor, plan, html).items():
@@ -291,8 +301,10 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
         interaction_loops = _recent_values(redis_client, "qd:last_used:interaction_loop", "qd:last_used:primary_loop_type", limit)
         reward_mechanics = list(redis_client.zrevrange("qd:last_used:reward_mechanic", 0, max(0, limit - 1)) or [])
         visual_palettes = redis_client.zrevrange("qd:last_used:visual_palette_id", 0, max(0, limit - 1)) or []
+        surface_treatments = redis_client.zrevrange("qd:last_used:surface_treatment", 0, max(0, limit - 1)) or []
         compositions = redis_client.zrevrange("qd:last_used:visual_composition", 0, max(0, limit - 1)) or []
         layout_signatures = redis_client.zrevrange("qd:last_used:layout_signature", 0, max(0, limit - 1)) or []
+        silhouette_families = redis_client.zrevrange("qd:last_used:silhouette_family", 0, max(0, limit - 1)) or []
         rendered_layout_families = redis_client.zrevrange("qd:last_used:rendered_layout_family", 0, max(0, limit - 1)) or []
         primary_renderers = redis_client.zrevrange("qd:last_used:primary_renderer", 0, max(0, limit - 1)) or []
         return {
@@ -301,8 +313,10 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
             "interaction_loops": interaction_loops,
             "reward_mechanics": [str(item) for item in reward_mechanics if item],
             "visual_palettes": [str(item) for item in visual_palettes if item],
+            "surface_treatments": [str(item) for item in surface_treatments if item],
             "compositions": [str(item) for item in compositions if item],
             "layout_signatures": [str(item) for item in layout_signatures if item],
+            "silhouette_families": [str(item) for item in silhouette_families if item],
             "rendered_layout_families": [str(item) for item in rendered_layout_families if item],
             "primary_renderers": [str(item) for item in primary_renderers if item],
         }

@@ -26,12 +26,8 @@ services:
         value: '64000'
       - key: GEMINI_THINKING_LEVEL
         value: medium
-      - key: BURST_SITE_COUNT
-        value: '10'
       - key: TEMPERATURE
         value: '1.2'
-      - key: LLM_MAX_TOKENS
-        value: '15000'
       - key: LLM_TIMEOUT_SECS
         value: '105'
       - key: RATE_MAX_REQUESTS
@@ -75,7 +71,7 @@ services:
       - key: PREMIUM_LOW_WATER
         value: '3'
       - key: PREMIUM_BATCH_SIZE
-        value: '10'
+        value: '7'
       - key: PREMIUM_BURST_MIN_HTML_BYTES
         value: '3000'
       - key: PREFLIGHT_HTML_WARN_BYTES
