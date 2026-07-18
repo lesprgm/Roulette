@@ -1,54 +1,114 @@
 from __future__ import annotations
 
 import random
+import re
+from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
+import yaml
 
-_REGIONS = {
-    "game": ("playfield", "score", "controls", "result"),
-    "product": ("product", "options", "purchase", "confirmation"),
-    "commerce": ("catalog_or_map", "filters", "selection", "confirmation"),
-    "creative_tool": ("artifact", "tools", "settings", "export_result"),
-    "simulation": ("scene", "controls", "state_readout", "result"),
-    "investigation": ("evidence", "filters", "detail", "resolved_state"),
-    "app": ("workspace", "command_bar", "records", "saved_result"),
+
+_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "layout_topologies.yaml"
+_TOPOLOGY_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CATEGORIES = (
+    "game",
+    "product",
+    "commerce",
+    "creative_tool",
+    "simulation",
+    "investigation",
+    "app",
+)
+_CATEGORY_SET = frozenset(_CATEGORIES)
+_REQUIRED_FIELDS = {
+    "id",
+    "reference_family",
+    "categories",
+    "regions",
+    "desktop_flow",
+    "mobile_transformation",
+    "control_placement",
+    "result_transition",
+    "traits",
 }
 
-_PRIMARY_GEOMETRIES = {
-    "full_bleed": {
-        "mobile": "edge_to_edge_bottom_sheet",
-        "implementation": "Use an edge-to-edge 100vw x 100dvh composition. The primary subject occupies at least 70vw and 65dvh. No centered app-card wrapper.",
-    },
-    "vertical_journey": {
-        "mobile": "compact_single_column",
-        "implementation": "Use three full-width vertical zones with distinct scale and spacing. The primary zone spans at least 80vw; this is a page journey, not one centered card.",
-    },
-    "offset_canvas": {
-        "mobile": "remove_overlap_then_stack",
-        "implementation": "Place the primary subject off-center across at least 65vw with one overlapping edge region. Preserve visible negative space on the opposite side; no symmetric card shell.",
-    },
-    "mosaic_focus": {
-        "mobile": "primary_then_compact_grid",
-        "implementation": "Use an asymmetric 12-column mosaic: one dominant 7-9 column subject and 2-3 smaller regions with unequal spans. Do not reduce it to a uniform card grid.",
-    },
-    "poster_field": {
-        "mobile": "poster_with_anchored_tray",
-        "implementation": "Use the full viewport as one poster field with at least three independently positioned zones and a dominant visual covering roughly half the field. No enclosing card.",
-    },
-}
 
-_CONTROL_RELATIONS = ("floating_tray", "bottom_dock", "top_ribbon", "inline_cluster", "collapsible_sheet")
+def _nonempty_strings(value: Any, *, field: str, topology_id: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
+        raise RuntimeError(f"Layout topology {topology_id!r} field {field!r} must be a non-empty string list")
+    return tuple(item.strip() for item in value)
 
-_RESULT_RELATIONS = ("replace_controls", "bottom_sheet", "stage_overlay", "inline_after", "focused_modal")
 
-_VIEWPORT_CONTRACT = {
-    "root_width": "100vw",
-    "root_min_height": "100dvh",
-    "min_composed_width": "88vw",
-    "min_composed_height": "78dvh",
-    "max_blank_area": "40%",
-    "single_card_shell": False,
-}
+def _load_topology_catalog() -> tuple[Dict[str, Dict[str, Any]], Dict[str, tuple[str, ...]]]:
+    try:
+        payload = yaml.safe_load(_CATALOG_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Invalid layout topology catalog {_CATALOG_PATH}: {exc}") from exc
+
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise RuntimeError(f"Layout topology catalog {_CATALOG_PATH} must use version 1")
+    records = payload.get("topologies")
+    if not isinstance(records, list) or not records:
+        raise RuntimeError(f"Layout topology catalog {_CATALOG_PATH} must define a topologies list")
+    topologies: Dict[str, Dict[str, Any]] = {}
+    by_category: dict[str, list[str]] = defaultdict(list)
+    for index, raw in enumerate(records, start=1):
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"Layout topology record {index} must be a mapping")
+        missing = _REQUIRED_FIELDS - raw.keys()
+        if missing:
+            raise RuntimeError(f"Layout topology record {index} is missing {sorted(missing)}")
+
+        topology_id = raw["id"]
+        if not isinstance(topology_id, str) or not _TOPOLOGY_ID_RE.fullmatch(topology_id):
+            raise RuntimeError(f"Layout topology record {index} has invalid id {topology_id!r}")
+        if topology_id in topologies:
+            raise RuntimeError(f"Layout topology catalog contains duplicate id {topology_id!r}")
+
+        categories = _nonempty_strings(raw["categories"], field="categories", topology_id=topology_id)
+        unknown_categories = set(categories) - _CATEGORY_SET
+        if unknown_categories:
+            raise RuntimeError(f"Layout topology {topology_id!r} has unknown categories {sorted(unknown_categories)}")
+        regions = _nonempty_strings(raw["regions"], field="regions", topology_id=topology_id)
+        traits = _nonempty_strings(raw["traits"], field="traits", topology_id=topology_id)
+        if len(regions) < 4:
+            raise RuntimeError(f"Layout topology {topology_id!r} must define at least four regions")
+        if len(set(regions)) != len(regions):
+            raise RuntimeError(f"Layout topology {topology_id!r} contains duplicate regions")
+
+        string_fields = (
+            "reference_family",
+            "desktop_flow",
+            "mobile_transformation",
+            "control_placement",
+            "result_transition",
+        )
+        for field in string_fields:
+            if not isinstance(raw[field], str) or not raw[field].strip():
+                raise RuntimeError(f"Layout topology {topology_id!r} field {field!r} must be a non-empty string")
+
+        topologies[topology_id] = {
+            "reference_family": raw["reference_family"].strip(),
+            "categories": categories,
+            "regions": regions,
+            "desktop_flow": raw["desktop_flow"].strip(),
+            "mobile_transformation": raw["mobile_transformation"].strip(),
+            "control_placement": raw["control_placement"].strip(),
+            "result_transition": raw["result_transition"].strip(),
+            "traits": traits,
+        }
+        for category in categories:
+            by_category[category].append(topology_id)
+
+    missing_categories = [category for category in _CATEGORIES if not by_category[category]]
+    if missing_categories:
+        raise RuntimeError(f"Layout topology catalog has no entries for {missing_categories}")
+    return topologies, {category: tuple(by_category[category]) for category in _CATEGORIES}
+
+
+_TOPOLOGIES, _CATEGORY_TOPOLOGIES = _load_topology_catalog()
+
 
 _COPY_BUDGETS = {
     "game": (50, "Use labels, score, and one micro-cue; rules should be learned through play."),
@@ -61,12 +121,6 @@ _COPY_BUDGETS = {
 }
 
 
-def _pick(values: Iterable[str], reserved: set[str], rng: random.Random) -> str:
-    candidates = list(values)
-    available = [value for value in candidates if value not in reserved]
-    return rng.choice(available or candidates)
-
-
 def layout_model_for_target(
     *,
     seed: int,
@@ -75,42 +129,33 @@ def layout_model_for_target(
     reserved_signatures: Iterable[str] = (),
     recent_rendered_families: Iterable[str] = (),
 ) -> Dict[str, Any]:
-    """Compose a concrete spatial graph from reusable regions and relations."""
+    """Select a content-native topology instead of a universal page shell."""
+    category = category if category in _CATEGORY_TOPOLOGIES else "app"
     rng = random.Random(f"{seed}:{task_model.get('format')}:{category}:layout")
+    names = list(_CATEGORY_TOPOLOGIES[category])
     reserved = set(reserved_signatures)
-    recent = " ".join(recent_rendered_families)
-    combinations = [
-        (geometry, controls, result)
-        for geometry in _PRIMARY_GEOMETRIES
-        for controls in _CONTROL_RELATIONS
-        for result in _RESULT_RELATIONS
-        if not (geometry == "vertical_journey" and controls == "floating_tray")
-        and not (geometry == "full_bleed" and controls == "inline_cluster")
-        and not ("bottom_dock" in recent and controls == "bottom_dock")
-        and not ("fixed_layer" in recent and controls in {"floating_tray", "collapsible_sheet"})
-        and not ("explicit_grid" in recent and geometry == "mosaic_focus")
-        and not ("side_region" in recent and geometry == "offset_canvas")
-    ]
-    if not combinations:
-        combinations = [("vertical_journey", "inline_cluster", "inline_after")]
-    signatures = [":".join(combo) for combo in combinations]
-    signature = _pick(signatures, reserved, rng)
-    geometry, controls, result = signature.split(":")
-    regions = _REGIONS.get(category, _REGIONS["app"])
+    reserved_names = {signature.split(":", 1)[-1] for signature in reserved}
+    available = [name for name in names if name not in reserved_names] or names
+    recent_traits = {
+        trait
+        for family in recent_rendered_families
+        for trait in str(family).split(":")
+    }
+    fresh = [name for name in available if not (set(_TOPOLOGIES[name]["traits"]) & recent_traits)]
+    name = rng.choice(fresh or available)
+    topology = _TOPOLOGIES[name]
+    signature = f"{category}:{name}"
     return {
         "signature": signature,
-        "nodes": {"primary": regions[0], "controls": regions[1], "state": regions[2], "result": regions[3]},
-        "edges": [
-            ["controls", "primary", controls],
-            ["state", "primary", "visibly_bound"],
-            ["result", "primary", result],
-        ],
-        "desktop_geometry": geometry,
-        "geometry_contract": _PRIMARY_GEOMETRIES[geometry]["implementation"],
-        "viewport_contract": dict(_VIEWPORT_CONTRACT),
-        "control_geometry": controls,
-        "result_geometry": result,
-        "mobile_transformation": _PRIMARY_GEOMETRIES[geometry]["mobile"],
+        "category": category,
+        "topology": name,
+        "regions": list(topology["regions"]),
+        "source_order": list(topology["regions"]),
+        "desktop_flow": topology["desktop_flow"],
+        "control_placement": topology["control_placement"],
+        "result_transition": topology["result_transition"],
+        "mobile_transformation": topology["mobile_transformation"],
+        "traits": list(topology["traits"]),
     }
 
 

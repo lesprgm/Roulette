@@ -426,8 +426,8 @@ def generate_page_premium_burst(
     targets = []
     visual_reservations: Dict[str, List[str]] = {
         "palettes": list(memory.get("visual_palettes") or [])[:4],
-        "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:6],
-        "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:3],
+        "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:12],
+        "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
         "primary_renderers": list(memory.get("primary_renderers") or [])[:1],
     }
     for idx, base_target in enumerate(base_targets):

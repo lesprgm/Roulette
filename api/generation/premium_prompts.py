@@ -14,7 +14,7 @@ Repair audit before final HTML:
 5. First paint: the primary subject, real starter content, and usable controls are visible immediately; Canvas/SVG scenes draw a complete initial frame without waiting for interaction.
 6. Payoff: the primary loop can reach its declared completion/payoff, keeps the result visible, and offers the declared reset, replay, save, checkout, or continue action.
 7. Games: verify rules, score/progress, collision or answer logic, failure/completion, restart, and keyboard/touch controls. Apps/tools/commerce: verify create/select/filter/configure/save and visible result or confirmation flows.
-8. Visual and layout: use the assigned palette anchors and primary renderer, preserve every layout-model node/relation, geometry_contract, and viewport_contract. Inspect the final CSS: `#ndw-content` fills the viewport, the composed regions use at least 88vw x 78dvh, and no small centered card or persistent stage-plus-sidebar shell contains the experience. Empty Canvas, wallpaper, particles, and oversized color fields do not count as meaningful viewport content.
+8. Visual and layout: use the assigned palette anchors and primary renderer, then implement the layout model's content-native topology, source order, control placement, and result transition. Do not fall back to a generic hero, stage-plus-sidebar, or centered app shell. Empty Canvas, wallpaper, particles, and oversized color fields do not count as meaningful content.
 9. Copy: stay under copy_budget.max_visible_words, keep headings and instructions within their limits, and remove paragraphs that merely explain obvious controls.
 10. Runtime: use only required local libraries, valid load order, bounded animation/canvas work, and no script error that prevents later handlers from registering.
 11. Discipline: retain the recognizable format and remove blank panels, placeholders, dead controls, footer chrome, fake telemetry, planning language, `//`, TODO, undefined, and null.
@@ -34,13 +34,12 @@ Visual subject rules:
 
 
 LAYOUT_MODEL_GUIDANCE = """
-Layout model DSL:
-- desktop_geometry: `full_bleed` fills the viewport; `vertical_journey` stacks premise/stage/action/result across broad horizontal zones; `offset_canvas` offsets the focal region with one edge overlap; `mosaic_focus` uses one dominant asymmetric cell plus smaller cells; `poster_field` layers distinct zones in one poster-like field.
-- control edge: `floating_tray`, `bottom_dock`, `top_ribbon`, `inline_cluster`, or `collapsible_sheet` describes the controls' relationship to the primary node.
-- result edge: `replace_controls`, `bottom_sheet`, `stage_overlay`, `inline_after`, or `focused_modal` describes the payoff transition.
-- geometry_contract contains measurable viewport occupation and wrapper constraints. Treat those as acceptance criteria, not suggestions.
-- viewport_contract applies to every geometry: `#ndw-content` is 100vw with at least 100dvh, composed regions occupy at least 88vw x 78dvh on desktop, blank background stays below 40%, and the whole experience is never enclosed in one card.
-- Use semantic source order and CSS Grid/Flex/positioning. Follow mobile_transformation and never invent a persistent right rail unless the graph explicitly requires one.
+Layout model:
+- `topology` is specific to the selected kind of product, game, tool, or workflow. It is not a decorative theme.
+- Preserve the hierarchy and relationships in `regions`, `source_order`, `desktop_flow`, `control_placement`, and `result_transition`, while choosing sensible exact CSS dimensions from the content.
+- Different topologies must produce different root structures, dominant axes, region proportions, control locations, and result behavior. A palette swap or renamed panel does not count as a different layout.
+- Side regions, overlays, docks, vertical journeys, maps, galleries, timelines, editorial spreads, and workspaces are allowed when the selected topology calls for them.
+- Use semantic source order and transform it according to `mobile_transformation`; do not preserve a desktop split when it makes the mobile interaction worse.
 """.strip()
 
 
@@ -102,8 +101,8 @@ def _build_rules() -> str:
 Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
 - The visual_spec is mandatory. Treat its palette values as anchor colors and derive a coherent tonal system with tints, shades, translucent states, and localized contrast where useful. Build its visual subject using the primary renderer, then apply the listed supporting renderers only where useful.
-- Implement visual_spec.layout_model literally: create its named regions, preserve its spatial edges, follow desktop/mobile geometry, and do not substitute the familiar header + left stage + persistent right control rail.
-- Implement layout_model.geometry_contract and viewport_contract literally. A single centered rounded rectangle containing the whole experience, a narrow root `max-width`, or more than 40% unused viewport is a failed layout and must be rebuilt before output. Cards may exist only as child regions inside the larger composition.
+- Implement visual_spec.layout_model as a content topology: honor its region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
+- Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
 - Games show the board/stage/player/targets and score immediately. Apps, commerce, and products show real starter content and one useful action immediately.
@@ -126,6 +125,16 @@ Build rules:
 
 def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, Any]]) -> str:
     protocols = "\n\n".join(_output_protocol(index) for index in range(1, len(targets) + 1))
+    layout_manifest = [
+        {
+            "site": target.get("site_index") or index,
+            "format": (target.get("format_spec") or {}).get("format_id"),
+            "topology": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("topology"),
+            "control_placement": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("control_placement"),
+            "result_transition": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("result_transition"),
+        }
+        for index, target in enumerate(targets, start=1)
+    ]
     return f"""
 Build {len(targets)} distinct premium interactive web experiences in one streaming response.
 
@@ -139,6 +148,10 @@ Seed: {seed}
 
 Per-site backend targets:
 {json.dumps([_prompt_target(target) for target in targets], separators=(',', ':'), ensure_ascii=True)}
+
+Burst layout manifest:
+{json.dumps(layout_manifest, separators=(',', ':'), ensure_ascii=True)}
+Before coding, compare this manifest across the whole batch. Implement visibly different root compositions; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
 
 {_build_rules()}
 
