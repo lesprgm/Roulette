@@ -20,7 +20,16 @@ _COLOR_CATALOG_PATH = (
     if _CONFIGURED_COLOR_CATALOG_PATH
     else _SECRET_COLOR_CATALOG_PATH if _SECRET_COLOR_CATALOG_PATH.exists() else _LOCAL_COLOR_CATALOG_PATH
 )
+_LOCAL_COMPONENT_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "component_languages.yaml"
+_SECRET_COMPONENT_CATALOG_PATH = Path("/etc/secrets/component_languages.yaml")
+_CONFIGURED_COMPONENT_CATALOG_PATH = os.getenv("COMPONENT_LANGUAGES_PATH", "").strip()
+_COMPONENT_CATALOG_PATH = (
+    Path(_CONFIGURED_COMPONENT_CATALOG_PATH).expanduser()
+    if _CONFIGURED_COMPONENT_CATALOG_PATH
+    else _SECRET_COMPONENT_CATALOG_PATH if _SECRET_COMPONENT_CATALOG_PATH.exists() else _LOCAL_COMPONENT_CATALOG_PATH
+)
 _COLOR_ROLES = {"background", "surface", "ink", "surface_ink", "action", "secondary"}
+_COMPONENT_FIELDS = ("geometry", "borders", "elevation", "spacing", "typography", "controls")
 _COLOR_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _CATEGORIES = {"game", "product", "commerce", "creative_tool", "simulation", "investigation", "app"}
@@ -73,6 +82,46 @@ def _load_color_catalog() -> tuple[Dict[str, Dict[str, str]], Dict[str, Dict[str
 PALETTE_SYSTEMS, PALETTE_BEHAVIOR, PALETTE_COMPATIBILITY = _load_color_catalog()
 
 
+def _load_component_catalog() -> tuple[Dict[str, Dict[str, str]], Dict[str, tuple[str, ...]]]:
+    try:
+        payload = yaml.safe_load(_COMPONENT_CATALOG_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Invalid component language catalog {_COMPONENT_CATALOG_PATH}: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise RuntimeError("Component language catalog must use version 1")
+    raw_languages = payload.get("languages")
+    raw_compatibility = payload.get("compatibility")
+    if not isinstance(raw_languages, dict) or not raw_languages:
+        raise RuntimeError("Component language catalog must define languages")
+    if not isinstance(raw_compatibility, dict) or set(raw_compatibility) != _CATEGORIES:
+        raise RuntimeError("Component language compatibility must cover every format category")
+
+    languages: Dict[str, Dict[str, str]] = {}
+    for language_id, guidance in raw_languages.items():
+        if (
+            not isinstance(language_id, str)
+            or not _COLOR_ID_RE.fullmatch(language_id)
+            or not isinstance(guidance, dict)
+            or set(guidance) != set(_COMPONENT_FIELDS)
+            or not all(isinstance(value, str) and value.strip() for value in guidance.values())
+        ):
+            raise RuntimeError(f"Invalid component language {language_id!r}")
+        languages[language_id] = {key: guidance[key].strip() for key in _COMPONENT_FIELDS}
+
+    compatibility: Dict[str, tuple[str, ...]] = {}
+    for category, language_ids in raw_compatibility.items():
+        if not isinstance(language_ids, list) or len(language_ids) < 7 or len(set(language_ids)) != len(language_ids):
+            raise RuntimeError(f"Component compatibility {category!r} must define at least seven unique languages")
+        unknown = set(language_ids) - languages.keys()
+        if unknown:
+            raise RuntimeError(f"Component compatibility {category!r} has unknown languages: {sorted(unknown)}")
+        compatibility[category] = tuple(language_ids)
+    return languages, compatibility
+
+
+COMPONENT_LANGUAGES, COMPONENT_LANGUAGE_COMPATIBILITY = _load_component_catalog()
+
+
 _SUBJECTS = {
     "game": "game board, pieces, targets, and score state",
     "product": "product object, option state, and cart or receipt",
@@ -116,7 +165,6 @@ _SURFACE_GUIDANCE = {
     "inline_svg_texture": "Use an original inline SVG pattern, mask, or filter on the named subject; it must clarify material or state rather than become wallpaper.",
     "paper_shader": "Mount one local Paper Shader on the named subject with a CSS fallback and bounded pixel budget; it must respond to or reinforce visible state and must not cover the whole page.",
 }
-
 
 def _surface_treatment(category: str, subject: str, reserved: set[str], rng: random.Random) -> Dict[str, str]:
     candidates = list(_SURFACE_TREATMENTS[category])
@@ -179,6 +227,11 @@ def visual_spec_for_target(
     objects = [str(value).replace("_", " ") for value in task_model.get("domain_objects", []) if str(value).strip()]
     subject = ", ".join(objects[:3]) or _SUBJECTS[category]
     surface_treatment = _surface_treatment(category, subject, used.get("surface_treatments", set()), rng)
+    component_language_id = _first_available(
+        COMPONENT_LANGUAGE_COMPATIBILITY[category],
+        used.get("component_languages", set()),
+        rng,
+    )
     if surface_treatment["mode"] == "paper_shader" and "paper_surface" not in supporting:
         supporting.append("paper_surface")
     return {
@@ -190,6 +243,10 @@ def visual_spec_for_target(
         "primary_renderer": primary,
         "supporting_renderers": supporting,
         "visual_subject": subject,
+        "component_language": {
+            "id": component_language_id,
+            **COMPONENT_LANGUAGES[component_language_id],
+        },
         "visual_direction": {
             "palette_behavior": PALETTE_BEHAVIOR[palette_id],
             "subject_artwork": _artwork_strategy(category, subject),

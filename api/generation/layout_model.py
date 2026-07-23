@@ -29,6 +29,7 @@ _CATEGORIES = (
     "app",
 )
 _CATEGORY_SET = frozenset(_CATEGORIES)
+_STRUCTURED_LAYOUT_CATEGORIES = frozenset({"app", "commerce", "investigation"})
 _REQUIRED_FIELDS = {
     "id",
     "reference_family",
@@ -311,6 +312,7 @@ def layout_model_for_target(
     return {
         "signature": signature,
         "category": category,
+        "composition_mode": "structured" if category in _STRUCTURED_LAYOUT_CATEGORIES else "authored",
         "topology": name,
         "reference_family": topology["reference_family"],
         "silhouette_family": topology["silhouette_family"],

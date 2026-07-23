@@ -427,6 +427,7 @@ def generate_page_premium_burst(
         "silhouette_families": list(memory.get("silhouette_families") or [])[:8],
         "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
         "surface_treatments": list(memory.get("surface_treatments") or [])[:1],
+        "component_languages": list(memory.get("component_languages") or [])[:1],
     }
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
@@ -446,6 +447,9 @@ def generate_page_premium_burst(
         surface_mode = str(((spec.get("visual_direction") or {}).get("surface_treatment") or {}).get("mode") or "").strip()
         if surface_mode == "paper_shader" and surface_mode not in visual_reservations["surface_treatments"]:
             visual_reservations["surface_treatments"].append(surface_mode)
+        component_language = str((spec.get("component_language") or {}).get("id") or "").strip()
+        if component_language and component_language not in visual_reservations["component_languages"]:
+            visual_reservations["component_languages"].append(component_language)
 
     parts: List[Dict[str, Any]] = [{"text": _build_premium_burst_prompt(brief or "", seed_val, targets)}]
     generation_config: Dict[str, Any] = {
@@ -602,6 +606,7 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
             "silhouette_families": memory.get("silhouette_families") or [],
             "rendered_layout_families": memory.get("rendered_layout_families") or [],
             "surface_treatments": memory.get("surface_treatments") or [],
+            "component_languages": (memory.get("component_languages") or [])[:1],
         }
         target = seeded_format_first_target(
             seed,
