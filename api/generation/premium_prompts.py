@@ -10,11 +10,11 @@ Repair audit before final HTML:
 1. Sandbox: remove remote resources, forbidden network APIs, localStorage/sessionStorage, document.write, eval, and invented local asset paths.
 2. Initialization: every function referenced by HTML or a library exists before that library initializes. For Alpine `x-data="name()"`, define `window.name` before loading Alpine; use public Alpine state only, never `__x` internals or Alpine directives inside SVG.
 3. References: every queried DOM id exists and every SVG numeric/path attribute has a valid non-empty value before first paint.
-4. Control audit: for each visible button, input, select, and key/pointer action, trace element -> handler/expression -> changed state -> named visible DOM/SVG/Canvas result. Repair or remove any broken chain.
+4. Control audit: remove every inline `on*` event attribute. For each visible button, input, select, and key/pointer action, trace element -> handler/expression -> changed state -> named visible DOM/SVG/Canvas result; the handler must use addEventListener or Alpine. Repair or remove any broken chain.
 5. First paint: the primary subject, real starter content, and usable controls are visible immediately; Canvas/SVG scenes draw a complete initial frame without waiting for interaction.
 6. Payoff: the primary loop can reach its declared completion/payoff, keeps the result visible, and offers the declared reset, replay, save, checkout, or continue action.
 7. Games: verify rules, score/progress, collision or answer logic, failure/completion, restart, and keyboard/touch controls. Apps/tools/commerce: verify create/select/filter/configure/save and visible result or confirmation flows.
-8. Visual and layout: implement visual_direction.subject_artwork, palette_behavior, and the selected surface_treatment, then implement the layout model's silhouette family, source order, control placement, result transition, and viewport contract. If surface_treatment.mode is `paper_shader`, verify exactly one named subject mounts the local shader, has a CSS fallback, and is not full-page wallpaper. Inspect the final root CSS: display, columns, rows, edge anchors, and scroll axis must match the contract, and none of its forbidden shells may appear. Inspect the page with its text mentally blurred: the subject must remain recognizable through content-bearing artwork, objects, previews, diagrams, or scenes. Empty Canvas, icons, wallpaper, particles, oversized color fields, and repeated bordered panels do not count as meaningful content.
+8. Visual and layout: implement visual_direction.subject_artwork, palette_behavior, component_language, and the selected surface_treatment, then preserve the layout model's regions, relationships, control placement, result transition, and mobile transformation. For `structured` composition_mode, root CSS must match the viewport contract. For `authored`, use the contract as a silhouette reference and freely layer, overlap, stagger, or reshape the regions when that gives the subject more presence. If surface_treatment.mode is `paper_shader`, verify exactly one named subject mounts the local shader, has a CSS fallback, and is not full-page wallpaper. Resolve the first viewport as a complete composition: never leave a tiny widget or shallow top strip surrounded by a blank field. Empty space may establish hierarchy, but the working subject, its state, and its payoff must collectively command the viewport. With text mentally blurred, the subject must remain recognizable through content-bearing artwork, objects, previews, diagrams, or scenes. Empty Canvas, icons, wallpaper, particles, oversized color fields, and repeated bordered panels do not count as meaningful content.
 9. Copy: stay under copy_budget.max_visible_words, keep headings and instructions within their limits, and remove paragraphs that merely explain obvious controls.
 10. Runtime: use only required local libraries, valid load order, bounded animation/canvas work, and no script error that prevents later handlers from registering.
 11. Discipline: retain the recognizable format and remove blank panels, placeholders, dead controls, footer chrome, fake telemetry, planning language, `//`, TODO, undefined, and null.
@@ -27,6 +27,7 @@ Visual subject rules:
 - The target's visual_spec.visual_subject is visible on first paint and changes with state, selection, progress, or payoff.
 - Implement visual_spec.visual_direction.subject_artwork. A semantic-DOM page still needs task-native imagery, previews, diagrams, charts, maps, object illustrations, or other information-bearing visuals when its format calls for them.
 - Use as many content-bearing visual elements as the composition needs. Do not reduce a product, destination, game world, or creative artifact to an icon, colored circle, or text label.
+- Fill the selected viewport silhouette with task-native content. A narrow top cluster followed by an unused blank viewport is unfinished, not minimalist.
 - `semantic_dom` means the product is built from semantic HTML, CSS layout, real records or products, and task state. Use Alpine only where its declarative state improves the workflow; do not replace the interface with a decorative Canvas.
 - `inline_svg` means original SVG illustration, map, board, product, or record visualization; icons alone do not count. Its complete initial artwork must be static SVG markup. Update named SVG groups with plain JavaScript; never put `<template>`, Alpine directives, or Alpine-bound attributes inside SVG.
 - `canvas_scene` means an initial rendered board, drawing, map, product view, or simulation scene; never an empty canvas.
@@ -41,10 +42,10 @@ Visual subject rules:
 LAYOUT_MODEL_GUIDANCE = """
 Layout model:
 - `topology` is specific to the selected kind of product, game, tool, or workflow. It is not a decorative theme.
-- `silhouette_family` and `viewport_contract` control the page-level architecture. Apply root_display, root_columns, root_rows, edge_anchors, and scroll_axis to `html`, `body`, and `#ndw-content`; do not implement them only inside an otherwise centered wrapper.
+- `composition_mode` decides how strictly to apply the silhouette. For `structured`, apply root_display, root_columns, root_rows, edge_anchors, and scroll_axis at the page root. For `authored`, treat those fields as spatial guidance rather than required CSS and compose the required regions around the subject.
 - Use dominant_region, control_region, and result_region to place real content. Never use any layout named in forbidden_shells, even if it would be easier for the selected format.
 - Preserve the hierarchy and relationships in `regions`, `source_order`, `desktop_flow`, `control_placement`, and `result_transition`, while choosing sensible exact CSS dimensions from the content.
-- Different topologies must produce different root structures, dominant axes, region proportions, control locations, and result behavior. A palette swap or renamed panel does not count as a different layout.
+- Different topologies must produce different dominant axes, region proportions, control locations, and result behavior. An `authored` composition may use overlap, asymmetry, layering, floating regions, or deliberate broken-grid placement instead of visible column dividers. A palette swap or renamed panel does not count as a different layout.
 - Side regions, overlays, docks, vertical journeys, maps, galleries, timelines, editorial spreads, and workspaces are allowed when the selected topology calls for them.
 - Use semantic source order and transform it according to `mobile_transformation`; do not preserve a desktop split when it makes the mobile interaction worse.
 """.strip()
@@ -109,8 +110,8 @@ Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
 - The visual_spec is mandatory. Treat its palette as a coherent strategy, not a requirement to display every supplied color. White space, neutral surfaces, and single-hue tonal depth are intentional when selected. Implement subject_artwork and the selected surface_treatment, then build the task with the primary renderer and use supporting renderers for meaningful artwork, state feedback, or motion. A `none` surface treatment means do not invent one.
 - Use as many content-bearing visual elements as the composition needs. Original inline SVG, CSS illustration, Canvas, charts, diagrams, and task-native library output are allowed; Lucide icons, wallpaper, and color fields do not count by themselves.
-- Choose one typography composition and one surface/component language that fit this site's format and artwork. These are authored decisions, not extra random themes: vary type scale, alignment, casing, border use, corner treatment, shadow behavior, and spacing as one coherent system. Do not default to rounded outlined panels.
-- Implement visual_spec.layout_model as a page topology: honor its viewport contract, region hierarchy, source order, desktop flow, control placement, result transition, and mobile transformation. Do not reuse a familiar shell from another site.
+- Implement `visual_spec.component_language` as the site's positive component system. Apply its geometry, borders, elevation, spacing, typography, and controls consistently without letting it replace the assigned topology, palette, or artwork.
+- Implement visual_spec.layout_model according to composition_mode. Structured layouts honor the root viewport contract; authored layouts preserve the required content relationships but may depart from its literal tracks to make a stronger task-native composition. Do not reuse a familiar shell from another site.
 - Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
@@ -140,6 +141,7 @@ def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, An
             "format": (target.get("format_spec") or {}).get("format_id"),
             "topology": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("topology"),
             "silhouette_family": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("silhouette_family"),
+            "composition_mode": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("composition_mode"),
             "viewport_behavior": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("behavior"),
             "root_display": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("root_display"),
             "root_columns": (((target.get("visual_spec") or {}).get("layout_model") or {}).get("viewport_contract") or {}).get("root_columns"),
@@ -147,6 +149,7 @@ def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, An
             "desktop_flow": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("desktop_flow"),
             "control_placement": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("control_placement"),
             "result_transition": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("result_transition"),
+            "component_language": ((target.get("visual_spec") or {}).get("component_language") or {}).get("id"),
         }
         for index, target in enumerate(targets, start=1)
     ]
@@ -166,8 +169,8 @@ Per-site backend targets:
 
 Burst layout manifest:
 {json.dumps(layout_manifest, separators=(',', ':'), ensure_ascii=True)}
-Before coding, compare this manifest across the whole batch. Implement each silhouette family's root tracks at the page root and make the resulting outlines visibly different; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
-Silently compare the visual identities across the batch as well. Do not repeat the same typography composition or component language on neighboring sites. In particular, one site's thick outlined rounded panels cannot become the burst-wide default.
+Before coding, compare this manifest across the whole batch. Apply exact root tracks only to `structured` sites. For `authored` sites, use the topology as a compositional brief and make the subject-led outlines visibly different; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
+The assigned component languages are intentionally different. Implement each positive system instead of carrying one site's borders, radii, shadows, typography, spacing, or controls into another.
 
 {_build_rules()}
 
