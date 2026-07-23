@@ -84,7 +84,7 @@ def task_model_for_format(format_id: str, format_category: str) -> Dict[str, Any
     payoff_scene = _payoff_scene_for(base["format"], format_category)
     controls = [
         {
-            "label": _primary_action_label(base["format"]),
+            "label": str(base.get("primary_action") or _primary_action_label(base["format"])),
             "type": "button_or_direct_input",
             "must_change_state": base["state_variables"][:2],
         },

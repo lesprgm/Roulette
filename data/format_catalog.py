@@ -372,6 +372,7 @@ FORMAT_TASK_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "domain_objects": list(item["domain_objects"]),
         "state_variables": list(item["state_variables"]),
         "completion_condition": item["completion_condition"],
+        "primary_action": item["primary_action"],
         "allowed_patterns": list(
             item.get("allowed_patterns")
             or FORMAT_PATTERN_GROUPS[item["pattern_group"]]
