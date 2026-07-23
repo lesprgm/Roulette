@@ -29,6 +29,7 @@ data/variant_catalog.yaml
 data/variants/*.yaml
 data/layout_topologies.yaml
 data/color_strategies.yaml
+data/component_languages.yaml
 
 # Build artifacts
 dist/

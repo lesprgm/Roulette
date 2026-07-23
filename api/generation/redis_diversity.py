@@ -53,6 +53,8 @@ def _empty_recent_memory() -> Dict[str, List[str]]:
         "reward_mechanics": [],
         "visual_palettes": [],
         "surface_treatments": [],
+        "component_languages": [],
+        "component_style_signatures": [],
         "compositions": [],
         "layout_signatures": [],
         "silhouette_families": [],
@@ -136,6 +138,26 @@ def _rendered_layout_family(html: str) -> str:
     return ":".join(features)
 
 
+def _component_style_signature(html: str) -> str:
+    css = (html or "").lower()
+    values = []
+    for property_name in ("border-radius", "border", "box-shadow", "text-transform"):
+        declarations = sorted({
+            re.sub(r"\s+", " ", value.strip())
+            for value in re.findall(rf"{property_name}\s*:\s*([^;}}{{]+)", css)
+        })[:4]
+        values.append(f"{property_name}={','.join(declarations) or 'none'}")
+    class_tokens = re.findall(r"""class\s*=\s*["']([^"']+)["']""", css)
+    panel_tokens = sorted({
+        token
+        for classes in class_tokens
+        for token in classes.split()
+        if any(term in token for term in ("card", "panel", "tile", "surface"))
+    })[:6]
+    values.append(f"panel_tokens={','.join(panel_tokens) or 'none'}")
+    return _hash_text("|".join(values))[:16]
+
+
 def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) -> Dict[str, Any]:
     html = extract_doc_html(doc)
     debug = doc.get("ndw_debug") if isinstance(doc, dict) else None
@@ -182,6 +204,8 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "reward_mechanic": reward_mechanic,
         "visual_palette_id": visual_spec.get("palette_id") or "",
         "surface_treatment": surface_treatment.get("mode") or "none",
+        "component_language": (visual_spec.get("component_language") or {}).get("id") or "",
+        "component_style_signature": _component_style_signature(html),
         "visual_composition": visual_spec.get("composition") or "",
         "layout_signature": layout_model.get("signature") or visual_spec.get("composition") or "",
         "silhouette_family": layout_model.get("silhouette_family") or "",
@@ -259,6 +283,8 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
         pipe.zincrby("qd:count:visual_palette_id", 1, str(descriptor["visual_palette_id"]))
         pipe.zincrby("qd:count:surface_treatment", 1, str(descriptor["surface_treatment"]))
+        pipe.zincrby("qd:count:component_language", 1, str(descriptor["component_language"]))
+        pipe.zincrby("qd:count:component_style_signature", 1, str(descriptor["component_style_signature"]))
         pipe.zincrby("qd:count:visual_composition", 1, str(descriptor["visual_composition"]))
         pipe.zincrby("qd:count:layout_signature", 1, str(descriptor["layout_signature"]))
         pipe.zincrby("qd:count:silhouette_family", 1, str(descriptor["silhouette_family"]))
@@ -270,6 +296,8 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
         pipe.zadd("qd:last_used:visual_palette_id", {str(descriptor["visual_palette_id"]): int(time.time())})
         pipe.zadd("qd:last_used:surface_treatment", {str(descriptor["surface_treatment"]): int(time.time())})
+        pipe.zadd("qd:last_used:component_language", {str(descriptor["component_language"]): int(time.time())})
+        pipe.zadd("qd:last_used:component_style_signature", {str(descriptor["component_style_signature"]): int(time.time())})
         pipe.zadd("qd:last_used:visual_composition", {str(descriptor["visual_composition"]): int(time.time())})
         pipe.zadd("qd:last_used:layout_signature", {str(descriptor["layout_signature"]): int(time.time())})
         pipe.zadd("qd:last_used:silhouette_family", {str(descriptor["silhouette_family"]): int(time.time())})
@@ -302,6 +330,8 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
         reward_mechanics = list(redis_client.zrevrange("qd:last_used:reward_mechanic", 0, max(0, limit - 1)) or [])
         visual_palettes = redis_client.zrevrange("qd:last_used:visual_palette_id", 0, max(0, limit - 1)) or []
         surface_treatments = redis_client.zrevrange("qd:last_used:surface_treatment", 0, max(0, limit - 1)) or []
+        component_languages = redis_client.zrevrange("qd:last_used:component_language", 0, max(0, limit - 1)) or []
+        component_style_signatures = redis_client.zrevrange("qd:last_used:component_style_signature", 0, max(0, limit - 1)) or []
         compositions = redis_client.zrevrange("qd:last_used:visual_composition", 0, max(0, limit - 1)) or []
         layout_signatures = redis_client.zrevrange("qd:last_used:layout_signature", 0, max(0, limit - 1)) or []
         silhouette_families = redis_client.zrevrange("qd:last_used:silhouette_family", 0, max(0, limit - 1)) or []
@@ -314,6 +344,8 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
             "reward_mechanics": [str(item) for item in reward_mechanics if item],
             "visual_palettes": [str(item) for item in visual_palettes if item],
             "surface_treatments": [str(item) for item in surface_treatments if item],
+            "component_languages": [str(item) for item in component_languages if item],
+            "component_style_signatures": [str(item) for item in component_style_signatures if item],
             "compositions": [str(item) for item in compositions if item],
             "layout_signatures": [str(item) for item in layout_signatures if item],
             "silhouette_families": [str(item) for item in silhouette_families if item],
