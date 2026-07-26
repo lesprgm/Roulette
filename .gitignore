@@ -30,6 +30,7 @@ data/variants/*.yaml
 data/layout_topologies.yaml
 data/color_strategies.yaml
 data/component_languages.yaml
+data/library_capabilities.yaml
 
 # Build artifacts
 dist/
@@ -64,6 +65,7 @@ artifacts/playwright/
 
 # Local evaluation/review harness files
 benchmarks/
+evals/
 api/review_pack.py
 scripts/run_constraint_ablation.py
 scripts/run_generation_review_pack.py
