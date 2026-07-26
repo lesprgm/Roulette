@@ -5,7 +5,6 @@ from typing import Any, Dict, Tuple
 from fastapi import HTTPException
 
 from api.auth import is_admin_key, keys_required
-from api.generation.novelty import record_served_doc
 from api.generation.redis_diversity import record_site_descriptor
 from api.settings import SETTINGS
 
@@ -29,10 +28,6 @@ if SETTINGS.storage.redis_url and RedisRateLimiter and not os.getenv("PYTEST_CUR
 
 
 def record_user_visible_serve(doc: Dict[str, Any]) -> None:
-    try:
-        record_served_doc(doc)
-    except Exception:
-        pass
     try:
         record_site_descriptor(doc, event="site_served")
     except Exception:

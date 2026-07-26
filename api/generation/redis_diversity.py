@@ -8,9 +8,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from api.generation.interaction_catalog import format_family_for_id
-from api.generation.experience_quality import score_experience
 from api.generation.quality_html import extract_doc_html, visible_text
-from api.quality import score_page_doc
 from api.settings import SETTINGS
 
 try:
@@ -60,6 +58,7 @@ def _empty_recent_memory() -> Dict[str, List[str]]:
         "silhouette_families": [],
         "rendered_layout_families": [],
         "primary_renderers": [],
+        "visual_authorship_modes": [],
     }
 
 
@@ -164,10 +163,6 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
     plan = debug.get("premium_plan") if isinstance(debug, dict) else None
     if not isinstance(plan, dict):
         plan = {}
-    visual_quality = debug.get("quality_score") if isinstance(debug, dict) else None
-    if not isinstance(visual_quality, dict):
-        visual_quality = score_page_doc(doc)
-    experience_quality = score_experience(doc, plan)
     loop = plan.get("primary_loop") if isinstance(plan.get("primary_loop"), dict) else {}
     format_spec = plan.get("format_spec") if isinstance(plan.get("format_spec"), dict) else {}
     if not format_spec and isinstance(plan.get("activity_contract"), dict):
@@ -211,6 +206,8 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "silhouette_family": layout_model.get("silhouette_family") or "",
         "rendered_layout_family": _rendered_layout_family(html),
         "primary_renderer": visual_spec.get("primary_renderer") or "",
+        "library_capabilities": visual_spec.get("capabilities") if isinstance(visual_spec.get("capabilities"), list) else [],
+        "visual_authorship_mode": visual_spec.get("authorship_mode") or "guided",
         "chrome_policy": genre_contract.get("chrome_policy") or "",
         "task_format": task_model.get("format") or "",
         "task_goal": task_model.get("user_goal") or "",
@@ -224,8 +221,6 @@ def build_site_descriptor(doc: Dict[str, Any], *, site_id: str | None = None) ->
         "layout_archetype": plan.get("layout_archetype") or plan.get("layout_key") or "",
         "motion_archetype": plan.get("motion_archetype") or plan.get("motion_preset") or "",
         "rendering_mode": plan.get("rendering_mode") or "",
-        "quality_score": visual_quality.get("score", 0),
-        "experience_score": experience_quality.get("score", 0),
         "terms": _dominant_terms(html),
         "created_at": int(time.time()),
     }
@@ -270,10 +265,6 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe = redis_client.pipeline()
         pipe.set(f"site:{site_id}:descriptor", json.dumps(descriptor, ensure_ascii=False, separators=(",", ":")))
         pipe.set(f"site:{site_id}:plan", json.dumps(plan, ensure_ascii=False, separators=(",", ":")))
-        pipe.set(f"site:{site_id}:quality", json.dumps({
-            "visual": (debug or {}).get("quality_score"),
-            "experience": score_experience(doc, plan),
-        }, ensure_ascii=False, separators=(",", ":")))
         if HTML_CACHE_TTL_SECONDS > 0 and html:
             pipe.setex(f"site:{site_id}:html", HTML_CACHE_TTL_SECONDS, html)
         pipe.zincrby("qd:count:interaction_pattern", 1, str(descriptor["interaction_pattern"]))
@@ -281,28 +272,34 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
         pipe.zincrby("qd:count:format_id", 1, str(descriptor["format_id"]))
         pipe.zincrby("qd:count:format_family", 1, str(descriptor["format_family"]))
         pipe.zincrby("qd:count:reward_mechanic", 1, str(descriptor["reward_mechanic"]))
-        pipe.zincrby("qd:count:visual_palette_id", 1, str(descriptor["visual_palette_id"]))
         pipe.zincrby("qd:count:surface_treatment", 1, str(descriptor["surface_treatment"]))
-        pipe.zincrby("qd:count:component_language", 1, str(descriptor["component_language"]))
+        if descriptor["visual_palette_id"]:
+            pipe.zincrby("qd:count:visual_palette_id", 1, str(descriptor["visual_palette_id"]))
+        if descriptor["component_language"]:
+            pipe.zincrby("qd:count:component_language", 1, str(descriptor["component_language"]))
         pipe.zincrby("qd:count:component_style_signature", 1, str(descriptor["component_style_signature"]))
         pipe.zincrby("qd:count:visual_composition", 1, str(descriptor["visual_composition"]))
         pipe.zincrby("qd:count:layout_signature", 1, str(descriptor["layout_signature"]))
         pipe.zincrby("qd:count:silhouette_family", 1, str(descriptor["silhouette_family"]))
         pipe.zincrby("qd:count:rendered_layout_family", 1, str(descriptor["rendered_layout_family"]))
         pipe.zincrby("qd:count:primary_renderer", 1, str(descriptor["primary_renderer"]))
+        pipe.zincrby("qd:count:visual_authorship_mode", 1, str(descriptor["visual_authorship_mode"]))
         pipe.zadd("qd:last_used:interaction_loop", {str(descriptor["interaction_loop"]): int(time.time())})
         pipe.zadd("qd:last_used:format_id", {str(descriptor["format_id"]): int(time.time())})
         pipe.zadd("qd:last_used:format_family", {str(descriptor["format_family"]): int(time.time())})
         pipe.zadd("qd:last_used:reward_mechanic", {str(descriptor["reward_mechanic"]): int(time.time())})
-        pipe.zadd("qd:last_used:visual_palette_id", {str(descriptor["visual_palette_id"]): int(time.time())})
         pipe.zadd("qd:last_used:surface_treatment", {str(descriptor["surface_treatment"]): int(time.time())})
-        pipe.zadd("qd:last_used:component_language", {str(descriptor["component_language"]): int(time.time())})
+        if descriptor["visual_palette_id"]:
+            pipe.zadd("qd:last_used:visual_palette_id", {str(descriptor["visual_palette_id"]): int(time.time())})
+        if descriptor["component_language"]:
+            pipe.zadd("qd:last_used:component_language", {str(descriptor["component_language"]): int(time.time())})
         pipe.zadd("qd:last_used:component_style_signature", {str(descriptor["component_style_signature"]): int(time.time())})
         pipe.zadd("qd:last_used:visual_composition", {str(descriptor["visual_composition"]): int(time.time())})
         pipe.zadd("qd:last_used:layout_signature", {str(descriptor["layout_signature"]): int(time.time())})
         pipe.zadd("qd:last_used:silhouette_family", {str(descriptor["silhouette_family"]): int(time.time())})
         pipe.zadd("qd:last_used:rendered_layout_family", {str(descriptor["rendered_layout_family"]): int(time.time())})
         pipe.zadd("qd:last_used:primary_renderer", {str(descriptor["primary_renderer"]): int(time.time())})
+        pipe.zadd("qd:last_used:visual_authorship_mode", {str(descriptor["visual_authorship_mode"]): int(time.time())})
         for kind, value in fingerprint_values(descriptor, plan, html).items():
             pipe.setex(f"fingerprint:{kind}:{value}", FINGERPRINT_TTL_SECONDS, site_id)
         pipe.execute()
@@ -311,8 +308,6 @@ def record_site_descriptor(doc: Dict[str, Any], *, event: str = "site_served", c
             "interaction_pattern": descriptor["interaction_pattern"],
             "interaction_loop": descriptor["interaction_loop"],
             "reward_mechanic": descriptor["reward_mechanic"],
-            "quality_score": descriptor["quality_score"],
-            "experience_score": descriptor["experience_score"],
         }, client=redis_client)
     except Exception:
         return descriptor
@@ -337,6 +332,7 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
         silhouette_families = redis_client.zrevrange("qd:last_used:silhouette_family", 0, max(0, limit - 1)) or []
         rendered_layout_families = redis_client.zrevrange("qd:last_used:rendered_layout_family", 0, max(0, limit - 1)) or []
         primary_renderers = redis_client.zrevrange("qd:last_used:primary_renderer", 0, max(0, limit - 1)) or []
+        visual_authorship_modes = redis_client.zrevrange("qd:last_used:visual_authorship_mode", 0, max(0, limit - 1)) or []
         return {
             "format_ids": format_ids,
             "format_families": format_families,
@@ -351,6 +347,7 @@ def recent_format_memory(limit: int = 20, client: Any = None) -> Dict[str, List[
             "silhouette_families": [str(item) for item in silhouette_families if item],
             "rendered_layout_families": [str(item) for item in rendered_layout_families if item],
             "primary_renderers": [str(item) for item in primary_renderers if item],
+            "visual_authorship_modes": [str(item) for item in visual_authorship_modes if item],
         }
     except Exception:
         return _empty_recent_memory()

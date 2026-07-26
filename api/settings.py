@@ -100,8 +100,6 @@ class StorageSettings:
     diversity_enabled: bool
     diversity_html_cache_ttl_seconds: int
     diversity_fingerprint_ttl_seconds: int
-    novelty_ledger_path: Path
-    novelty_ledger_size: int
 
 
 @dataclass(frozen=True)
@@ -184,8 +182,6 @@ def load_settings() -> Settings:
             diversity_enabled=_bool("REDIS_DIVERSITY_ENABLED", True),
             diversity_html_cache_ttl_seconds=_int("DIVERSITY_HTML_CACHE_TTL_SECONDS", 604_800, minimum=1),
             diversity_fingerprint_ttl_seconds=_int("DIVERSITY_FINGERPRINT_TTL_SECONDS", 604_800, minimum=1),
-            novelty_ledger_path=Path(_text("NOVELTY_LEDGER_PATH", "cache/novelty_ledger.json")),
-            novelty_ledger_size=_int("NOVELTY_LEDGER_SIZE", 80, minimum=10),
         ),
         runtime=RuntimeSettings(
             log_level=_text("LOG_LEVEL", "INFO").upper(),
