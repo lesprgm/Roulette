@@ -45,20 +45,10 @@ def signature_for_doc(doc: Dict) -> str:
     """
     if not isinstance(doc, dict):
         return ""
-    if doc.get("kind") == "ndw_snippet_v1":
-        payload = _skeletonize(doc.get("html") or "") + (doc.get("css") or "") + (doc.get("js") or "")
-    elif doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
+    if doc.get("kind") == "full_page_html" and isinstance(doc.get("html"), str):
         payload = _skeletonize(doc["html"])
     else:
         payload = ""
-        comps = doc.get("components")
-        if isinstance(comps, list) and comps:
-            c0 = comps[0]
-            if isinstance(c0, dict):
-                props = c0.get("props") or {}
-                h = props.get("html")
-                if isinstance(h, str):
-                    payload = _skeletonize(h)
     
     if not payload:
         # Fallback to JSON dump if we can't extract HTML

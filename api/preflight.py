@@ -660,64 +660,18 @@ def preflight_doc(doc: Dict[str, Any]) -> List[PreflightIssue]:
         return []
 
     issues: List[PreflightIssue] = []
-    kind = str(doc.get("kind") or "").lower()
-    if kind == "full_page_html":
-        html = doc.get("html")
-        if isinstance(html, str):
-            issues.extend(
-                _inspect_html(
-                    html,
-                    field="html",
-                    allow_module_imports=True,
-                    doc_kind="full_page_html",
-                )
-            )
+    if str(doc.get("kind") or "").lower() != "full_page_html":
         return issues
-
-    if kind == "ndw_snippet_v1":
-        html = doc.get("html")
-        if isinstance(html, str) and html.strip():
-            issues.extend(
-                _inspect_html(
-                    html,
-                    field="html",
-                    allow_module_imports=False,
-                    doc_kind="ndw_snippet_v1",
-                )
+    html = doc.get("html")
+    if isinstance(html, str):
+        issues.extend(
+            _inspect_html(
+                html,
+                field="html",
+                allow_module_imports=True,
+                doc_kind="full_page_html",
             )
-        js_code = doc.get("js")
-        if isinstance(js_code, str) and js_code.strip():
-            issues.extend(
-                _inspect_js(
-                    js_code,
-                    field="js",
-                    html_ids=_extract_ids(html or ""),
-                    html_classes=_extract_classes(html or ""),
-                    allow_module_imports=False,
-                    module=False,
-                    doc_kind="ndw_snippet_v1",
-                )
-            )
-        return issues
-
-    components = doc.get("components")
-    if isinstance(components, list):
-        for index, comp in enumerate(components):
-            if not isinstance(comp, dict):
-                continue
-            props = comp.get("props")
-            html = props.get("html") if isinstance(props, dict) else None
-            if isinstance(html, str) and html.strip():
-                issues.extend(
-                    _inspect_html(
-                        html,
-                        field=f"components[{index}].props.html",
-                        allow_module_imports=False,
-                        doc_kind="component_html",
-                    )
-                )
-        return issues
-
+        )
     return issues
 
 

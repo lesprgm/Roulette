@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -15,18 +15,7 @@ def extract_doc_html(doc: Dict[str, Any]) -> str:
     if not isinstance(doc, dict):
         return ""
     html = doc.get("html")
-    if isinstance(html, str):
-        return html
-    components = doc.get("components")
-    if not isinstance(components, list):
-        return ""
-    chunks: List[str] = []
-    for component in components:
-        props = component.get("props") if isinstance(component, dict) else None
-        chunk = props.get("html") if isinstance(props, dict) else None
-        if isinstance(chunk, str):
-            chunks.append(chunk)
-    return "\n".join(chunks)
+    return html if isinstance(html, str) else ""
 
 
 def visible_text(html: str, *, lowercase: bool = False) -> str:
