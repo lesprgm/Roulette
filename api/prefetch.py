@@ -127,21 +127,6 @@ def _extract_title(doc: Dict[str, Any]) -> str:
             match = _H1_RE.search(html)
             if match:
                 return _clean_title(match.group(1))
-    comps = doc.get("components")
-    if isinstance(comps, list):
-        for comp in comps:
-            if not isinstance(comp, dict):
-                continue
-            props = comp.get("props") or {}
-            if isinstance(props, dict):
-                t = props.get("title")
-                if isinstance(t, str) and t.strip():
-                    return _clean_title(t)
-                html = props.get("html")
-                if isinstance(html, str):
-                    match = _TITLE_RE.search(html) or _H1_RE.search(html)
-                    if match:
-                        return _clean_title(match.group(1))
     return "Untitled"
 
 

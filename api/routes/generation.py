@@ -36,19 +36,8 @@ class ValidateRequest(BaseModel):
 
 def _offline_page(seed: int) -> Dict[str, Any]:
     return {
-        "components": [{
-            "id": "offline-1",
-            "type": "custom",
-            "props": {
-                "html": """<div class="p-6 rounded-xl border border-slate-200 bg-white"><h3 class="text-xl font-semibold">Offline Sandbox App</h3><p class="mt-2 text-sm text-slate-700">This was rendered without an API key.</p><button id="btn" class="mt-3 px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700">Click</button><div id="out" class="mt-2 text-slate-700"></div><script>let n=0; const o=document.getElementById('out');document.getElementById('btn').onclick=()=>{n++;o.textContent='Clicks: '+n;};</script></div>""",
-                "height": 260,
-            },
-        }],
-        "layout": {"flow": "stack"},
-        "palette": {"primary": "slate", "accent": "indigo"},
-        "links": ["/about"],
-        "seed": seed,
-        "model_version": "offline",
+        "kind": "full_page_html",
+        "html": """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline Sandbox App</title></head><body><main id="ndw-content"><h1>Offline Sandbox App</h1><p>This was rendered without an API key.</p><button id="btn" type="button">Click</button><output id="out">Clicks: 0</output></main><script>let n=0;const o=document.getElementById('out');document.getElementById('btn').addEventListener('click',()=>{o.textContent='Clicks: '+(++n)});</script></body></html>""",
         "review": {
             "ok": True,
             "issues": [],
@@ -59,19 +48,8 @@ def _offline_page(seed: int) -> Dict[str, Any]:
 
 def _test_page(seed: int) -> Dict[str, Any]:
     return {
-        "components": [{
-            "id": "custom-1",
-            "type": "custom",
-            "props": {
-                "html": """<div class="p-4 rounded-xl border border-slate-200 bg-white"><h3 class="text-xl font-semibold">Test App</h3><div id="t" class="mt-2 text-sm text-slate-700">OK</div><script>document.getElementById('t').textContent='Rendered';</script></div>""",
-                "height": 240,
-            },
-        }],
-        "layout": {"flow": "stack"},
-        "palette": {"primary": "slate", "accent": "indigo"},
-        "links": ["/about"],
-        "seed": seed,
-        "model_version": "test-stub",
+        "kind": "full_page_html",
+        "html": f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Test App</title></head><body><main id="ndw-content"><h1>Test App</h1><div id="t">Seed {seed}</div></main><script>document.getElementById('t').textContent='Rendered';</script></body></html>""",
     }
 
 
