@@ -75,65 +75,11 @@ def _json_from_text(text: str) -> Any:
 
 
 def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize model output to one of the accepted shapes or raise ValueError."""
+    """Normalize model output to full-page HTML or raise ValueError."""
     if not isinstance(doc, dict):
         raise ValueError("not a dict")
     if isinstance(doc.get("error"), str):
         return _sanitize_doc_external_assets({"error": str(doc["error"])[:500]})
-    # Inference: if no explicit kind/components but looks like a snippet payload, coerce
-    if ("html" in doc or "css" in doc or "js" in doc) and not (
-        doc.get("components") or doc.get("kind") or doc.get("type")
-    ):
-        doc = {
-            "kind": "ndw_snippet_v1",
-            **{k: v for k, v in doc.items() if k in {"title", "background", "css", "html", "js"}},
-        }
-    # Accept the new compact snippet format directly
-    kind = str(doc.get("kind") or doc.get("type") or "").lower()
-    # Tolerate common synonyms for snippet kind
-    if kind in {"ndw_snippet", "snippet_v1", "ndw-canvas-snippet", "canvas_snippet", "canvas-snippet"}:
-        kind = "ndw_snippet_v1"
-    if kind == "ndw_snippet_v1":
-        # Validate minimal fields, coerce to expected keys
-        out: Dict[str, Any] = {"kind": "ndw_snippet_v1"}
-        if isinstance(doc.get("title"), str):
-            out["title"] = doc["title"]
-        bg = doc.get("background")
-        if isinstance(bg, dict):
-            out_bg: Dict[str, Any] = {}
-            sty = bg.get("style")
-            if isinstance(sty, list):
-                sty = "; ".join([s for s in sty if isinstance(s, str)])
-            if isinstance(sty, str) and sty.strip():
-                sty = re.sub(r"^\s*background\s*:\s*", "", sty, flags=re.IGNORECASE)
-                out_bg["style"] = sty
-            cls = bg.get("class") or bg.get("className") or bg.get("classes")
-            if isinstance(cls, list):
-                cls = " ".join([c for c in cls if isinstance(c, str)])
-            if isinstance(cls, str) and cls.strip():
-                out_bg["class"] = cls
-            if out_bg:
-                out["background"] = out_bg
-        css = doc.get("css")
-        html = doc.get("html")
-        js = doc.get("js")
-        if isinstance(css, str) and css.strip():
-            out["css"] = css
-        if isinstance(html, str) and html.strip():
-            out["html"] = html
-        if isinstance(js, str) and js.strip():
-            out["js"] = js
-        if not out.get("html"):
-            # If no HTML provided, attempt to derive from any nested structure
-            for k in ("content", "body", "markup"):
-                v = doc.get(k)
-                if isinstance(v, str) and ("<" in v and ">" in v):
-                    out["html"] = v
-                    break
-        if not out.get("html") and not out.get("css") and not out.get("js"):
-            raise ValueError("ndw_snippet_v1 missing content")
-        return _sanitize_doc_external_assets(out)
-    # Accept common variants/synonyms for full-page HTML
     for key in ("kind", "type"):
         k = str(doc.get(key) or "").lower()
         if k in {"full_page_html", "page_html", "html_page", "full_html"}:
@@ -148,39 +94,6 @@ def _normalize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
             return _sanitize_doc_external_assets({"kind": "full_page_html", "html": val})
         if isinstance(val, dict) and isinstance(val.get("html"), str):
             return _sanitize_doc_external_assets({"kind": "full_page_html", "html": val.get("html")})
-    comps = doc.get("components")
-    if isinstance(comps, dict):
-        comps = [comps]
-    if isinstance(comps, list):
-        normalized_components: list[Dict[str, Any]] = []
-        for idx, c in enumerate(comps):
-            if not isinstance(c, dict):
-                continue
-            raw_props = c.get("props")
-            props = dict(raw_props) if isinstance(raw_props, dict) else {}
-            html = props.get("html")
-            if not (isinstance(html, str) and html.strip()):
-                html = c.get("html") if isinstance(c.get("html"), str) else None
-            if not (isinstance(html, str) and html.strip()):
-                continue
-            height_val = props.get("height") if isinstance(props, dict) else c.get("height")
-            try:
-                height = int(height_val) if height_val is not None else 360
-            except Exception:
-                # If height is a string like "100vh", fall back to a generous default
-                height = 720
-            # Ensure html/height are present and sanitized
-            props["html"] = html.strip()
-            props["height"] = height
-            normalized_components.append(
-                {
-                    "id": str(c.get("id") or f"custom-{idx + 1}"),
-                    "type": "custom",
-                    "props": props,
-                }
-            )
-        if normalized_components:
-            return _sanitize_doc_external_assets({"components": normalized_components})
 
     def _find_html(obj: Any, depth: int = 0) -> Optional[str]:
         if depth > 2:
@@ -345,40 +258,6 @@ def _sanitize_doc_external_assets(doc: Dict[str, Any]) -> Dict[str, Any]:
             doc["html"] = sanitized
         issues.extend(removed)
         issues.extend(cleaned)
-    comps = doc.get("components")
-    if isinstance(comps, list):
-        next_comps = []
-        changed = False
-        for comp in comps:
-            if not isinstance(comp, dict):
-                next_comps.append(comp)
-                continue
-            props = comp.get("props")
-            html = props.get("html") if isinstance(props, dict) else None
-            if isinstance(html, str):
-                sanitized, removed = _strip_external_assets(html)
-                sanitized, cleaned = _strip_visible_text_artifacts(sanitized)
-                if sanitized != html:
-                    new_comp = dict(comp)
-                    new_props = dict(props)
-                    new_props["html"] = sanitized
-                    new_comp["props"] = new_props
-                    comp = new_comp
-                    changed = True
-                if removed:
-                    for item in removed:
-                        item = dict(item)
-                        item["field"] = f"components[{comp.get('id') or ''}].html"
-                        issues.append(item)
-                if cleaned:
-                    for item in cleaned:
-                        item = dict(item)
-                        item["field"] = f"components[{comp.get('id') or ''}].html"
-                        issues.append(item)
-            next_comps.append(comp)
-        if changed:
-            doc = dict(doc)
-            doc["components"] = next_comps
     if issues:
         debug = doc.get("ndw_debug")
         if not isinstance(debug, dict):
