@@ -4,12 +4,7 @@ import os
 import random
 from typing import Any, Dict, Iterable, Optional, Tuple, List, Sequence, Set
 import requests
-from api.generation.task_quality import score_task_quality
-from api.generation.design_quality import score_design_discipline
-from api.generation.experience_quality import score_experience
-from api.generation.prompts import PREMIUM_PLAN_SCHEMA
 from api.llm_parsing import _normalize_doc
-from api.generation.novelty import novelty_summary
 from api.generation.output_parsing import (
     extract_completed_premium_burst_sites as _extract_completed_premium_burst_sites,
     extract_final_html_blocks as _extract_final_html_blocks,
@@ -17,27 +12,17 @@ from api.generation.output_parsing import (
 )
 from api.generation.premium_prompts import (
     build_premium_burst_prompt as _build_premium_burst_prompt_impl,
-    build_premium_page_prompt as _build_premium_page_prompt_impl,
-    build_premium_plan_prompt as _build_premium_plan_prompt_impl,
-)
-from api.generation.premium_quality import (
-    attach_premium_evaluations as _attach_premium_evaluations_impl,
-    attach_quality_score as _attach_quality_score_impl,
 )
 from api.generation.provider_gemini import (
-    call_structured as _provider_call_structured,
-    call_text as _provider_call_text,
     high_demand_retry_after_seconds as _gemini_high_demand_retry_after_seconds,
     is_high_demand_response as _gemini_is_high_demand_response,
     is_high_demand_blocked as _gemini_high_demand_blocked,
     iter_stream_text as _provider_iter_stream_text,
     mark_high_demand as _gemini_mark_high_demand,
-    was_quota_exhausted,
 )
 from api.preflight import annotate_doc as _annotate_preflight_doc
 from api.preflight import has_blocking_issues as _preflight_has_blocking_issues
 from api.preflight import preflight_doc as _preflight_doc
-from api.quality import score_page_doc
 from api.generation.interaction_catalog import (
     seeded_diverse_format_first_targets,
     seeded_format_first_target,
@@ -45,7 +30,7 @@ from api.generation.interaction_catalog import (
 )
 from api.generation.redis_diversity import recent_format_memory
 from api.generation.task_model import task_model_for_format
-from api.generation.visual_spec import visual_spec_for_target
+from api.generation.visual_spec import PAPER_SHADER_PRESETS, visual_spec_for_target
 from api.settings import SETTINGS
 
 
@@ -63,7 +48,6 @@ def _testing_stub_enabled() -> bool:
     return True
 log = logging.getLogger(__name__)
 
-TEMPERATURE = SETTINGS.llm.temperature
 LLM_TIMEOUT_SECS = SETTINGS.llm.timeout_seconds
 GEMINI_MAX_OUTPUT_TOKENS = SETTINGS.llm.gemini_max_output_tokens
 GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS = SETTINGS.llm.premium_build_max_output_tokens
@@ -74,14 +58,6 @@ _ENV_GEMINI_API_KEY = GEMINI_API_KEY
 
 GEMINI_GENERATION_MODEL = SETTINGS.llm.generation_model
 GEMINI_FALLBACK_MODEL = SETTINGS.llm.fallback_model
-GEMINI_GENERATION_ENDPOINT = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:generateContent"
-)
-GEMINI_FALLBACK_GENERATION_ENDPOINT = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_FALLBACK_MODEL}:generateContent"
-    if GEMINI_FALLBACK_MODEL and GEMINI_FALLBACK_MODEL != GEMINI_GENERATION_MODEL
-    else ""
-)
 GEMINI_STREAM_ENDPOINT = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_GENERATION_MODEL}:streamGenerateContent"
 )
@@ -134,8 +110,18 @@ def premium_available() -> bool:
     return bool(GEMINI_API_KEY)
 
 
-def _attach_quality_score(doc: Dict[str, Any], mode: str) -> Dict[str, Any]:
-    return _attach_quality_score_impl(doc, mode, score_page_doc=score_page_doc)
+def _attach_generation_metadata(
+    doc: Dict[str, Any], mode: str, plan: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    if not isinstance(doc, dict) or doc.get("error"):
+        return doc
+    out = dict(doc)
+    debug = dict(out.get("ndw_debug") or {})
+    debug["generation_mode"] = mode
+    if isinstance(plan, dict):
+        debug["premium_plan"] = plan
+    out["ndw_debug"] = debug
+    return out
 
 
 def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
@@ -180,151 +166,12 @@ def _experience_fields_from_task(target: Dict[str, Any], task: Dict[str, Any]) -
     }
 
 
-def _attach_premium_evaluations(
-    scored: Dict[str, Any],
-    plan: Dict[str, Any],
-    *,
-    include_experience: Optional[bool] = None,
-) -> Dict[str, Any]:
-    return _attach_premium_evaluations_impl(
-        scored,
-        plan,
-        score_experience=score_experience,
-        score_design_discipline=score_design_discipline,
-        score_task_quality=score_task_quality,
-        include_experience=include_experience,
-    )
-
-
-def generate_page(
-    brief: str,
-    seed: int,
-    user_key: Optional[str] = None,
-    run_review: bool = True,
-    providers_override: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    """Premium-only generation helper retained for script/API compatibility."""
-    del run_review, providers_override
-    seed_val = int(seed or 0) or random.randint(1, 10_000_000)
-    doc = generate_page_premium(brief, seed_val, user_key=user_key)
-    if isinstance(doc, dict) and not doc.get("error"):
-        return doc
-    return doc if isinstance(doc, dict) and doc.get("error") else {"error": "Model generation failed"}
-
-
-def generate_page_premium(
-    brief: str,
-    seed: int,
-    user_key: Optional[str] = None,
-) -> Dict[str, Any]:
-    auto_cues = {"", "auto", "random", "surprise me"}
-    brief_str = (brief or "").strip()
-    if brief_str.lower() in auto_cues:
-        brief_str = ""
-    seed_val = int(seed or 0) or random.randint(1, 10_000_000)
-
-    if _testing_stub_enabled():
-        return _attach_quality_score(
-            _call_testing_stub(brief_str, seed_val, "PREMIUM MODE TEST STUB"),
-            "premium",
-        )
-    if not GEMINI_API_KEY:
-        return {"error": "Premium mode requires GEMINI_API_KEY"}
-    if _gemini_high_demand_blocked():
-        return {
-            "error": "model_temporarily_unavailable",
-            "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
-        }
-
-    plan = _call_gemini_premium_plan(brief_str, seed_val, user_key)
-    if not isinstance(plan, dict):
-        if was_quota_exhausted():
-            return {"error": "model_quota_exhausted"}
-        if _gemini_high_demand_blocked():
-            return {
-                "error": "model_temporarily_unavailable",
-                "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
-            }
-        return {"error": "Premium planner failed"}
-
-    raw_doc = _call_gemini_premium_build(brief_str, seed_val, plan)
-    if not isinstance(raw_doc, dict):
-        if was_quota_exhausted():
-            return {"error": "model_quota_exhausted"}
-        if _gemini_high_demand_blocked():
-            return {
-                "error": "model_temporarily_unavailable",
-                "retry_after_seconds": _gemini_high_demand_retry_after_seconds(),
-            }
-        return {"error": "Premium build failed"}
-    try:
-        doc = _normalize_doc(raw_doc)
-    except Exception as exc:
-        logging.warning("Premium build normalization failed: %r", exc)
-        return {"error": "Premium build returned invalid HTML"}
-
-    preflight_issues = _preflight_doc(doc)
-    if preflight_issues:
-        doc = _annotate_preflight_doc(doc, preflight_issues)
-    if _preflight_has_blocking_issues(preflight_issues):
-        return {"error": "Premium build failed local preflight", "issues": preflight_issues}
-    scored = _attach_quality_score(doc, "premium")
-    scored = _attach_premium_evaluations(scored, plan, include_experience=True)
-    return scored
-
-
 def _call_testing_stub(brief: str, seed: int, category_note: str) -> Dict[str, Any]:
     """Fallback stub for local development and testing."""
     return {
         "kind": "full_page_html",
         "html": f"<!doctype html><html><body><h1>{brief or 'Stub App'}</h1><p>Seed: {seed}</p><p>Category: {category_note}</p></body></html>"
     }
-
-
-def _call_gemini_structured(
-    parts: List[Dict[str, Any]],
-    schema: Dict[str, Any],
-    *,
-    temperature: Optional[float] = None,
-    max_output_tokens: Optional[int] = None,
-    endpoint: Optional[str] = None,
-    retry_without_thinking: bool = True,
-) -> Optional[Any]:
-    return _provider_call_structured(
-        parts=parts,
-        schema=schema,
-        api_key=GEMINI_API_KEY,
-        endpoint=endpoint or GEMINI_GENERATION_ENDPOINT,
-        fallback_endpoint="" if endpoint else GEMINI_FALLBACK_GENERATION_ENDPOINT,
-        temperature=TEMPERATURE if temperature is None else temperature,
-        max_output_tokens=max_output_tokens or GEMINI_MAX_OUTPUT_TOKENS,
-        timeout_secs=LLM_TIMEOUT_SECS,
-        thinking_level=GEMINI_THINKING_LEVEL,
-        extract_text=_extract_gemini_text,
-        retry_without_thinking=retry_without_thinking,
-    )
-
-
-def _call_gemini_text(
-    parts: List[Dict[str, Any]],
-    *,
-    temperature: Optional[float] = None,
-    max_output_tokens: Optional[int] = None,
-    endpoint: Optional[str] = None,
-    retry_without_thinking: bool = True,
-) -> Optional[str]:
-    return _provider_call_text(
-        parts=parts,
-        api_key=GEMINI_API_KEY,
-        endpoint=endpoint or GEMINI_GENERATION_ENDPOINT,
-        fallback_endpoint="" if endpoint else GEMINI_FALLBACK_GENERATION_ENDPOINT,
-        temperature=TEMPERATURE if temperature is None else temperature,
-        max_output_tokens=max_output_tokens or GEMINI_MAX_OUTPUT_TOKENS,
-        timeout_secs=LLM_TIMEOUT_SECS,
-        thinking_level=GEMINI_THINKING_LEVEL,
-        extract_text=_extract_gemini_text,
-        retry_without_thinking=retry_without_thinking,
-    )
 
 
 def _iter_gemini_stream_text(resp: requests.Response) -> Iterable[str]:
@@ -339,8 +186,7 @@ def extract_completed_premium_burst_sites(text: str) -> List[Tuple[int, str]]:
     return _extract_completed_premium_burst_sites(text)
 
 
-def _premium_burst_rejection(doc: Dict[str, Any], quality: Dict[str, Any]) -> Optional[str]:
-    del quality
+def _premium_burst_rejection(doc: Dict[str, Any]) -> Optional[str]:
     html = str(doc.get("html") or "")
     html_bytes = len(html.encode("utf-8"))
     if html_bytes < PREMIUM_BURST_MIN_HTML_BYTES:
@@ -354,7 +200,6 @@ def _premium_burst_rejected_payload(
     reason: str,
     doc: Optional[Dict[str, Any]] = None,
     issues: Optional[List[Dict[str, Any]]] = None,
-    quality: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return {
         "rejected": True,
@@ -362,7 +207,6 @@ def _premium_burst_rejected_payload(
         "premium_burst_index": index,
         "doc": doc,
         "issues": issues or [],
-        "quality_score": quality or {},
     }
 
 
@@ -384,6 +228,22 @@ def _summarize_preflight_issues(issues: Sequence[Dict[str, Any]], limit: int = 4
 def _build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, Any]]) -> str:
     return _build_premium_burst_prompt_impl(brief, seed, targets)
 
+
+def _paper_shader_assignments(seed: int, count: int) -> Dict[int, str]:
+    rng = random.Random(f"{seed}:paper-shader-slots")
+    shader_count = min(count, 3 if count >= 7 and rng.random() < 0.5 else 2 if count >= 5 else 1)
+    slots = rng.sample(range(count), shader_count)
+    presets = rng.sample(PAPER_SHADER_PRESETS, shader_count)
+    return dict(zip(slots, presets))
+
+
+def _visual_authorship_assignments(seed: int, count: int) -> Dict[int, str]:
+    rng = random.Random(f"{seed}:visual-authorship")
+    authored_count = round(count * 3 / 7)
+    authored_slots = set(rng.sample(range(count), authored_count))
+    return {index: "authored" if index in authored_slots else "guided" for index in range(count)}
+
+
 def generate_page_premium_burst(
     brief: str,
     seed: int,
@@ -397,7 +257,7 @@ def generate_page_premium_burst(
     target_count = max(1, min(25, int(count or 1)))
     if _testing_stub_enabled():
         for idx in range(target_count):
-            yield _attach_quality_score(
+            yield _attach_generation_metadata(
                 _call_testing_stub(brief or "Premium burst", seed_val + idx, f"PREMIUM BURST TEST STUB {idx + 1}"),
                 "premium_burst",
             )
@@ -422,16 +282,22 @@ def generate_page_premium_burst(
         recent_reward_mechanics=memory.get("reward_mechanics"),
     )
     targets = []
+    shader_assignments = _paper_shader_assignments(seed_val, target_count)
+    authorship_assignments = _visual_authorship_assignments(seed_val, target_count)
     visual_reservations: Dict[str, List[str]] = {
         "layout_signatures": list(memory.get("layout_signatures") or memory.get("compositions") or [])[:12],
         "silhouette_families": list(memory.get("silhouette_families") or [])[:8],
         "rendered_layout_families": list(memory.get("rendered_layout_families") or [])[:8],
-        "surface_treatments": list(memory.get("surface_treatments") or [])[:1],
         "component_languages": list(memory.get("component_languages") or [])[:1],
     }
     for idx, base_target in enumerate(base_targets):
         site_seed = seed_val + ((idx + 1) * 7919)
         base_target["_visual_reservations"] = visual_reservations
+        base_target["_visual_authorship_mode"] = authorship_assignments[idx]
+        if idx in shader_assignments:
+            base_target["_paper_shader_preset"] = shader_assignments[idx]
+        else:
+            base_target["_paper_shader_allowed"] = False
         target = _premium_experience_target(site_seed, base_target=base_target)
         target["site_index"] = idx + 1
         target["seed"] = site_seed
@@ -444,9 +310,6 @@ def generate_page_premium_burst(
         silhouette_family = str((spec.get("layout_model") or {}).get("silhouette_family") or "").strip()
         if silhouette_family and silhouette_family not in visual_reservations["silhouette_families"]:
             visual_reservations["silhouette_families"].append(silhouette_family)
-        surface_mode = str(((spec.get("visual_direction") or {}).get("surface_treatment") or {}).get("mode") or "").strip()
-        if surface_mode == "paper_shader" and surface_mode not in visual_reservations["surface_treatments"]:
-            visual_reservations["surface_treatments"].append(surface_mode)
         component_language = str((spec.get("component_language") or {}).get("id") or "").strip()
         if component_language and component_language not in visual_reservations["component_languages"]:
             visual_reservations["component_languages"].append(component_language)
@@ -545,11 +408,9 @@ def generate_page_premium_burst(
                         continue
                     if issues:
                         doc = _annotate_preflight_doc(doc, issues)
-                    scored = _attach_quality_score(doc, "premium_burst")
                     plan = targets[index - 1] if 0 < index <= len(targets) else {}
-                    scored = _attach_premium_evaluations(scored, plan)
-                    quality = (scored.get("ndw_debug") or {}).get("quality_score") or {}
-                    rejection = _premium_burst_rejection(scored, quality)
+                    scored = _attach_generation_metadata(doc, "premium_burst", plan)
+                    rejection = _premium_burst_rejection(scored)
                     if rejection:
                         logging.warning("Premium burst skipped low-quality site %s: %s", index, rejection)
                         if include_rejected:
@@ -557,7 +418,6 @@ def generate_page_premium_burst(
                                 index=index,
                                 reason=rejection,
                                 doc=scored,
-                                quality=quality,
                             )
                         continue
                     debug = dict(scored.get("ndw_debug") or {})
@@ -599,13 +459,15 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
     if isinstance(base_target, dict):
         target = dict(base_target)
         visual_reservations = target.pop("_visual_reservations", {})
+        paper_shader_preset = str(target.pop("_paper_shader_preset", "") or "")
+        paper_shader_allowed = bool(target.pop("_paper_shader_allowed", True))
+        visual_authorship_mode = str(target.pop("_visual_authorship_mode", "guided") or "guided")
     else:
         memory = recent_format_memory(limit=20)
         visual_reservations = {
             "layout_signatures": memory.get("layout_signatures") or memory.get("compositions") or [],
             "silhouette_families": memory.get("silhouette_families") or [],
             "rendered_layout_families": memory.get("rendered_layout_families") or [],
-            "surface_treatments": memory.get("surface_treatments") or [],
             "component_languages": (memory.get("component_languages") or [])[:1],
         }
         target = seeded_format_first_target(
@@ -615,6 +477,9 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
             recent_interaction_loops=memory.get("interaction_loops"),
             recent_reward_mechanics=memory.get("reward_mechanics"),
         )
+        paper_shader_preset = ""
+        paper_shader_allowed = True
+        visual_authorship_mode = "guided"
     archetype = str(target["interaction_pattern"])
     loop_type = str(target["interaction_loop"])
     task = task_model_for_format(
@@ -628,7 +493,11 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
         format_id=str(target["format_spec"]["format_id"]),
         task_model=task,
         library_profile=str(target["format_spec"].get("library_profile") or ""),
+        capabilities=target["format_spec"].get("capabilities") or [],
+        authorship_mode=visual_authorship_mode,
         reserved=visual_reservations,
+        paper_shader_preset=paper_shader_preset,
+        paper_shader_allowed=paper_shader_allowed,
     )
     return {
         **target,
@@ -640,54 +509,6 @@ def _premium_experience_target(seed: int, base_target: Optional[Dict[str, Any]] 
         "visual_spec": visual_spec,
         "title_policy": "The concrete format name remains dominant. If the page itself names a material or object in a title or major label, visibly support that claim through the interface; otherwise keep the claim out of copy.",
     }
-
-
-def _build_premium_plan_prompt(brief: str, seed: int, experience_target: Optional[Dict[str, Any]] = None) -> str:
-    target = experience_target if isinstance(experience_target, dict) else _premium_experience_target(seed)
-    return _build_premium_plan_prompt_impl(brief, seed, experience_target=target, novelty=novelty_summary())
-
-
-def _build_premium_page_prompt(
-    brief: str,
-    seed: int,
-    plan: Dict[str, Any],
-    retry_note: str = "",
-) -> str:
-    return _build_premium_page_prompt_impl(brief, seed, plan, retry_note)
-
-def _call_gemini_premium_plan(
-    brief: str,
-    seed: int,
-    user_key: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    del user_key
-    experience_target = _premium_experience_target(seed)
-    parts: List[Dict[str, Any]] = [{"text": _build_premium_plan_prompt(brief, seed, experience_target)}]
-    out = _call_gemini_structured(parts, PREMIUM_PLAN_SCHEMA, temperature=0.8, max_output_tokens=4096)
-    if isinstance(out, dict):
-        # The model only supplies a compact creative brief. Every product, task,
-        # reward, and visual-system contract remains deterministic backend state.
-        return {**out, **experience_target}
-    return None
-
-
-def _call_gemini_premium_build(
-    brief: str,
-    seed: int,
-    plan: Dict[str, Any],
-    *,
-    retry_note: str = "",
-) -> Optional[Dict[str, Any]]:
-    parts: List[Dict[str, Any]] = [{"text": _build_premium_page_prompt(brief, seed, plan, retry_note)}]
-    text = _call_gemini_text(
-        parts,
-        temperature=1.0,
-        max_output_tokens=GEMINI_PREMIUM_BUILD_MAX_OUTPUT_TOKENS or None,
-    )
-    blocks = extract_final_html_blocks(text or "")
-    if not blocks:
-        return None
-    return {"kind": "full_page_html", "html": blocks[-1]}
 
 
 def _extract_gemini_text(payload: Dict[str, Any]) -> Optional[str]:
