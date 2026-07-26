@@ -5,6 +5,7 @@ from typing import Dict, List
 
 from data.format_catalog import (
     FORMAT_FAMILY_MAP,
+    FORMAT_CAPABILITIES,
     ALL_FORMATS,
     CORE_MECHANICS,
     FORMAT_SPECS,
@@ -166,19 +167,6 @@ FORMAT_CATEGORIES = [
     "interactive_instrument",
 ]
 
-LIBRARY_PROFILES = [
-    "ndw_canvas_game_loop",
-    "ndw_audio_particles",
-    "gsap_timeline_dom",
-    "gsap_state_transition",
-    "lucide_app_chrome",
-    "alpine_ui_state",
-    "matter_physics_game",
-    "three_orbit_scene",
-    "three_bloom_scene",
-    "dom_css_state_machine",
-]
-
 ACTIVITY_VERBS = [
     "collect",
     "sort",
@@ -305,7 +293,8 @@ def _format_spec_for_id(seed: int | None, format_id: str) -> Dict[str, object]:
     format_category = spec["format_category"]
     spec["interaction_loop"] = _deabstract_loop(format_category, spec["interaction_loop"])
     mechanic = spec["core_mechanic"]
-    library_profile = _library_profile_for_format(rng, format_category, format_id, mechanic)
+    capabilities = FORMAT_CAPABILITIES[format_id]
+    library_profile = _library_profile_for_capabilities(rng, capabilities)
     disallowed = ["slider_only_controls", "buttons_only_toggle_visual_effects", "fake_metrics_without_task"]
     if format_category in {"interactive_instrument", "simulation"}:
         disallowed = ["buttons_only_toggle_visual_effects", "fake_metrics_without_task", "no_goal_or_payoff"]
@@ -315,6 +304,7 @@ def _format_spec_for_id(seed: int | None, format_id: str) -> Dict[str, object]:
         "core_mechanic": mechanic,
         "reward_mechanic": spec["reward_mechanic"],
         "library_profile": library_profile,
+        "capabilities": capabilities,
         "implementation_goal": "Implement the selected recognizable format as the product, with art direction supporting its task and payoff.",
         "required_actions": _required_actions_for_mechanic(mechanic),
         "required_state": "Track score, progress, selections, records, cart, created output, unlocked stages, or configured choices in visible state.",
@@ -500,7 +490,7 @@ def seeded_genre_contract(
         "motion_language": rng.choice(MOTION_LANGUAGES),
         "instruction_policy": instruction_policy,
         "chrome_policy": "minimal_functional",
-        "focal_rule": "One dominant interactive stage; secondary controls must stay visually attached to the object they affect.",
+        "focal_rule": "Use a task-native focal hierarchy: a playfield for games, a working artifact for tools, product or destination imagery for commerce, and useful records plus result state for apps. Keep controls attached to what they affect.",
         "copy_budget": "Use labels and one-line cues; avoid explanatory paragraphs unless the genre is editorial or museum-like.",
         "entry_rule": "Make the first interaction available on load or behind one obvious action. Do not require reading a tutorial first.",
         "retention_rule": "Give the visitor a quick loop with feedback, score/progress/result, and a reason to try again.",
@@ -516,27 +506,16 @@ def seeded_genre_contract(
     }
 
 
-def _library_profile_for_format(rng: random.Random, format_category: str, format_id: str, mechanic: str) -> str:
-    physics_formats = {
-        "breakout_paddle",
-        "pinball_table",
-        "basketball_arcade",
-        "fishing_timing",
-        "whack_a_target",
-    }
-    if format_id in physics_formats:
+def _library_profile_for_capabilities(rng: random.Random, capabilities: List[str]) -> str:
+    if "physics_2d" in capabilities:
         return "matter_physics_game"
-    if format_category in {"platformer", "snake_game", "microgame"}:
-        return rng.choice(["ndw_canvas_game_loop", "ndw_audio_particles", "dom_css_state_machine"])
-    if format_category in {"tic_tac_toe", "quiz_game", "memory_match", "word_game"}:
-        return rng.choice(["dom_css_state_machine", "gsap_state_transition", "alpine_ui_state", "ndw_audio_particles"])
-    if "map" in format_id or "orbit" in mechanic:
-        return rng.choice(["three_orbit_scene", "three_bloom_scene", "ndw_canvas_game_loop"])
-    if format_category in {"saas_replica", "commerce_or_booking_flow", "product_or_storefront"}:
+    if "spatial_3d" in capabilities:
+        return rng.choice(["three_orbit_scene", "three_bloom_scene"])
+    if "reactive_state" in capabilities:
         return "alpine_ui_state"
-    if format_category in {"creative_tool", "simulation", "interactive_instrument"}:
-        return rng.choice(["ndw_canvas_game_loop", "gsap_timeline_dom", "three_orbit_scene", "ndw_audio_particles"])
-    return rng.choice(LIBRARY_PROFILES)
+    if "direct_manipulation" in capabilities:
+        return "gsap_state_transition"
+    return "ndw_canvas_game_loop"
 
 
 def _retention_contract_for_format(format_category: str, format_id: str) -> Dict[str, str]:

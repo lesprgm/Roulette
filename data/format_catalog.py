@@ -11,6 +11,14 @@ import yaml
 
 _CATALOG_DIR = Path(__file__).resolve().parent / "variants"
 _WEIGHTS_PATH = Path(__file__).resolve().parent / "variant_weights.yaml"
+_LOCAL_CAPABILITIES_PATH = Path(__file__).resolve().parent / "library_capabilities.yaml"
+_SECRET_CAPABILITIES_PATH = Path("/etc/secrets/library_capabilities.yaml")
+_CONFIGURED_CAPABILITIES_PATH = os.getenv("LIBRARY_CAPABILITIES_PATH", "").strip()
+_CAPABILITIES_PATH = (
+    Path(_CONFIGURED_CAPABILITIES_PATH).expanduser()
+    if _CONFIGURED_CAPABILITIES_PATH
+    else _SECRET_CAPABILITIES_PATH if _SECRET_CAPABILITIES_PATH.exists() else _LOCAL_CAPABILITIES_PATH
+)
 _DEFAULT_SECRET_CATALOG_PATHS = (
     Path("/etc/secrets/format_catalog.yaml"),
     Path("/etc/secrets/variant_catalog.yaml"),
@@ -44,6 +52,14 @@ REWARD_MECHANICS = [
     "before_after_reveal",
     "checkout_or_receipt_payoff",
 ]
+LIBRARY_CAPABILITIES = {
+    "app_iconography",
+    "direct_manipulation",
+    "physics_2d",
+    "reactive_state",
+    "sequenced_motion",
+    "spatial_3d",
+}
 
 
 def _default_reward_mechanic(item: Mapping[str, Any]) -> str:
@@ -353,6 +369,54 @@ FORMATS_BY_CATEGORY: Dict[str, List[str]] = {
 GAME_FORMATS = FORMATS_BY_CATEGORY["games"]
 PRODUCT_FORMATS = FORMATS_BY_CATEGORY["products"]
 ALL_FORMATS = [item["id"] for item in _FORMATS]
+
+
+def _load_library_capabilities() -> Dict[str, List[str]]:
+    try:
+        payload = yaml.safe_load(_CAPABILITIES_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Invalid library capability catalog {_CAPABILITIES_PATH}: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise RuntimeError("Library capability catalog must use version 1")
+
+    defaults = payload.get("default_capabilities")
+    category_capabilities = payload.get("category_capabilities")
+    capability_formats = payload.get("capability_formats")
+    if not _nonempty_strings(defaults):
+        raise RuntimeError("Library capability catalog must define default_capabilities")
+    if not isinstance(category_capabilities, dict) or not isinstance(capability_formats, dict):
+        raise RuntimeError("Library capability catalog must define category_capabilities and capability_formats")
+
+    unknown_capabilities = set(defaults) - LIBRARY_CAPABILITIES
+    known_categories = {str(item["format_category"]) for item in _FORMATS}
+    unknown_categories = set(category_capabilities) - known_categories
+    if unknown_categories:
+        raise RuntimeError(f"Library capability catalog has unknown categories: {sorted(unknown_categories)}")
+    for values in category_capabilities.values():
+        if not _nonempty_strings(values):
+            raise RuntimeError("Library capability category entries must contain capability names")
+        unknown_capabilities.update(set(values) - LIBRARY_CAPABILITIES)
+    unknown_capabilities.update(set(capability_formats) - LIBRARY_CAPABILITIES)
+    if unknown_capabilities:
+        raise RuntimeError(f"Library capability catalog has unknown capabilities: {sorted(unknown_capabilities)}")
+
+    capabilities = {
+        str(item["id"]): set(defaults) | set(category_capabilities.get(str(item["format_category"]), []))
+        for item in _FORMATS
+    }
+    known_formats = set(capabilities)
+    for capability, format_ids in capability_formats.items():
+        if not _nonempty_strings(format_ids):
+            raise RuntimeError(f"Library capability {capability!r} must contain format ids")
+        unknown_formats = set(format_ids) - known_formats
+        if unknown_formats:
+            raise RuntimeError(f"Library capability {capability!r} has unknown formats: {sorted(unknown_formats)}")
+        for format_id in format_ids:
+            capabilities[format_id].add(capability)
+    return {format_id: sorted(values) for format_id, values in capabilities.items()}
+
+
+FORMAT_CAPABILITIES = _load_library_capabilities()
 
 FORMAT_SPECS: Dict[str, Dict[str, Any]] = {
     item["id"]: {
