@@ -2,9 +2,7 @@
 import { generateOnce, GenerationHttpError, streamGeneration } from './generation-client.js';
 import {
   destroyGeneratedSiteFrame,
-  NdwSnippet,
   renderFullPageHost,
-  renderSnippetHost,
   showHostError,
 } from './generated-site-host.js';
 import { LandingController, resolveTunnelCardAction } from './landing-controller.js';
@@ -13,8 +11,7 @@ export { };
 
 interface FullPageDoc { kind: 'full_page_html'; html: string }
 interface ErrorDoc { error: string }
-interface ComponentDoc { components: any[] }
-type AppNormalizedDoc = NdwSnippet | FullPageDoc | ErrorDoc | ComponentDoc | any;
+type AppNormalizedDoc = FullPageDoc | ErrorDoc;
 
 type AppWindow = Window & {
   __NDW_showSnippetErrorOverlay?: (err: any) => void;
@@ -448,26 +445,15 @@ export function initApp() {
 }
 
 async function enterSite(doc: AppNormalizedDoc) {
-  const anyDoc: any = doc;
-  if (anyDoc && typeof anyDoc.error === 'string') {
-    showError(anyDoc.error);
+  if ('error' in doc) {
+    showError(doc.error);
     return;
   }
-  if (anyDoc && anyDoc.kind === 'ndw_snippet_v1') {
-    await runTransition(() => renderNdwSnippet(anyDoc as NdwSnippet));
+  if (doc.kind === 'full_page_html' && typeof doc.html === 'string' && doc.html.trim()) {
+    await runTransition(() => renderFullPage(doc.html));
     return;
   }
-  if (anyDoc && anyDoc.kind === 'full_page_html' && typeof anyDoc.html === 'string' && anyDoc.html.trim()) {
-    await runTransition(() => renderFullPage(anyDoc.html));
-    return;
-  }
-  const comps = Array.isArray(anyDoc?.components) ? anyDoc.components : [];
-  const first = comps.find((c: any) => c && c.props && typeof c.props.html === 'string' && c.props.html.trim());
-  if (!first) {
-    showError('No renderable HTML found');
-    return;
-  }
-  await runTransition(() => renderFullPage(first.props.html));
+  showError('No renderable HTML found');
 }
 
 export function renderDocForPreview(doc: AppNormalizedDoc) {
@@ -516,19 +502,6 @@ async function openShutter() {
   shutter.classList.remove('shutter-closed');
   shutter.classList.add('shutter-open');
   await sleep(650);
-}
-
-// Progressive Reveal: feature is fully disabled (kept as no-op for compatibility).
-export async function prepareReveal() {
-  const mainEl = document.getElementById('appMain');
-  if (!mainEl) return;
-  mainEl.style.opacity = '1';
-}
-
-export async function playReveal() {
-  const mainEl = document.getElementById('appMain');
-  if (!mainEl) return;
-  mainEl.style.opacity = '1';
 }
 
 export function hideLandingElements() {
@@ -816,16 +789,6 @@ function renderFullPage(html: string) {
     renderFullPageHost(target, html);
     postRenderCommon();
   } catch (e) { console.error('Full-page render error:', e); showError('Failed to render content.'); }
-}
-
-function renderNdwSnippet(snippet: NdwSnippet) {
-  try {
-    hideLandingElements();
-    const target = resolveMainEl();
-    if (!target) return;
-    renderSnippetHost(target, snippet);
-    postRenderCommon();
-  } catch (e) { console.error('NDW snippet render error:', e); showError('Failed to render snippet.'); }
 }
 
 function showError(message: string) {
