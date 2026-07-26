@@ -150,14 +150,26 @@ def _artwork_strategy(category: str, subject: str) -> str:
 
 
 _SURFACE_TREATMENTS: Dict[str, tuple[str, ...]] = {
-    "game": ("none", "none", "none", "css_material", "inline_svg_texture"),
+    "game": ("none", "none", "none", "css_material", "inline_svg_texture", "paper_shader"),
     "product": ("none", "none", "none", "none", "css_material", "inline_svg_texture", "paper_shader"),
     "commerce": ("none", "none", "none", "none", "css_material", "inline_svg_texture", "paper_shader"),
     "creative_tool": ("none", "none", "none", "css_material", "inline_svg_texture", "paper_shader", "paper_shader"),
     "simulation": ("none", "none", "none", "css_material", "inline_svg_texture", "paper_shader", "paper_shader"),
-    "investigation": ("none", "none", "none", "none", "css_material", "inline_svg_texture"),
-    "app": ("none", "none", "none", "none", "none", "css_material", "inline_svg_texture"),
+    "investigation": ("none", "none", "none", "none", "css_material", "inline_svg_texture", "paper_shader"),
+    "app": ("none", "none", "none", "none", "none", "css_material", "inline_svg_texture", "paper_shader"),
 }
+
+PAPER_SHADER_PRESETS = (
+    "paperTexture",
+    "staticMeshGradient",
+    "voronoi",
+    "metaballs",
+    "flutedGlass",
+    "liquidMetal",
+    "halftoneDots",
+    "halftoneCMYK",
+    "godRays",
+)
 
 _SURFACE_GUIDANCE = {
     "none": "Do not add a decorative texture treatment; let task-native content, type, spacing, and state carry the surface.",
@@ -166,34 +178,72 @@ _SURFACE_GUIDANCE = {
     "paper_shader": "Mount one local Paper Shader on the named subject with a CSS fallback and bounded pixel budget; it must respond to or reinforce visible state and must not cover the whole page.",
 }
 
-def _surface_treatment(category: str, subject: str, reserved: set[str], rng: random.Random) -> Dict[str, str]:
+def _surface_treatment(
+    category: str,
+    subject: str,
+    rng: random.Random,
+    required_preset: str = "",
+    paper_shader_allowed: bool = True,
+) -> Dict[str, str]:
     candidates = list(_SURFACE_TREATMENTS[category])
-    if "paper_shader" in reserved:
-        candidates = [candidate for candidate in candidates if candidate != "paper_shader"] or ["none"]
-    mode = rng.choice(candidates)
+    if not paper_shader_allowed:
+        candidates = [candidate for candidate in candidates if candidate != "paper_shader"]
+    mode = "paper_shader" if required_preset else rng.choice(candidates)
     return {
         "mode": mode,
+        "preset": required_preset if mode == "paper_shader" else "",
         "target": subject if mode != "none" else "",
-        "guidance": _SURFACE_GUIDANCE[mode],
+        "guidance": (
+            f"{_SURFACE_GUIDANCE[mode]} Use the `{required_preset}` preset."
+            if required_preset
+            else _SURFACE_GUIDANCE[mode]
+        ),
     }
 
 
-def _renderer_profile(format_id: str, category: str, library_profile: str) -> tuple[str, list[str]]:
-    if category in {"app", "commerce", "product", "investigation"}:
-        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
-    if category == "creative_tool":
-        if format_id in _CANVAS_TOOLS:
-            return "canvas_scene", ["semantic_dom", "inline_svg", "gsap_motion"]
-        if format_id in _SVG_TOOLS:
-            return "inline_svg", ["semantic_dom", "gsap_motion"]
-        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
-    if library_profile == "matter_physics_game":
-        return "matter_scene", ["semantic_dom", "gsap_motion"]
-    if library_profile in {"three_orbit_scene", "three_bloom_scene"}:
-        return "three_scene", ["semantic_dom", "gsap_motion"]
-    if library_profile in {"dom_css_state_machine", "alpine_ui_state", "gsap_state_transition", "gsap_timeline_dom"}:
-        return "semantic_dom", ["alpine_state", "inline_svg", "gsap_motion"]
-    return "canvas_scene", ["semantic_dom", "inline_svg", "gsap_motion"]
+def _renderer_profile(
+    format_id: str,
+    category: str,
+    library_profile: str,
+    capabilities: Iterable[str],
+) -> tuple[str, list[str]]:
+    capability_set = set(capabilities)
+    if not capability_set:
+        if library_profile == "matter_physics_game":
+            capability_set.add("physics_2d")
+        elif library_profile in {"three_orbit_scene", "three_bloom_scene"}:
+            capability_set.add("spatial_3d")
+        if category in {"app", "commerce", "product", "investigation"}:
+            capability_set.update({"reactive_state", "app_iconography", "sequenced_motion"})
+        elif library_profile in {"alpine_ui_state", "dom_css_state_machine"}:
+            capability_set.add("reactive_state")
+        if library_profile in {"gsap_state_transition", "gsap_timeline_dom"}:
+            capability_set.add("sequenced_motion")
+    if "physics_2d" in capability_set:
+        primary = "matter_scene"
+    elif "spatial_3d" in capability_set:
+        primary = "three_scene"
+    elif category == "creative_tool" and format_id in _CANVAS_TOOLS:
+        primary = "canvas_scene"
+    elif category == "creative_tool" and format_id in _SVG_TOOLS:
+        primary = "inline_svg"
+    elif category in {"app", "commerce", "product", "investigation", "creative_tool"}:
+        primary = "semantic_dom"
+    elif library_profile in {"dom_css_state_machine", "alpine_ui_state", "gsap_state_transition", "gsap_timeline_dom"}:
+        primary = "semantic_dom"
+    else:
+        primary = "canvas_scene"
+
+    supporting = ["semantic_dom"] if primary != "semantic_dom" else ["inline_svg"]
+    if "reactive_state" in capability_set:
+        supporting.append("alpine_state")
+    if "direct_manipulation" in capability_set:
+        supporting.append("draggable_motion")
+    if "sequenced_motion" in capability_set:
+        supporting.append("gsap_motion")
+    if "app_iconography" in capability_set:
+        supporting.append("lucide_icons")
+    return primary, list(dict.fromkeys(supporting))
 
 
 def _first_available(candidates: Iterable[str], reserved: set[str], rng: random.Random) -> str:
@@ -208,14 +258,19 @@ def visual_spec_for_target(
     format_id: str,
     task_model: Mapping[str, Any],
     library_profile: str = "",
+    capabilities: Iterable[str] = (),
+    authorship_mode: str = "guided",
     reserved: Mapping[str, Iterable[str]] | None = None,
+    paper_shader_preset: str = "",
+    paper_shader_allowed: bool = True,
 ) -> Dict[str, Any]:
     """Build a compact visual specification from the selected format."""
     rng = random.Random(f"{seed}:{format_id}:visual-specification")
     used = {key: set(values) for key, values in (reserved or {}).items()}
     category = category_for_format(format_id, format_category)
-    primary, supporting = _renderer_profile(format_id, category, library_profile)
-    palette_id = rng.choice(PALETTE_COMPATIBILITY[category])
+    primary, supporting = _renderer_profile(format_id, category, library_profile, capabilities)
+    guided = authorship_mode != "authored"
+    palette_id = rng.choice(PALETTE_COMPATIBILITY[category]) if guided else ""
     layout_model = layout_model_for_target(
         seed=seed,
         category=category,
@@ -224,31 +279,50 @@ def visual_spec_for_target(
         reserved_silhouette_families=used.get("silhouette_families", set()),
         recent_rendered_families=used.get("rendered_layout_families", set()),
     )
+    if not guided:
+        layout_model = {**layout_model, "composition_mode": "authored"}
     objects = [str(value).replace("_", " ") for value in task_model.get("domain_objects", []) if str(value).strip()]
     subject = ", ".join(objects[:3]) or _SUBJECTS[category]
-    surface_treatment = _surface_treatment(category, subject, used.get("surface_treatments", set()), rng)
-    component_language_id = _first_available(
-        COMPONENT_LANGUAGE_COMPATIBILITY[category],
-        used.get("component_languages", set()),
+    surface_treatment = _surface_treatment(
+        category,
+        subject,
         rng,
+        paper_shader_preset,
+        paper_shader_allowed,
+    )
+    component_language_id = (
+        _first_available(
+            COMPONENT_LANGUAGE_COMPATIBILITY[category],
+            used.get("component_languages", set()),
+            rng,
+        )
+        if guided
+        else ""
     )
     if surface_treatment["mode"] == "paper_shader" and "paper_surface" not in supporting:
         supporting.append("paper_surface")
     return {
+        "authorship_mode": authorship_mode,
+        "capabilities": sorted(set(capabilities)),
         "palette_id": palette_id,
-        "palette": PALETTE_SYSTEMS[palette_id],
+        "palette": PALETTE_SYSTEMS[palette_id] if guided else {},
         "composition": layout_model["signature"],
         "layout_model": layout_model,
         "copy_budget": copy_budget_for_category(category),
         "primary_renderer": primary,
         "supporting_renderers": supporting,
         "visual_subject": subject,
-        "component_language": {
-            "id": component_language_id,
-            **COMPONENT_LANGUAGES[component_language_id],
-        },
+        "component_language": (
+            {"id": component_language_id, **COMPONENT_LANGUAGES[component_language_id]}
+            if guided
+            else {}
+        ),
         "visual_direction": {
-            "palette_behavior": PALETTE_BEHAVIOR[palette_id],
+            "palette_behavior": (
+                PALETTE_BEHAVIOR[palette_id]
+                if guided
+                else "Author a coherent light-first palette appropriate to the concrete format. Choose restrained tonal relationships and purposeful contrast; do not imitate another site in the burst."
+            ),
             "subject_artwork": _artwork_strategy(category, subject),
             "surface_treatment": surface_treatment,
         },
