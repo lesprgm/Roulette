@@ -14,7 +14,7 @@ Repair audit before final HTML:
 5. First paint: the primary subject, real starter content, and usable controls are visible immediately; Canvas/SVG scenes draw a complete initial frame without waiting for interaction.
 6. Payoff: the primary loop can reach its declared completion/payoff, keeps the result visible, and offers the declared reset, replay, save, checkout, or continue action.
 7. Games: verify rules, score/progress, collision or answer logic, failure/completion, restart, and keyboard/touch controls. Apps/tools/commerce: verify create/select/filter/configure/save and visible result or confirmation flows.
-8. Visual and layout: implement visual_direction.subject_artwork, palette_behavior, component_language, and the selected surface_treatment, then preserve the layout model's regions, relationships, control placement, result transition, and mobile transformation. For `structured` composition_mode, root CSS must match the viewport contract. For `authored`, use the contract as a silhouette reference and freely layer, overlap, stagger, or reshape the regions when that gives the subject more presence. If surface_treatment.mode is `paper_shader`, verify exactly one named subject mounts the local shader, has a CSS fallback, and is not full-page wallpaper. Resolve the first viewport as a complete composition: never leave a tiny widget or shallow top strip surrounded by a blank field. Empty space may establish hierarchy, but the working subject, its state, and its payoff must collectively command the viewport. With text mentally blurred, the subject must remain recognizable through content-bearing artwork, objects, previews, diagrams, or scenes. Empty Canvas, icons, wallpaper, particles, oversized color fields, and repeated bordered panels do not count as meaningful content.
+8. Visual and layout: implement visual_direction.subject_artwork, palette_behavior, any supplied component_language, and the selected surface_treatment, then preserve the layout model's regions, relationships, control placement, result transition, and mobile transformation. For `structured` composition_mode, root CSS must match the viewport contract. For `authored`, use the contract as a silhouette reference and freely layer, overlap, stagger, or reshape the regions when that gives the subject more presence. If surface_treatment.mode is `paper_shader`, verify exactly one named subject mounts the local shader, has a CSS fallback, and is not full-page wallpaper. Resolve the first viewport as a complete composition: never leave a tiny widget or shallow top strip surrounded by a blank field. Empty space may establish hierarchy, but the working subject, its state, and its payoff must collectively command the viewport. With text mentally blurred, the subject must remain recognizable through content-bearing artwork, objects, previews, diagrams, or scenes. Empty Canvas, icons, wallpaper, particles, oversized color fields, and repeated bordered panels do not count as meaningful content.
 9. Copy: stay under copy_budget.max_visible_words, keep headings and instructions within their limits, and remove paragraphs that merely explain obvious controls.
 10. Runtime: use only required local libraries, valid load order, bounded animation/canvas work, and no script error that prevents later handlers from registering.
 11. Discipline: retain the recognizable format and remove blank panels, placeholders, dead controls, footer chrome, fake telemetry, planning language, `//`, TODO, undefined, and null.
@@ -36,6 +36,8 @@ Visual subject rules:
 - `paper_surface` means one named material surface using local Paper Shaders and `mountPaperShader(...)` with CSS fallback, never full-page wallpaper.
 - `gsap_motion` means one state-linked reveal, transition, route, transformation, or payoff.
 - `alpine_state` means task state such as cart, filter, drawer, selection, or configuration visibly drives the subject and result.
+- `draggable_motion` means use local GSAP Draggable for direct manipulation with touch support, bounds, and visible drop/snap state.
+- `lucide_icons` means use local Lucide only for recognizable functional controls or navigation; icons do not count as subject artwork.
 """.strip()
 
 
@@ -62,6 +64,7 @@ def _prompt_target(target: Dict[str, Any]) -> Dict[str, Any]:
             "id": format_spec.get("format_id"),
             "category": target.get("format_category"),
             "library_profile": format_spec.get("library_profile"),
+            "capabilities": format_spec.get("capabilities"),
         },
         "task_model": {
             key: task.get(key)
@@ -108,16 +111,16 @@ def _build_rules() -> str:
     return f"""
 Build rules:
 - The backend `format` and `task_model` entries are mandatory. Implement their format, domain objects, visible state, controls, completion condition, and payoff scene.
-- The visual_spec is mandatory. Treat its palette as a coherent strategy, not a requirement to display every supplied color. White space, neutral surfaces, and single-hue tonal depth are intentional when selected. Implement subject_artwork and the selected surface_treatment, then build the task with the primary renderer and use supporting renderers for meaningful artwork, state feedback, or motion. A `none` surface treatment means do not invent one.
+- The visual_spec is mandatory. In `guided` authorship mode, treat its palette as a coherent strategy, not a quota of colors. In `authored` mode, choose a coherent light-first palette and visual identity yourself; do not copy another site in the burst. Implement subject_artwork and the selected surface_treatment, then build the task with the primary renderer and every capability-derived supporting renderer. A `none` surface treatment means do not invent one.
 - Use as many content-bearing visual elements as the composition needs. Original inline SVG, CSS illustration, Canvas, charts, diagrams, and task-native library output are allowed; Lucide icons, wallpaper, and color fields do not count by themselves.
-- Implement `visual_spec.component_language` as the site's positive component system. Apply its geometry, borders, elevation, spacing, typography, and controls consistently without letting it replace the assigned topology, palette, or artwork.
+- In `guided` mode, implement `visual_spec.component_language` as the site's positive component system. In `authored` mode it is intentionally absent: author coherent geometry, borders, elevation, spacing, typography, and controls without falling back to neo-brutalist outlines, centered cards, or generic SaaS chrome.
 - Implement visual_spec.layout_model according to composition_mode. Structured layouts honor the root viewport contract; authored layouts preserve the required content relationships but may depart from its literal tracks to make a stronger task-native composition. Do not reuse a familiar shell from another site.
 - Let the selected topology determine whether the page is layered, split, sequential, editorial, map-led, gallery-led, board-like, or workspace-like. Use the viewport deliberately, but do not inflate empty regions merely to satisfy a fixed coverage percentage.
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
 - Games show the board/stage/player/targets and score immediately. Apps, commerce, and products show real starter content and one useful action immediately.
 - Keep the main page light unless a game/canvas playfield needs contrast. Do not substitute generic white-card/dashboard layouts for the assigned composition.
-- Use `surface_ink` for text on a colored surface. Use the least color needed to support the subject, hierarchy, and state; novelty must come from the experience and composition, not forced chromatic variety.
+- In guided mode, use `surface_ink` for text on a colored surface. In authored mode, choose equally readable surface/text pairs. Use the least color needed to support the subject, hierarchy, and state; novelty must come from the experience and composition, not forced chromatic variety.
 - Use `/static/design-kit/fonts.css` for local fonts. Do not use emoji as primary artwork or invent asset paths.
 - Include reset/replay and touch fallback where the task declares them.
 
@@ -139,6 +142,7 @@ def build_premium_burst_prompt(brief: str, seed: int, targets: List[Dict[str, An
         {
             "site": target.get("site_index") or index,
             "format": (target.get("format_spec") or {}).get("format_id"),
+            "authorship_mode": (target.get("visual_spec") or {}).get("authorship_mode"),
             "topology": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("topology"),
             "silhouette_family": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("silhouette_family"),
             "composition_mode": ((target.get("visual_spec") or {}).get("layout_model") or {}).get("composition_mode"),
@@ -170,7 +174,7 @@ Per-site backend targets:
 Burst layout manifest:
 {json.dumps(layout_manifest, separators=(',', ':'), ensure_ascii=True)}
 Before coding, compare this manifest across the whole batch. Apply exact root tracks only to `structured` sites. For `authored` sites, use the topology as a compositional brief and make the subject-led outlines visibly different; do not copy one site's DOM/CSS shell into another and merely change its content or colors.
-The assigned component languages are intentionally different. Implement each positive system instead of carrying one site's borders, radii, shadows, typography, spacing, or controls into another.
+For guided sites, the assigned component languages are intentionally different. Authored sites must create their own coherent visual identity instead of carrying another site's borders, radii, shadows, typography, spacing, or controls into the result.
 
 {_build_rules()}
 
@@ -178,50 +182,3 @@ Internally assemble the implementation first, run the repair audit below against
 {PREMIUM_SELF_REVIEW_CHECKLIST}
 """.strip()
 
-
-def build_premium_plan_prompt(brief: str, seed: int, *, experience_target: Dict[str, Any], novelty: Dict[str, Any]) -> str:
-    return f"""
-Plan only the creative interpretation for one premium interactive mini-site.
-Return JSON matching the compact schema. Do not restate or alter backend-owned format, task, reward, state, replay, mobile, genre, or visual-specification fields.
-
-Brief: {brief or 'Surprise me with a bold concept.'}
-Seed: {seed}
-Backend target:
-{json.dumps(_prompt_target(experience_target), separators=(',', ':'), ensure_ascii=True)}
-Recent novelty summary:
-{json.dumps(novelty, separators=(',', ':'), ensure_ascii=True)}
-
-Choose a coherent art direction, one signature state-linked moment, concise copy treatment, a mobile adaptation, and one risk to avoid. The selected format and visual specification are mandatory; do not replace them with an abstract metaphor.
-""".strip()
-
-
-def build_premium_page_prompt(
-    brief: str,
-    seed: int,
-    plan: Dict[str, Any],
-    retry_note: str = "",
-) -> str:
-    retry_block = f"\nRepair note from local validation: {retry_note}\n" if retry_note else ""
-    return f"""
-Build one premium interactive mini-site.
-Output only this compact protocol:
-<plan>Four short bullets: subject artwork; palette/type/surface identity; controls/state; payoff/motion.</plan>
-<self_review>Concrete corrections applied to the final HTML.</self_review>
-```html
-<!doctype html>
-...
-```
-
-The plan and self-review are text only. Emit one final HTML document, never a complete draft followed by another complete document.
-Do not output JSON.
-Brief: {brief or 'Surprise me with a bold concept.'}
-Seed: {seed}
-Approved plan:
-{json.dumps(_prompt_target(plan), separators=(',', ':'), ensure_ascii=True)}
-{retry_block}
-
-{_build_rules()}
-
-Internally assemble the implementation first, run the repair audit below against it, and apply its fixes directly to the single final document. Never emit the internal draft:
-{PREMIUM_SELF_REVIEW_CHECKLIST}
-""".strip()

@@ -6,7 +6,7 @@ GENERAL RULES:
 - No external scripts, styles, images, fonts, fetch, iframes, document.write, localStorage, or sessionStorage.
 - Use only local scripts: `/static/vendor/gsap.min.js`, `/static/vendor/Draggable.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, `/static/vendor/paper-shaders/ndw-paper.js`, and `/static/js/ndw.js`.
 - Matter.js is only for physics-first games and toys. Alpine UI state profiles are for carts, filters, drawers, selected records, and configuration.
-- Three.js uses direct local module imports. Do not invent plugin paths such as ScrollTrigger.
+- Three.js uses `import * as THREE from '/static/vendor/three.module.js'` and only the available local addon paths. Never use a bare `three` import or invent plugin paths such as ScrollTrigger.
 - Use `id="ndw-content"` for the main stage. DOM references must exist before handlers run.
 - Use addEventListener or Alpine x-on; never inline onclick/oninput/onchange handlers.
 - The page runs in an iframe. Do not add host cleanup code. Keep one canvas/WebGL stage at most, use transforms/opacity, and avoid stacked blur/filter effects.
@@ -15,7 +15,7 @@ SELF QA:
 1. Every visible control changes a named visible result, subject, score, selection, cart, preview, or payoff state.
 2. First paint shows the primary subject and usable controls; no blank stage or placeholder shell.
 3. No duplicate IDs, undefined text, raw TODO, visible `//`, planning headings, footer, or fake telemetry chrome.
-4. Use readable contrast and the target palette roles. Do not default to dark/slate shells unless the selected playfield needs contrast.
+4. Use readable contrast and the supplied palette roles, or a coherent authored palette when roles are intentionally absent. Do not default to dark/slate shells unless the selected playfield needs contrast.
 """.strip()
 
 
@@ -51,7 +51,7 @@ PREMIUM_STYLE_GUIDANCE = """
 PREMIUM BUILD GUIDANCE:
 - The concrete format is the product. Use the task model and visual specification as the source of truth.
 - Build the task itself with the visual specification's primary renderer, then use supporting renderers only where they reinforce its subject or state changes. `semantic_dom` means real HTML/CSS controls, records, products, and workflow state; it is not permission to make a generic dashboard.
-- Use `visual_spec.palette` as a reference color strategy, not a quota of colors to display. White, near-white, neutral, or one-hue tonal pages are complete choices; derive only the variants the subject and state need.
+- In guided mode, use `visual_spec.palette` as a reference strategy rather than a color quota. In authored mode, create a coherent light-first palette from the format and subject. White, near-white, neutral, or one-hue tonal pages are complete choices.
 - Follow `visual_spec.visual_direction`: implement its content-bearing subject artwork and palette behavior, then author typography and component geometry as a coherent identity. Icons, wallpaper, and text labels are not substitutes for the subject.
 - Implement `visual_spec.layout_model` according to its `composition_mode`: structured pages apply the viewport contract at the page root; authored pages preserve required regions and relationships while freely composing around the primary subject.
 - Size `#ndw-content` around the selected topology and useful content. Avoid both a narrow centered card and artificially enlarged empty regions.
@@ -61,24 +61,3 @@ PREMIUM BUILD GUIDANCE:
 - Avoid generic AI-generated aesthetics: purple/blue gradients, centered card shells, dashboard telemetry, repetitive wave/grid wallpaper, emoji illustration systems, and arbitrary pastel combinations.
 - Use original inline SVG, Canvas, CSS shapes, Paper Shaders, Matter bodies, or Three.js only when the visual specification calls for them.
 """.strip()
-
-
-# The LLM plans only the decisions it can improve. The backend supplies the
-# format, task, state, reward, visual specification, and runtime contracts.
-PREMIUM_PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "art_direction": {"type": "string", "minLength": 12, "maxLength": 180},
-        "signature_moment": {"type": "string", "minLength": 8, "maxLength": 140},
-        "copy_treatment": {"type": "string", "minLength": 8, "maxLength": 120},
-        "mobile_adaptation": {"type": "string", "minLength": 8, "maxLength": 140},
-        "risk_to_avoid": {"type": "string", "minLength": 8, "maxLength": 140},
-    },
-    "required": [
-        "art_direction",
-        "signature_moment",
-        "copy_treatment",
-        "mobile_adaptation",
-        "risk_to_avoid",
-    ],
-}
