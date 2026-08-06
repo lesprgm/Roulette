@@ -39,7 +39,10 @@ function injectIframeBridge(html: string): string {
 })();
 </script>`;
   const base = `<base href="${window.location.origin}/">`;
-  let out = String(html || '');
+  let out = String(html || '').replace(
+    /<script\b[^>]*\bsrc=["']\/static\/js\/ndw\.js["'][^>]*>\s*<\/script>/gi,
+    '',
+  );
   if (/<head[^>]*>/i.test(out)) {
     if (!/<base\s/i.test(out)) {
       out = out.replace(/<head([^>]*)>/i, `<head$1>${base}`);

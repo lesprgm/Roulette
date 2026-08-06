@@ -119,7 +119,7 @@ Build rules:
 - Enforce visual_spec.copy_budget. Count user-visible words approximately; headings and the single micro-instruction have their own limits. Internal state and contracts must become behavior, not explanatory UI copy.
 - Every control must change a visible subject, score, selection, cart, preview, route, receipt, saved result, or payoff. Remove controls that cannot.
 - Games show the board/stage/player/targets and score immediately. Apps, commerce, and products show real starter content and one useful action immediately.
-- Keep the main page light unless a game/canvas playfield needs contrast. Do not substitute generic white-card/dashboard layouts for the assigned composition.
+- Keep the page background and majority-area surfaces light. Dark colors may be ink, outlines, compact controls, or a bounded game/canvas playfield, never the full-page shell. Do not substitute generic white-card/dashboard layouts for the assigned composition.
 - In guided mode, use `surface_ink` for text on a colored surface. In authored mode, choose equally readable surface/text pairs. Use the least color needed to support the subject, hierarchy, and state; novelty must come from the experience and composition, not forced chromatic variety.
 - Use `/static/design-kit/fonts.css` for local fonts. Do not use emoji as primary artwork or invent asset paths.
 - Include reset/replay and touch fallback where the task declares them.
@@ -181,4 +181,3 @@ For guided sites, the assigned component languages are intentionally different. 
 Internally assemble the implementation first, run the repair audit below against it, and apply those corrections directly to the single final document. Never emit the internal draft:
 {PREMIUM_SELF_REVIEW_CHECKLIST}
 """.strip()
-

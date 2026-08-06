@@ -4,7 +4,7 @@ from __future__ import annotations
 HARD_RUNTIME_RULES = """
 GENERAL RULES:
 - No external scripts, styles, images, fonts, fetch, iframes, document.write, localStorage, or sessionStorage.
-- Use only local scripts: `/static/vendor/gsap.min.js`, `/static/vendor/Draggable.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, `/static/vendor/paper-shaders/ndw-paper.js`, and `/static/js/ndw.js`.
+- Use only local scripts: `/static/vendor/gsap.min.js`, `/static/vendor/Draggable.min.js`, `/static/vendor/lucide.min.js`, `/static/vendor/alpine.min.js`, `/static/vendor/matter.min.js`, and `/static/vendor/paper-shaders/ndw-paper.js`. `window.NDW` is already provided by the iframe host; never load `/static/js/ndw.js`.
 - Matter.js is only for physics-first games and toys. Alpine UI state profiles are for carts, filters, drawers, selected records, and configuration.
 - Three.js uses `import * as THREE from '/static/vendor/three.module.js'` and only the available local addon paths. Never use a bare `three` import or invent plugin paths such as ScrollTrigger.
 - Use `id="ndw-content"` for the main stage. DOM references must exist before handlers run.
@@ -15,7 +15,7 @@ SELF QA:
 1. Every visible control changes a named visible result, subject, score, selection, cart, preview, or payoff state.
 2. First paint shows the primary subject and usable controls; no blank stage or placeholder shell.
 3. No duplicate IDs, undefined text, raw TODO, visible `//`, planning headings, footer, or fake telemetry chrome.
-4. Use readable contrast and the supplied palette roles, or a coherent authored palette when roles are intentionally absent. Do not default to dark/slate shells unless the selected playfield needs contrast.
+4. Use readable contrast and the supplied palette roles, or a coherent authored palette when roles are intentionally absent. The page background and majority-area surfaces must remain light. Dark colors may be ink, outlines, compact controls, or a bounded game/canvas playfield, never the full-page shell.
 """.strip()
 
 
@@ -51,7 +51,7 @@ PREMIUM_STYLE_GUIDANCE = """
 PREMIUM BUILD GUIDANCE:
 - The concrete format is the product. Use the task model and visual specification as the source of truth.
 - Build the task itself with the visual specification's primary renderer, then use supporting renderers only where they reinforce its subject or state changes. `semantic_dom` means real HTML/CSS controls, records, products, and workflow state; it is not permission to make a generic dashboard.
-- In guided mode, use `visual_spec.palette` as a reference strategy rather than a color quota. In authored mode, create a coherent light-first palette from the format and subject. White, near-white, neutral, or one-hue tonal pages are complete choices.
+- In guided mode, use `visual_spec.palette` as a reference strategy rather than a color quota. In authored mode, create a coherent palette from the format and subject while keeping the page background and majority-area surfaces light. White, near-white, neutral, or one-hue tonal pages are complete choices; a dark full-page shell is not.
 - Follow `visual_spec.visual_direction`: implement its content-bearing subject artwork and palette behavior, then author typography and component geometry as a coherent identity. Icons, wallpaper, and text labels are not substitutes for the subject.
 - Implement `visual_spec.layout_model` according to its `composition_mode`: structured pages apply the viewport contract at the page root; authored pages preserve required regions and relationships while freely composing around the primary subject.
 - Size `#ndw-content` around the selected topology and useful content. Avoid both a narrow centered card and artificially enlarged empty regions.
