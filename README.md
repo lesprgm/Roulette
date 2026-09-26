@@ -10,6 +10,8 @@ I was wondering if a website could change every time you visited it (I need new 
 
 Roulette is a generative UI system that uses large language models (LLMs) to create complete interactive web experiences at runtime. Users do not prompt to make websites. The fun part is that each click opens a random one-off interface, game, tool, storefront, simulator, dashboard, or tiny internet object that probably should not exist but somehow does.
 
+Repeated LLM generations tend to cluster around familiar ideas, layouts, and interaction patterns. Roulette reduces this output homogenization by controlling diversity at the system level, composing each generation across dimensions such as format, task model, interaction loop, visual style, layout, and motion before the model builds the website. Structural fingerprints and recent-generation history then help prevent repeated experiences from reaching the user.
+
 Each generation produces something weird, different, or unique (I don't know what you'll see, so I hope it's not too weird).
 
 The system combines:
